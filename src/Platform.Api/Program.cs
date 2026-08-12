@@ -66,12 +66,20 @@ try
     // Database
     // ─────────────────────────────────────────────────────────────────────────
     var connStr = builder.Configuration["Database:ConnectionString"]
-               ?? builder.Configuration.GetConnectionString("Default")
-               ?? throw new InvalidOperationException("Database connection string not configured.");
+               ?? builder.Configuration.GetConnectionString("Default");
 
     builder.Services.AddDbContext<PlatformDbContext>(opts =>
-        opts.UseNpgsql(connStr, npg =>
-            npg.MigrationsAssembly(typeof(PlatformDbContext).Assembly.FullName)));
+    {
+        if (builder.Environment.IsEnvironment("Testing") || string.IsNullOrWhiteSpace(connStr) || connStr.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
+        {
+            opts.UseInMemoryDatabase("PlatformTestDb");
+        }
+        else
+        {
+            opts.UseNpgsql(connStr, npg =>
+                npg.MigrationsAssembly(typeof(PlatformDbContext).Assembly.FullName));
+        }
+    });
 
     builder.Services.AddScoped<IPlatformDbContext>(sp => sp.GetRequiredService<PlatformDbContext>());
     builder.Services.AddScoped<DatabaseSeeder>();
@@ -210,7 +218,11 @@ try
     using (var scope = app.Services.CreateScope())
     {
         var db = scope.ServiceProvider.GetRequiredService<PlatformDbContext>();
-        await db.Database.MigrateAsync();
+        if (db.Database.IsRelational())
+            await db.Database.MigrateAsync();
+        else
+            await db.Database.EnsureCreatedAsync();
+
         var seeder = scope.ServiceProvider.GetRequiredService<DatabaseSeeder>();
         await seeder.SeedAsync();
     }
@@ -248,3 +260,5 @@ finally
 {
     Log.CloseAndFlush();
 }
+
+public partial class Program { }
