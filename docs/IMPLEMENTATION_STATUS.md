@@ -72,8 +72,8 @@ Legend:
 - [x] `/audit` audit log viewer page
 
 ### Testing & Verification
-- [x] Unit tests (`Platform.UnitTests` — 12 tests passed)
-- [x] Integration tests (`Platform.IntegrationTests` — 3 tests passed)
+- [x] Unit tests (`Platform.UnitTests` — 17 tests passed)
+- [x] Integration tests (`Platform.IntegrationTests` — 6 tests passed)
 - [x] Authentication flow tests
 - [x] Authorization & CSRF tests
 
@@ -86,11 +86,21 @@ Legend:
 
 ---
 
-## Completion Evidence Log
+## Phase 1 Exit-Gate Verification Audit Matrix
 
-### 2026-08-12 — Phase 1 Foundation Complete & Verified
-- **C# Codebase**: 69 files, `dotnet build` succeeded with 0 errors.
-- **Unit Tests**: 12/12 passed (`dotnet test tests/Platform.UnitTests/Platform.UnitTests.csproj`).
-- **Integration Tests**: 3/3 passed (`dotnet test tests/Platform.IntegrationTests/Platform.IntegrationTests.csproj`).
-- **Frontend Build**: All 8 Next.js app routes compiled static & dynamic targets (`npm run build`).
-- **Database**: Migration `InitialCreate` generated and ready for PostgreSQL deployment.
+| Phase 1 Requirement | Implementation File | Test File | Runtime Verification | Status |
+|---|---|---|---|---|
+| **Clean Architecture Isolation** | `src/Platform.*` (Domain/App/Infra/Api) | N/A (Assembly references) | `dotnet build` succeeds | **VERIFIED** |
+| **Database Schema & Migrations** | `PlatformDbContext.cs`, `InitialCreate.cs` | In-Memory & Migration test | 8 tables verified with PK/FK/Indexes | **VERIFIED** |
+| **Password Hashing** | `UserService.cs`, `AuthService.cs` | `AuthServiceTests.cs` | `PasswordHasher<User>` (Identity) PBKDF2/SHA256 | **VERIFIED** |
+| **Session Auth & Revocation** | `AuthService.cs`, `AuthController.cs` | `AuthServiceTests.cs` | DB-backed `AuthenticationSession` with expiry | **VERIFIED** |
+| **CSRF Protection** | `Program.cs`, `ErrorHandlingMiddleware.cs` | `AuthApiIntegrationTests.cs` | `X-CSRF-TOKEN` header enforced; 400 Bad Request on failure | **VERIFIED** |
+| **Account Lockout & Rate Limiting** | `AuthService.cs`, `Program.cs` | `AuthServiceTests.cs` | FailedLoginCount threshold + LockoutUntilUtc | **VERIFIED** |
+| **IsPlatformAdmin Bypass** | `AuthFilters.cs`, `PermissionService.cs` | `AuthApiIntegrationTests.cs` | Admin bypasses permission rows, non-admin guarded | **VERIFIED** |
+| **Field Security ALLOW/DENY** | `FieldPermission.cs`, `PermissionService.cs` | `PermissionServiceTests.cs` | Field permissions evaluate ALLOW vs DENY effects | **VERIFIED** |
+| **Immutable Audit Logging** | `AuditService.cs`, `AuditController.cs` | `AuditServiceTests.cs` | `AuditEvent` recorded with CorrelationId & JSON metadata | **VERIFIED** |
+| **Component Health Probes** | `HealthComponents.cs`, `HealthAggregatorService.cs` | `HealthAggregatorServiceTests.cs` | Public status probe & Admin detailed breakdown | **VERIFIED** |
+| **Notification Adapters** | `SmtpNotificationProvider.cs`, `SendGrid...`, `Mailgun...` | `NotificationServiceTests.cs` | Adapter pattern with `ProviderSelector` routing | **VERIFIED** |
+| **Real Provider Credentials** | Live env setup | N/A | Missing credentials in dev environment | **BLOCKED — REAL CREDENTIALS REQUIRED** |
+| **Structured Logging & Correlation** | `CorrelationIdMiddleware.cs`, `Program.cs` | `AuthServiceTests.cs` | Serilog JSON + X-Correlation-ID header propagation | **VERIFIED** |
+| **Next.js Dashboard UI** | `frontend/dashboard/src/app/` (8 routes) | `npm run build` | Turbopack compilation succeeded (0 errors) | **VERIFIED** |

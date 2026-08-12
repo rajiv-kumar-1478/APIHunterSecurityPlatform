@@ -18,7 +18,25 @@ public class ErrorHandlingMiddleware(RequestDelegate next, ILogger<ErrorHandling
         catch (Exception ex)
         {
             var correlationId = context.Items["CorrelationId"]?.ToString() ?? "unknown";
-            logger.LogError(ex, "Unhandled exception. CorrelationId: {CorrelationId}", correlationId);
+            logger.LogError(ex, "Unhandled exception of type {Type}. CorrelationId: {CorrelationId}", ex.GetType().FullName, correlationId);
+
+            if (ex is Microsoft.AspNetCore.Antiforgery.AntiforgeryValidationException || ex.InnerException is Microsoft.AspNetCore.Antiforgery.AntiforgeryValidationException)
+            {
+                context.Response.StatusCode = 400;
+                context.Response.ContentType = "application/json";
+
+                var csrfResponse = new
+                {
+                    title = "Invalid or missing anti-forgery token.",
+                    code = "INVALID_CSRF_TOKEN",
+                    correlationId
+                };
+
+                await context.Response.WriteAsync(
+                    JsonSerializer.Serialize(csrfResponse,
+                        new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase }));
+                return;
+            }
 
             context.Response.StatusCode = 500;
             context.Response.ContentType = "application/json";

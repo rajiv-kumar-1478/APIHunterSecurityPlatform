@@ -172,4 +172,50 @@ public class AuthServiceTests
         var updatedSession = await _db.AuthenticationSessions.FindAsync(session.Id);
         updatedSession!.RevokedAtUtc.Should().NotBeNull();
     }
+
+    [Fact]
+    public async Task LoginAsync_WithUnknownEmail_FailsSafely()
+    {
+        // Arrange
+        var command = new LoginCommand("nonexistent@test.com", "anypass", "127.0.0.1", "TestAgent");
+
+        // Act
+        var result = await _sut.LoginAsync(command);
+
+        // Assert
+        result.IsSuccess.Should().BeFalse();
+        result.ErrorMessage.Should().Contain("Invalid");
+    }
+
+    [Fact]
+    public async Task LoginAsync_WithExpiredLockout_AllowsAttemptAndResetsLockout()
+    {
+        // Arrange
+        var user = new User
+        {
+            Email = "expiredlockout@test.com",
+            Username = "expiredlock",
+            DisplayName = "Expired Lock User",
+            PasswordHash = "hashed_pass",
+            FailedLoginCount = 3,
+            LockoutUntilUtc = DateTime.UtcNow.AddMinutes(-5) // Expired 5 mins ago
+        };
+        _db.Users.Add(user);
+        await _db.SaveChangesAsync();
+
+        _passwordHasherMock
+            .Setup(x => x.VerifyHashedPassword(user, user.PasswordHash, "password123"))
+            .Returns(PasswordVerificationResult.Success);
+
+        var command = new LoginCommand("expiredlockout@test.com", "password123", "127.0.0.1", "TestAgent");
+
+        // Act
+        var result = await _sut.LoginAsync(command);
+
+        // Assert
+        result.IsSuccess.Should().BeTrue();
+        var updatedUser = await _db.Users.FindAsync(user.Id);
+        updatedUser!.FailedLoginCount.Should().Be(0);
+        updatedUser.LockoutUntilUtc.Should().BeNull();
+    }
 }
