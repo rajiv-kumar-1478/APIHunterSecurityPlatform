@@ -54,3 +54,12 @@
 - **Context**: Need flexible notification channels (SMTP, SendGrid, Mailgun) for alerts.
 - **Decision**: Implement `INotificationProvider` adapters for MailKit SMTP, SendGrid SDK, and Mailgun API. All providers registered in DI. `ProviderSelector` routes traffic based on `EMAIL_PROVIDER` configuration.
 - **Impact**: Zero code changes required to swap email delivery providers.
+
+---
+
+## DEC-007: Read-Only APIHunter Integration & Adapter Pattern
+- **Date**: 2026-08-12
+- **Title**: Decoupled Read-Only PostgreSQL Adapter & Normalized Synchronization
+- **Context**: Need to import intelligence credentials from APIHunterV2 without modifying its database schema or executing write queries against its database.
+- **Decision**: Define `IApiHunterSource` and `IApiHunterStatusMapper` contracts. Read-only PostgreSQL connection fetches APIKeys and RepoReferences incrementally. `ApiHunterSyncService` normalizes records, masks raw keys by default, encrypts raw keys at rest via Data Protection, deduplicates entity insertion by source ID, and audits reveal actions.
+- **Impact**: APIHunterV2 database remains 100% read-only and decoupled from Platform business logic. Schema changes in APIHunterV2 can be handled inside `ApiHunterAdapter` without touching domain entities.

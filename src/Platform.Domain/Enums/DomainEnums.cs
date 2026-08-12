@@ -46,7 +46,31 @@ public enum AuditEventCode
     // Notifications
     NotificationSent,
     NotificationFailed,
-    NotificationTestSent
+    NotificationTestSent,
+
+    // APIHunter Integration
+    ApiHunterSyncStarted,
+    ApiHunterSyncCompleted,
+    ApiHunterSyncFailed,
+    CredentialRevealed
+}
+
+public enum PlatformKeyStatus
+{
+    Unverified = -99,
+    Invalid = 0,
+    Valid = 1,
+    Error = 6,
+    ValidNoCredits = 7,
+    Unknown = 99
+}
+
+public enum SyncStatus
+{
+    Idle,
+    InProgress,
+    Completed,
+    Failed
 }
 
 public enum FieldAction

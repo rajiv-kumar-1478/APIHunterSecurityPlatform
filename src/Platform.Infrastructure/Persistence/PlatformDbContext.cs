@@ -16,6 +16,9 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
     public DbSet<AuditEvent> AuditEvents => Set<AuditEvent>();
     public DbSet<NotificationProviderConfig> NotificationProviderConfigs => Set<NotificationProviderConfig>();
     public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+    public DbSet<ApiHunterRecord> ApiHunterRecords => Set<ApiHunterRecord>();
+    public DbSet<ApiHunterRepoReference> ApiHunterRepoReferences => Set<ApiHunterRepoReference>();
+    public DbSet<ApiHunterSyncState> ApiHunterSyncStates => Set<ApiHunterSyncState>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -105,6 +108,37 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.ToTable("system_settings");
             e.HasKey(s => s.Key);
             e.Property(s => s.ValueType).HasConversion<string>();
+        });
+
+        // ApiHunterRecord
+        modelBuilder.Entity<ApiHunterRecord>(e =>
+        {
+            e.ToTable("api_hunter_records");
+            e.HasKey(r => r.Id);
+            e.HasIndex(r => r.SourceRecordId).IsUnique();
+            e.HasIndex(r => new { r.Status, r.ApiType });
+            e.Property(r => r.Status).HasConversion<int>();
+        });
+
+        // ApiHunterRepoReference
+        modelBuilder.Entity<ApiHunterRepoReference>(e =>
+        {
+            e.ToTable("api_hunter_repo_references");
+            e.HasKey(rr => rr.Id);
+            e.HasIndex(rr => rr.SourceReferenceId).IsUnique();
+            e.HasIndex(rr => new { rr.RepoOwner, rr.RepoName });
+            e.HasOne(rr => rr.ApiHunterRecord)
+             .WithMany(r => r.RepoReferences)
+             .HasForeignKey(rr => rr.ApiHunterRecordId)
+             .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ApiHunterSyncState
+        modelBuilder.Entity<ApiHunterSyncState>(e =>
+        {
+            e.ToTable("api_hunter_sync_states");
+            e.HasKey(s => s.Id);
+            e.Property(s => s.Status).HasConversion<string>();
         });
     }
 }

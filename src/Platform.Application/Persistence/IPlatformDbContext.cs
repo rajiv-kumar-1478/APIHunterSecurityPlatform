@@ -18,5 +18,9 @@ public interface IPlatformDbContext
     DbSet<NotificationProviderConfig> NotificationProviderConfigs { get; }
     DbSet<SystemSetting> SystemSettings { get; }
 
+    DbSet<ApiHunterRecord> ApiHunterRecords { get; }
+    DbSet<ApiHunterRepoReference> ApiHunterRepoReferences { get; }
+    DbSet<ApiHunterSyncState> ApiHunterSyncStates { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 }

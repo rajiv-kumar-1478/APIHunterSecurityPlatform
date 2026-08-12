@@ -81,3 +81,11 @@ public class MailgunOptions
         ? "https://api.eu.mailgun.net"
         : "https://api.mailgun.net";
 }
+
+public class ApiHunterSourceOptions
+{
+    public const string SectionName = "ApiHunterSource";
+    public string ConnectionString { get; set; } = string.Empty;
+    public bool AutoSyncEnabled { get; set; } = true;
+    public int BatchSize { get; set; } = 1000;
+}

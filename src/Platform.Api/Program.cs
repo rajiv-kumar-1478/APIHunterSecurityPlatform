@@ -15,6 +15,7 @@ using Platform.Application.Health;
 using Platform.Application.Notifications;
 using Platform.Application.Permissions;
 using Platform.Application.Persistence;
+using Platform.Application.Services;
 using Platform.Application.Users;
 using Platform.Domain.Contracts;
 using Platform.Domain.Entities;
@@ -61,6 +62,7 @@ try
     builder.Services.Configure<SendGridOptions>(builder.Configuration.GetSection(SendGridOptions.SectionName));
     builder.Services.Configure<MailgunOptions>(builder.Configuration.GetSection(MailgunOptions.SectionName));
     builder.Services.Configure<SeedOptions>(builder.Configuration.GetSection(SeedOptions.SectionName));
+    builder.Services.Configure<ApiHunterSourceOptions>(builder.Configuration.GetSection(ApiHunterSourceOptions.SectionName));
 
     // ─────────────────────────────────────────────────────────────────────────
     // Database
@@ -168,6 +170,9 @@ try
     builder.Services.AddScoped<HealthAggregatorService>();
     builder.Services.AddScoped<INotificationService, NotificationService>();
     builder.Services.AddScoped<IProviderSelector, ProviderSelector>();
+    builder.Services.AddSingleton<IApiHunterStatusMapper, Platform.Infrastructure.Adapters.ApiHunter.ApiHunterStatusMapper>();
+    builder.Services.AddScoped<IApiHunterSource, Platform.Infrastructure.Adapters.ApiHunter.ApiHunterAdapter>();
+    builder.Services.AddScoped<ApiHunterSyncService>();
 
     // ─────────────────────────────────────────────────────────────────────────
     // Notification Providers (all registered; ProviderSelector picks active one)
@@ -182,6 +187,7 @@ try
     // ─────────────────────────────────────────────────────────────────────────
     builder.Services.AddScoped<IHealthComponent, PostgresHealthComponent>();
     builder.Services.AddScoped<IHealthComponent, ApiHealthComponent>();
+    builder.Services.AddScoped<IHealthComponent, Platform.Infrastructure.Health.ApiHunterHealthComponent>();
 
     // ─────────────────────────────────────────────────────────────────────────
     // Current User Context
