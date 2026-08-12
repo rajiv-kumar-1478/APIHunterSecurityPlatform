@@ -15,7 +15,11 @@ public class ApiHunterAdapterUnitTests
     [InlineData(0, PlatformKeyStatus.Invalid)]
     [InlineData(-99, PlatformKeyStatus.Unverified)]
     [InlineData(6, PlatformKeyStatus.Error)]
-    [InlineData(999, PlatformKeyStatus.Unknown)] // Unknown status must NOT be treated as Valid!
+    [InlineData(-1, PlatformKeyStatus.Unknown)]
+    [InlineData(42, PlatformKeyStatus.Unknown)]
+    [InlineData(500, PlatformKeyStatus.Unknown)]
+    [InlineData(999, PlatformKeyStatus.Unknown)]
+    [InlineData(1000, PlatformKeyStatus.Unknown)]
     public void MapStatus_MapsApiHunterStatusToPlatformDomainStatus(int apiHunterStatus, PlatformKeyStatus expected)
     {
         // Act

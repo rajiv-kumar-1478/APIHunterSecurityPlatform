@@ -1,3 +1,4 @@
+using System.Text;
 using FluentAssertions;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
@@ -104,5 +105,91 @@ public class ApiHunterSyncTests
         // Assert 2: Zero duplicate records created
         var finalRecordsCount = await _db.ApiHunterRecords.CountAsync();
         finalRecordsCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task SynchronizeAsync_WhenSourceRecordChanges_UpdatesExistingRecordWithoutDuplicating()
+    {
+        // Arrange: Initial record with Unverified status
+        var initialKeys = new List<ApiHunterKeySourceDto>
+        {
+            new(201, "sk-proj-change12345678", -99, 100, 1, DateTime.UtcNow, DateTime.UtcNow, DateTime.UtcNow, null, null, null, null, null, new List<ApiHunterRepoSourceDto>())
+        };
+
+        _sourceMock
+            .Setup(s => s.FetchKeysIncrementalAsync(0, 100, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(initialKeys);
+
+        await _sut.SynchronizeAsync();
+
+        // Act: Updated key with Status = 1 (Valid)
+        var updatedKeys = new List<ApiHunterKeySourceDto>
+        {
+            new(201, "sk-proj-change12345678", 1, 100, 1, DateTime.UtcNow, DateTime.UtcNow, DateTime.UtcNow, "OK", "$500", "tier_2", null, null, new List<ApiHunterRepoSourceDto>())
+        };
+
+        _sourceMock
+            .Setup(s => s.FetchKeysIncrementalAsync(201, 100, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(updatedKeys);
+
+        var syncResult = await _sut.SynchronizeAsync();
+
+        // Assert
+        syncResult.RecordsUpdated.Should().Be(1);
+        var record = await _db.ApiHunterRecords.FirstOrDefaultAsync(r => r.SourceRecordId == 201);
+        record.Should().NotBeNull();
+        record!.Status.Should().Be(PlatformKeyStatus.Valid);
+        record.Balance.Should().Be("$500");
+        (await _db.ApiHunterRecords.CountAsync()).Should().Be(1);
+    }
+
+    [Fact]
+    public async Task SynchronizeAsync_WhenFetchFails_MarksSyncStateFailedAndPreservesExistingData()
+    {
+        // Arrange
+        _sourceMock
+            .Setup(s => s.FetchKeysIncrementalAsync(It.IsAny<long>(), It.IsAny<int>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new Exception("Database connection failed"));
+
+        // Act
+        var result = await _sut.SynchronizeAsync();
+
+        // Assert
+        result.Status.Should().Be("Failed");
+        result.ErrorMessage.Should().Be("Database connection failed");
+
+        var syncState = await _db.ApiHunterSyncStates.FirstOrDefaultAsync();
+        syncState.Should().NotBeNull();
+        syncState!.Status.Should().Be(SyncStatus.Failed);
+    }
+
+    [Fact]
+    public async Task RevealKeyAsync_WhenRecordExists_DecryptsKeyAndRecordsAuditEvent()
+    {
+        // Arrange
+        var record = new ApiHunterRecord
+        {
+            SourceRecordId = 301,
+            MaskedKey = "sk-p****cdef",
+            RawKeyEncrypted = Convert.ToBase64String(Encoding.UTF8.GetBytes("sk-proj-secretrawkey")),
+            Status = PlatformKeyStatus.Valid,
+            ApiType = "OpenAI",
+            SearchProvider = "GitHub"
+        };
+        _db.ApiHunterRecords.Add(record);
+        await _db.SaveChangesAsync();
+
+        // Act
+        var revealedKey = await _sut.RevealKeyAsync(record.Id);
+
+        // Assert
+        revealedKey.Should().Be("sk-proj-secretrawkey");
+        _auditServiceMock.Verify(a => a.RecordAsync(
+            AuditEventCode.CredentialRevealed,
+            null,
+            null,
+            It.IsAny<string>(),
+            It.IsAny<object>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 }
