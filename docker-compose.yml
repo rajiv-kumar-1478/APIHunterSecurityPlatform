@@ -1,0 +1,85 @@
+version: "3.9"
+
+services:
+  # ─────────────────────────────────────────────────────────────────────────
+  # PostgreSQL
+  # ─────────────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: platform_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: platform_db
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: changeme
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d platform_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # API
+  # ─────────────────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile.api
+    container_name: platform_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Database__ConnectionString: Host=postgres;Port=5432;Database=platform_db;Username=platform;Password=changeme
+      DataProtection__KeyPath: /app/dp-keys
+      Seed__AdminEmail: ${ADMIN_EMAIL:-admin@localhost}
+      Seed__AdminPassword: ${ADMIN_PASSWORD:-ChangeMe123!}
+      Cors__AllowedOrigins__0: http://localhost:3000
+      Notification__EmailProvider: ${EMAIL_PROVIDER:-smtp}
+      Smtp__Host: ${SMTP_HOST:-}
+      Smtp__Port: ${SMTP_PORT:-587}
+      Smtp__Username: ${SMTP_USERNAME:-}
+      Smtp__Password: ${SMTP_PASSWORD:-}
+      Smtp__From: ${SMTP_FROM:-}
+      Smtp__UseTls: ${SMTP_USE_TLS:-true}
+      SendGrid__ApiKey: ${SENDGRID_API_KEY:-}
+      SendGrid__From: ${SENDGRID_FROM:-}
+      Mailgun__ApiKey: ${MAILGUN_API_KEY:-}
+      Mailgun__Domain: ${MAILGUN_DOMAIN:-}
+      Mailgun__Region: ${MAILGUN_REGION:-us}
+      Mailgun__From: ${MAILGUN_FROM:-}
+    ports:
+      - "5000:8080"
+    volumes:
+      - dp_keys:/app/dp-keys
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Frontend (Next.js)
+  # ─────────────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: frontend/dashboard
+      dockerfile: Dockerfile
+    container_name: platform_frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:5000
+    ports:
+      - "3000:3000"
+
+volumes:
+  pgdata:
+  dp_keys:

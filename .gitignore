@@ -1,0 +1,32 @@
+# Binaries
+bin/
+obj/
+out/
+
+# Secrets — NEVER COMMIT
+.env
+.env.local
+.env.*.local
+dp-keys/
+*.pfx
+*.p12
+secrets/
+
+# Logs
+logs/
+*.log
+
+# Node
+node_modules/
+.next/
+.turbo/
+
+# IDE
+.vs/
+.vscode/settings.json
+*.user
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

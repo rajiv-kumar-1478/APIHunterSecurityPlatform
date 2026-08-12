@@ -1,0 +1,23 @@
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
+WORKDIR /app
+EXPOSE 8080
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY ["src/Platform.Api/Platform.Api.csproj", "src/Platform.Api/"]
+COPY ["src/Platform.Application/Platform.Application.csproj", "src/Platform.Application/"]
+COPY ["src/Platform.Domain/Platform.Domain.csproj", "src/Platform.Domain/"]
+COPY ["src/Platform.Infrastructure/Platform.Infrastructure.csproj", "src/Platform.Infrastructure/"]
+RUN dotnet restore "src/Platform.Api/Platform.Api.csproj"
+COPY . .
+WORKDIR "/src/src/Platform.Api"
+RUN dotnet build "Platform.Api.csproj" -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish "Platform.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false
+
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+RUN mkdir -p /app/dp-keys /app/logs
+ENTRYPOINT ["dotnet", "Platform.Api.dll"]
