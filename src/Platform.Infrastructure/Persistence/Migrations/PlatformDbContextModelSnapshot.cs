@@ -22,6 +22,348 @@ namespace Platform.Infrastructure.Persistence.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Platform.Domain.Entities.AiInvestigationCheckpoint", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CursorPosition")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("DurableResultJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("InvestigationJobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("StageType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InvestigationJobId", "StageType")
+                        .IsUnique();
+
+                    b.ToTable("ai_investigation_checkpoints", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.AiInvestigationEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CandidateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Confidence")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("EndLine")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("EvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("EvidenceType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("FilePath")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("InvestigationId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SnapshotFileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SnapshotId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("StartLine")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CandidateId");
+
+                    b.HasIndex("Fingerprint");
+
+                    b.HasIndex("InvestigationId");
+
+                    b.HasIndex("SnapshotFileId");
+
+                    b.HasIndex("SnapshotId");
+
+                    b.ToTable("ai_investigation_evidences", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.AiInvestigationJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ActiveModelName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ActiveProviderName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("ClaimToken")
+                        .IsConcurrencyToken()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("CompletedStagesCount")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CurrentStage")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastHeartbeatAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("QueuedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RepositoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("SnapshotId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("TotalCompletionTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("TotalPromptTokens")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("WorkerId")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClaimToken");
+
+                    b.HasIndex("RepositoryId");
+
+                    b.HasIndex("SnapshotId");
+
+                    b.HasIndex("Status", "CurrentStage", "QueuedAtUtc");
+
+                    b.ToTable("ai_investigation_jobs", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.AiProviderConfig", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CapabilitiesJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<DateTime?>("CooldownUntilUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EncryptedApiKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("FailedCallsCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("HealthStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastErrorReason")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("LastFailureAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("LastSuccessAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ModelName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ProviderName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<DateTime?>("RateLimitResetAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("RemainingQuota")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("TotalCallsCount")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ProviderName", "ModelName")
+                        .IsUnique();
+
+                    b.HasIndex("IsEnabled", "Priority", "HealthStatus");
+
+                    b.ToTable("ai_provider_configs", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.AnalysisJob", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CheckpointFileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<string>("JobType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime?>("LastHeartbeatAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MaxRetries")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("NextRetryAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PayloadJson")
+                        .HasColumnType("text");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("QueuedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("QueuedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ResultJson")
+                        .HasColumnType("text");
+
+                    b.Property<int>("RetryCount")
+                        .HasColumnType("integer");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("bytea");
+
+                    b.Property<DateTime?>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid>("TargetEntityId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TargetEntityType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("WorkerInstanceId")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("LastHeartbeatAtUtc");
+
+                    b.HasIndex("QueuedByUserId");
+
+                    b.HasIndex("Status", "Priority", "QueuedAtUtc");
+
+                    b.ToTable("analysis_jobs", (string)null);
+                });
+
             modelBuilder.Entity("Platform.Domain.Entities.ApiHunterRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -273,6 +615,264 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("authentication_sessions", (string)null);
                 });
 
+            modelBuilder.Entity("Platform.Domain.Entities.CandidateOccurrence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CandidateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Confidence")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("DetectedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DetectionRuleId")
+                        .IsRequired()
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("LineContentRawEncrypted")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LineContentRedacted")
+                        .HasColumnType("text");
+
+                    b.Property<int>("LineNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("MatchLength")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("MatchStartIndex")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("OccurrenceFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<Guid>("RepositoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("RuleVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("SnapshotFileId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CandidateId");
+
+                    b.HasIndex("OccurrenceFingerprint")
+                        .IsUnique();
+
+                    b.HasIndex("RepositoryId");
+
+                    b.HasIndex("SnapshotFileId");
+
+                    b.HasIndex("DetectionRuleId", "RuleVersion");
+
+                    b.ToTable("candidate_occurrences", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.CredentialCandidate", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CredentialType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("EncryptedRawValue")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<int>("FingerprintKeyVersion")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("FirstDetectedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastDetectedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MaskedValue")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("ResolutionNote")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ResolvedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ResolvedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SecretFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("TotalOccurrences")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CredentialType");
+
+                    b.HasIndex("ResolvedByUserId");
+
+                    b.HasIndex("SecretFingerprint")
+                        .IsUnique();
+
+                    b.HasIndex("Status");
+
+                    b.ToTable("credential_candidates", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.CredentialValidationResult", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("AnalysisJobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CandidateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Confidence")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("HttpStatusCode")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("LatencyMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("PolicyVersion")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<string>("ProviderName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ResponseClassification")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTime?>("RetryAfterUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SafeEvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("ValidatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("ValidationAttemptNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ValidatorVersion")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AnalysisJobId");
+
+                    b.HasIndex("CandidateId", "ValidatedAtUtc");
+
+                    b.HasIndex("Status", "ProviderName");
+
+                    b.ToTable("credential_validation_results", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.DetectionRule", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("AllowlistPatternsJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Confidence")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CredentialType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsEnabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("RegexPattern")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Source")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("TagsJson")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id", "Version");
+
+                    b.ToTable("detection_rules", (string)null);
+                });
+
             modelBuilder.Entity("Platform.Domain.Entities.FieldPermission", b =>
                 {
                     b.Property<Guid>("Id")
@@ -381,6 +981,521 @@ namespace Platform.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("permissions", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.Repository", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AcquisitionStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DefaultBranch")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("text");
+
+                    b.Property<string>("FullName")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<bool>("IsPrivate")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime?>("LastAcquiredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Owner")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Provider")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<long>("ProviderRepoId")
+                        .HasColumnType("bigint");
+
+                    b.Property<byte[]>("RowVersion")
+                        .IsConcurrencyToken()
+                        .IsRequired()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("bytea");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Url")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AcquisitionStatus");
+
+                    b.HasIndex("Owner", "Name");
+
+                    b.HasIndex("Provider", "ProviderRepoId")
+                        .IsUnique();
+
+                    b.ToTable("repositories", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.RepositoryRiskScore", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("AlgorithmVersion")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("CalculatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("FactorBreakdownJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid>("RepositoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("Score")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Severity");
+
+                    b.HasIndex("RepositoryId", "CalculatedAtUtc");
+
+                    b.ToTable("repository_risk_scores", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.RepositorySnapshot", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("AcquiredAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime?>("AnalysisCompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("AnalysisStatus")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ArchiveObjectKey")
+                        .HasColumnType("text");
+
+                    b.Property<long>("ArchiveSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("BranchName")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<int>("CandidatesFound")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("CommitSha")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("FileCount")
+                        .HasColumnType("integer");
+
+                    b.Property<Guid>("RepositoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("TotalSizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AcquiredAtUtc");
+
+                    b.HasIndex("AnalysisStatus");
+
+                    b.HasIndex("RepositoryId", "CommitSha")
+                        .IsUnique();
+
+                    b.ToTable("repository_snapshots", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.RepositorySource", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ApiHunterRecordId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long?>("ApiHunterRepoRefId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("DiscoveredViaQuery")
+                        .HasColumnType("text");
+
+                    b.Property<string>("DiscoveryType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("FirstSeenAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastSeenAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RepositoryId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ApiHunterRecordId");
+
+                    b.HasIndex("RepositoryId");
+
+                    b.HasIndex("RepositoryId", "ApiHunterRecordId", "ApiHunterRepoRefId")
+                        .IsUnique();
+
+                    b.ToTable("repository_sources", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SecurityFinding", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Confidence")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("FindingFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("FindingType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("FirstObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RepositoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ResolutionReason")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("ResolvedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ResolvedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RiskFactorBreakdownJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<int>("RiskScore")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Severity")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<Guid?>("SnapshotId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FindingFingerprint")
+                        .IsUnique();
+
+                    b.HasIndex("SnapshotId");
+
+                    b.HasIndex("RepositoryId", "Status");
+
+                    b.HasIndex("Severity", "Confidence");
+
+                    b.ToTable("security_findings", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SecurityFindingEvidence", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("CandidateId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DiscoverySource")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("EvidenceFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("EvidenceReference")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("EvidenceType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid>("FindingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("IntelligenceEdgeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("IntelligenceNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SafeEvidenceJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid?>("SnapshotFileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("SnapshotId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("ValidationResultId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FindingId", "EvidenceFingerprint")
+                        .IsUnique();
+
+                    b.ToTable("security_finding_evidence", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SecurityIntelligenceEdge", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Confidence")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("DiscoverySource")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("EdgeType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("EvidenceReference")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<DateTime>("FirstObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("LastObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("SourceNodeId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("TargetNodeId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SourceNodeId");
+
+                    b.HasIndex("TargetNodeId");
+
+                    b.HasIndex("SourceNodeId", "TargetNodeId", "EdgeType")
+                        .IsUnique();
+
+                    b.ToTable("security_intelligence_edges", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SecurityIntelligenceNode", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("FirstObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Label")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<DateTime>("LastObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MetadataJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("NodeType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid?>("RelatedEntityId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("NodeType");
+
+                    b.HasIndex("RelatedEntityId");
+
+                    b.HasIndex("NodeType", "Name")
+                        .IsUnique();
+
+                    b.ToTable("security_intelligence_nodes", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SnapshotFile", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("FileExtension")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)");
+
+                    b.Property<string>("FilePath")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsAnalyzed")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsBinary")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsSkipped")
+                        .HasColumnType("boolean");
+
+                    b.Property<long>("SizeBytes")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("SkipReason")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<Guid>("SnapshotId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ContentHash");
+
+                    b.HasIndex("SnapshotId");
+
+                    b.ToTable("snapshot_files", (string)null);
                 });
 
             modelBuilder.Entity("Platform.Domain.Entities.SystemSetting", b =>
@@ -495,6 +1610,78 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.ToTable("user_permissions", (string)null);
                 });
 
+            modelBuilder.Entity("Platform.Domain.Entities.AiInvestigationCheckpoint", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.AiInvestigationJob", "InvestigationJob")
+                        .WithMany("Checkpoints")
+                        .HasForeignKey("InvestigationJobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("InvestigationJob");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.AiInvestigationEvidence", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.CredentialCandidate", "Candidate")
+                        .WithMany()
+                        .HasForeignKey("CandidateId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Platform.Domain.Entities.AiInvestigationJob", "Investigation")
+                        .WithMany("Evidences")
+                        .HasForeignKey("InvestigationId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Platform.Domain.Entities.SnapshotFile", "SnapshotFile")
+                        .WithMany()
+                        .HasForeignKey("SnapshotFileId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Platform.Domain.Entities.RepositorySnapshot", "Snapshot")
+                        .WithMany()
+                        .HasForeignKey("SnapshotId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Candidate");
+
+                    b.Navigation("Investigation");
+
+                    b.Navigation("Snapshot");
+
+                    b.Navigation("SnapshotFile");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.AiInvestigationJob", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.Repository", "Repository")
+                        .WithMany()
+                        .HasForeignKey("RepositoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platform.Domain.Entities.RepositorySnapshot", "Snapshot")
+                        .WithMany()
+                        .HasForeignKey("SnapshotId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Repository");
+
+                    b.Navigation("Snapshot");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.AnalysisJob", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.User", "QueuedByUser")
+                        .WithMany()
+                        .HasForeignKey("QueuedByUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("QueuedByUser");
+                });
+
             modelBuilder.Entity("Platform.Domain.Entities.ApiHunterRepoReference", b =>
                 {
                     b.HasOne("Platform.Domain.Entities.ApiHunterRecord", "ApiHunterRecord")
@@ -527,6 +1714,69 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Platform.Domain.Entities.CandidateOccurrence", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.CredentialCandidate", "Candidate")
+                        .WithMany("Occurrences")
+                        .HasForeignKey("CandidateId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platform.Domain.Entities.Repository", "Repository")
+                        .WithMany("Occurrences")
+                        .HasForeignKey("RepositoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platform.Domain.Entities.SnapshotFile", "SnapshotFile")
+                        .WithMany("Occurrences")
+                        .HasForeignKey("SnapshotFileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platform.Domain.Entities.DetectionRule", "DetectionRule")
+                        .WithMany("Occurrences")
+                        .HasForeignKey("DetectionRuleId", "RuleVersion")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Candidate");
+
+                    b.Navigation("DetectionRule");
+
+                    b.Navigation("Repository");
+
+                    b.Navigation("SnapshotFile");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.CredentialCandidate", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.User", "ResolvedByUser")
+                        .WithMany()
+                        .HasForeignKey("ResolvedByUserId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("ResolvedByUser");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.CredentialValidationResult", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.AnalysisJob", "AnalysisJob")
+                        .WithMany()
+                        .HasForeignKey("AnalysisJobId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Platform.Domain.Entities.CredentialCandidate", "Candidate")
+                        .WithMany()
+                        .HasForeignKey("CandidateId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("AnalysisJob");
+
+                    b.Navigation("Candidate");
+                });
+
             modelBuilder.Entity("Platform.Domain.Entities.FieldPermission", b =>
                 {
                     b.HasOne("Platform.Domain.Entities.Permission", "Permission")
@@ -536,6 +1786,105 @@ namespace Platform.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Permission");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.RepositoryRiskScore", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.Repository", "Repository")
+                        .WithMany()
+                        .HasForeignKey("RepositoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Repository");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.RepositorySnapshot", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.Repository", "Repository")
+                        .WithMany("Snapshots")
+                        .HasForeignKey("RepositoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Repository");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.RepositorySource", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.ApiHunterRecord", "ApiHunterRecord")
+                        .WithMany()
+                        .HasForeignKey("ApiHunterRecordId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Platform.Domain.Entities.Repository", "Repository")
+                        .WithMany("Sources")
+                        .HasForeignKey("RepositoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ApiHunterRecord");
+
+                    b.Navigation("Repository");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SecurityFinding", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.Repository", "Repository")
+                        .WithMany()
+                        .HasForeignKey("RepositoryId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platform.Domain.Entities.RepositorySnapshot", "Snapshot")
+                        .WithMany()
+                        .HasForeignKey("SnapshotId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Repository");
+
+                    b.Navigation("Snapshot");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SecurityFindingEvidence", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.SecurityFinding", "Finding")
+                        .WithMany("Evidences")
+                        .HasForeignKey("FindingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Finding");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SecurityIntelligenceEdge", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.SecurityIntelligenceNode", "SourceNode")
+                        .WithMany("OutgoingEdges")
+                        .HasForeignKey("SourceNodeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platform.Domain.Entities.SecurityIntelligenceNode", "TargetNode")
+                        .WithMany("IncomingEdges")
+                        .HasForeignKey("TargetNodeId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("SourceNode");
+
+                    b.Navigation("TargetNode");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SnapshotFile", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.RepositorySnapshot", "Snapshot")
+                        .WithMany("Files")
+                        .HasForeignKey("SnapshotId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Snapshot");
                 });
 
             modelBuilder.Entity("Platform.Domain.Entities.UserPermission", b =>
@@ -557,9 +1906,26 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Platform.Domain.Entities.AiInvestigationJob", b =>
+                {
+                    b.Navigation("Checkpoints");
+
+                    b.Navigation("Evidences");
+                });
+
             modelBuilder.Entity("Platform.Domain.Entities.ApiHunterRecord", b =>
                 {
                     b.Navigation("RepoReferences");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.CredentialCandidate", b =>
+                {
+                    b.Navigation("Occurrences");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.DetectionRule", b =>
+                {
+                    b.Navigation("Occurrences");
                 });
 
             modelBuilder.Entity("Platform.Domain.Entities.Permission", b =>
@@ -567,6 +1933,37 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Navigation("FieldPermissions");
 
                     b.Navigation("UserPermissions");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.Repository", b =>
+                {
+                    b.Navigation("Occurrences");
+
+                    b.Navigation("Snapshots");
+
+                    b.Navigation("Sources");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.RepositorySnapshot", b =>
+                {
+                    b.Navigation("Files");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SecurityFinding", b =>
+                {
+                    b.Navigation("Evidences");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SecurityIntelligenceNode", b =>
+                {
+                    b.Navigation("IncomingEdges");
+
+                    b.Navigation("OutgoingEdges");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.SnapshotFile", b =>
+                {
+                    b.Navigation("Occurrences");
                 });
 
             modelBuilder.Entity("Platform.Domain.Entities.User", b =>

@@ -89,3 +89,45 @@ public class ApiHunterSourceOptions
     public bool AutoSyncEnabled { get; set; } = true;
     public int BatchSize { get; set; } = 1000;
 }
+
+public class GitHubOptions
+{
+    public const string SectionName = "GitHub";
+
+    /// <summary>"App", "PAT", or "Anonymous"</summary>
+    public string AuthType { get; set; } = "Anonymous";
+
+    public long AppId { get; set; }
+    public string PrivateKeyPem { get; set; } = string.Empty;
+    public long InstallationId { get; set; }
+    public string PersonalAccessToken { get; set; } = string.Empty;
+    public string UserAgent { get; set; } = "APIHunterPlatform/1.0";
+}
+
+public class ObjectStoreOptions
+{
+    public const string SectionName = "ObjectStore";
+
+    /// <summary>"FileSystem" (dev only) or "S3" (production)</summary>
+    public string Provider { get; set; } = "FileSystem";
+    public string BasePath { get; set; } = "./object-store";
+    public string ServiceUrl { get; set; } = string.Empty;
+    public string AccessKeyId { get; set; } = string.Empty;
+    public string SecretAccessKey { get; set; } = string.Empty;
+    public string BucketName { get; set; } = "apihunter-snapshots";
+    public string Region { get; set; } = "auto";
+}
+
+public class DetectionOptions
+{
+    public const string SectionName = "Detection";
+
+    /// <summary>HMAC pepper key for secret fingerprinting</summary>
+    public string SecretPepper { get; set; } = "default_dev_secret_pepper_do_not_use_in_prod";
+    public int FingerprintKeyVersion { get; set; } = 1;
+    public int MaxFileSizeMb { get; set; } = 5;
+    public int RegexTimeoutSeconds { get; set; } = 2;
+    public int MaxMatchesPerFile { get; set; } = 100;
+    public int RawContextRetentionDays { get; set; } = 30;
+}
+

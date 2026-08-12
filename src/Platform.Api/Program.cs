@@ -63,6 +63,11 @@ try
     builder.Services.Configure<MailgunOptions>(builder.Configuration.GetSection(MailgunOptions.SectionName));
     builder.Services.Configure<SeedOptions>(builder.Configuration.GetSection(SeedOptions.SectionName));
     builder.Services.Configure<ApiHunterSourceOptions>(builder.Configuration.GetSection(ApiHunterSourceOptions.SectionName));
+    builder.Services.Configure<GitHubOptions>(builder.Configuration.GetSection(GitHubOptions.SectionName));
+    builder.Services.Configure<ObjectStoreOptions>(builder.Configuration.GetSection(ObjectStoreOptions.SectionName));
+    builder.Services.Configure<DetectionOptions>(builder.Configuration.GetSection(DetectionOptions.SectionName));
+    builder.Services.Configure<AiRouterOptions>(builder.Configuration.GetSection(AiRouterOptions.SectionName));
+
 
     // ─────────────────────────────────────────────────────────────────────────
     // Database
@@ -174,6 +179,86 @@ try
     builder.Services.AddScoped<IApiHunterSource, Platform.Infrastructure.Adapters.ApiHunter.ApiHunterAdapter>();
     builder.Services.AddScoped<ApiHunterSyncService>();
 
+    // Phase 3 Application Services
+    builder.Services.AddScoped<RepositoryAcquisitionService>();
+    builder.Services.AddScoped<SnapshotService>();
+    builder.Services.AddScoped<SecretDetectionService>();
+    builder.Services.AddScoped<CandidateService>();
+    builder.Services.AddScoped<JobOrchestrationService>();
+
+    // Phase 4 Application Services & Adapters
+    builder.Services.AddHttpClient("AiProviderHttpClient");
+    builder.Services.AddScoped<IAiModelRouter, Platform.Infrastructure.Adapters.AI.AiModelRouter>();
+    builder.Services.AddScoped<AiProviderRegistryService>();
+    builder.Services.AddScoped<Platform.Infrastructure.Services.AiInvestigationEngine>();
+    builder.Services.AddScoped<AiInvestigationService>();
+    builder.Services.AddScoped<Platform.Application.Services.SecurityIntelligenceGraphBuilder>();
+    builder.Services.AddScoped<SecurityIntelligenceService>();
+
+    // Phase 5 Application Services & Validation Plugins
+    builder.Services.Configure<ValidationPolicyOptions>(builder.Configuration.GetSection(ValidationPolicyOptions.SectionName));
+    builder.Services.AddSingleton<Platform.Infrastructure.Security.ValidationEndpointRegistry>();
+    builder.Services.AddSingleton<Platform.Infrastructure.Security.SsrfProtectionService>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.OpenAiCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.AnthropicCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.DeepSeekCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.GroqCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.AwsStsCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.GitHubCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.StripeCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.SendGridCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.MailgunCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.SlackCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.FallbackCredentialValidator>();
+    builder.Services.AddScoped<CredentialValidationService>();
+
+    // Phase 6 Application Services
+    var riskPolicy = new RiskPolicyOptions();
+    builder.Configuration.GetSection(RiskPolicyOptions.SectionName).Bind(riskPolicy);
+    builder.Services.AddSingleton(riskPolicy);
+    builder.Services.AddSingleton<RiskEngine>();
+    builder.Services.AddScoped<SecurityFindingService>();
+    builder.Services.AddScoped<GraphIntelligenceEngine>();
+    builder.Services.AddScoped<ExposureAnalysisService>();
+    builder.Services.AddScoped<SecurityFindingLifecycleService>();
+
+    // Phase 6 Step 6 — Continuous Revalidation
+    builder.Services.Configure<ContinuousRevalidationOptions>(
+        builder.Configuration.GetSection(ContinuousRevalidationOptions.SectionName));
+    builder.Services.AddScoped<ValidationStateChangeProcessor>();
+    builder.Services.AddHostedService<Platform.Infrastructure.Workers.ContinuousRevalidationWorker>();
+
+    // Phase 6 Step 7 — Security Alerting & High-Fidelity Notifications
+    builder.Services.Configure<SecurityAlertOptions>(
+        builder.Configuration.GetSection(SecurityAlertOptions.SectionName));
+    builder.Services.AddScoped<SecurityAlertService>();
+
+
+
+
+
+
+
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Phase 3 Infrastructure Adapters
+    // ─────────────────────────────────────────────────────────────────────────
+    builder.Services.AddScoped<IGitHubCredentialProvider, Platform.Infrastructure.Adapters.GitHub.GitHubAppCredentialProvider>();
+    builder.Services.AddScoped<IGitHubCredentialProvider, Platform.Infrastructure.Adapters.GitHub.GitHubPatCredentialProvider>();
+    builder.Services.AddScoped<IRepositoryProvider, Platform.Infrastructure.Adapters.GitHub.GitHubRepositoryProvider>();
+    builder.Services.AddHttpClient("GitHubArchive");
+
+    if (builder.Environment.IsDevelopment())
+    {
+        builder.Services.AddScoped<IObjectStore, Platform.Infrastructure.Adapters.ObjectStore.FileSystemObjectStore>();
+    }
+    else
+    {
+        builder.Services.AddScoped<IObjectStore, Platform.Infrastructure.Adapters.ObjectStore.S3ObjectStoreAdapter>();
+    }
+
+    builder.Services.AddScoped<ISecretDetector, Platform.Infrastructure.Adapters.Detection.RegexSecretDetector>();
+
     // ─────────────────────────────────────────────────────────────────────────
     // Notification Providers (all registered; ProviderSelector picks active one)
     // ─────────────────────────────────────────────────────────────────────────
@@ -188,6 +273,7 @@ try
     builder.Services.AddScoped<IHealthComponent, PostgresHealthComponent>();
     builder.Services.AddScoped<IHealthComponent, ApiHealthComponent>();
     builder.Services.AddScoped<IHealthComponent, Platform.Infrastructure.Health.ApiHunterHealthComponent>();
+
 
     // ─────────────────────────────────────────────────────────────────────────
     // Current User Context

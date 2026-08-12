@@ -95,7 +95,7 @@ public class PermissionService(
     /// Check if a user has a permission code.
     /// IsPlatformAdmin always returns true without checking permission rows.
     /// </summary>
-    public async Task<bool> HasPermissionAsync(Guid userId, string permissionCode, CancellationToken ct = default)
+    public virtual async Task<bool> HasPermissionAsync(Guid userId, string permissionCode, CancellationToken ct = default)
     {
         var user = await db.Users.FindAsync([userId], ct);
         if (user is null) return false;

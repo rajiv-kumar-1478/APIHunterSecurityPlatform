@@ -26,72 +26,46 @@ C:\Users\rk170\Desktop\unsecureAPI project\APIHunterV2\
 
 ## Current Status
 
-**Current Phase:** Phase 2 — APIHunter Adapter & Discovery Synchronization (STRICT FINAL EXIT GATE VERIFIED)
+**Current Phase:** Phase 6 — Security Intelligence, Risk & Continuous Verification (IN PROGRESS — Step 1 & Step 2 Complete)
 
 **Verification Summary:**
-- **C# Build**: `dotnet build` → **Build succeeded. 0 Errors.**
-- **Unit Tests**: `Platform.UnitTests` → **38 / 38 Passed** (Duration: 707 ms)
-- **Integration Tests**: `Platform.IntegrationTests` → **6 / 6 Passed** (Duration: 1 s)
-- **Total Automated Tests**: **44 / 44 Passed**
-- **Next.js Production Build**: `npm run build` → **Compiled successfully in 9.1s (0 Errors, 9 App Router Routes)**
-- **Git Status**: Clean. All Phase 2 code, migrations, tests, and documentation committed cleanly.
-
----
-
-## Phase 2 Exit-Gate Final Verification Audit Matrix
-
-```
-DATE: 2026-08-12
-AGENT: Antigravity
-BUILD RESULT: Succeeded (0 Errors)
-UNIT TEST RESULT: 38 Passed, 0 Failed
-INTEGRATION TEST RESULT: 6 Passed, 0 Failed
-FRONTEND BUILD RESULT: Succeeded (9 App Router routes compiled static)
-DATABASE MIGRATION RESULT: AddApiHunterTables migration created & verified
-
-VERIFIED:
-1. APIHUNTERV2 ISOLATION: Working tree clean (git status on APIHunterV2 returned zero changes).
-2. READ-ONLY GUARANTEE: ApiHunterAdapter contains ONLY SELECT queries. Zero INSERT/UPDATE/DELETE statements.
-3. SCHEMA COMPATIBILITY: docs/APIHUNTER-SCHEMA.md cross-checked against APIHunterV2 models and master_init.sql.
-4. STATUS MAPPING: 1->Valid, 7->ValidNoCredits, 0->Invalid, -99->Unverified, 6->Error. Tested 5 unknown values (-1, 42, 500, 999, 1000) -> All correctly map to PlatformKeyStatus.Unknown (Never Valid).
-5. SYNCHRONIZATION IDEMPOTENCY: Tested initial sync (2 records imported) followed by repeated sync (0 duplicate records created). Reconciliation updates existing records on source changes.
-6. PARTIAL FAILURE RECOVERY: Exception during fetch updates sync status to Failed, records error message, and preserves previously imported data without corruption.
-7. RAW KEY SECURITY: Raw credentials stored encrypted at rest using Data Protection. List and detail endpoints return masked keys (sk-pr****1234) by default. Logs, exceptions, and audit metadata never contain raw keys.
-8. KEY REVEAL SECURITY: POST /api/v1/apihunter/records/{id}/reveal requires Admin credentials (401 for unauthenticated, 403 for non-admin). Audited with CredentialRevealed event without logging the raw key. Key kept only in transient React local component state.
-9. ENCRYPTION KEY PERSISTENCE: Data Protection keys persisted to filesystem across process restarts. Tested encrypt->restart->decrypt flow.
-10. REPOSITORY REFERENCE NORMALIZATION: RepoReferences mapped by SourceReferenceId to prevent duplicate repository identities.
-11. HEALTH MONITORING: ApiHunterHealthComponent probes SELECT 1 query and reports Healthy/Unhealthy without exposing credentials.
-12. DASHBOARD AUTHORIZATION: Next.js /apihunter route displays source vs. imported metrics, status filter tabs, paginated table, sync trigger, and audited reveal modal.
-
-PARTIALLY VERIFIED:
-- None
-
-BLOCKED:
-- Notification Live Delivery Verification (Requires real SMTP/SendGrid/Mailgun API credentials in deployment environment)
-
-NOT IMPLEMENTED:
-- None (All Phase 2 requirements fully implemented and tested)
-
-DEFERRED (PHASE 3+):
-- Repository acquisition & indexing
-- Credential validation framework
-- AI Gateway & repository AI analysis
-- Security Center (BugHunter & Burp adapters)
-```
+- **Baseline Test Suite**: `dotnet test` $\rightarrow$ **44 / 44 Passed** (38 Unit + 6 Integration)
+- **Phase 3 Test Suite**: `dotnet test` $\rightarrow$ **61 / 61 Passed** (55 Unit + 6 Integration, 0 Failures)
+- **Phase 4 Step 1–6 (Investigation & Security Graph)**: Completed & Locked (`DEC-012`, `DEC-013`).
+- **Phase 5 Step 1–5 (Credential Validation Engine & UI Dashboard)**: Fully Implemented, Verified & Locked (`DEC-014`, `DEC-015`, `DEC-016`, `DEC-017`).
+- **Phase 6 Step 1 (Security Finding Model & Evidence Architecture)**: Verified & Locked.
+- **Phase 6 Step 2 (Deterministic & Explainable Risk Scoring Engine)**: Verified & Locked.
+  - Implemented `RiskPolicyOptions` with unified `AlgorithmVersion = "v1.0"`, base floors, factor weights, and severity thresholds.
+  - Implemented pure functional `RiskEngine` computing 0–100 bounded finding risk scores (`FindingRiskResult`) and active repository risk scores (`RepositoryRiskResult`).
+  - Differentiated `Valid` (+30), `ValidInsufficientScope` (+20), and `Revoked`/`Invalid`/`Expired` (-30) factor modifiers.
+  - Verified mathematical consistency for state transitions (`Valid` $\rightarrow$ `Revoked`: $110 \rightarrow 50$, clamped $100 \rightarrow 50$).
+  - Active Repository Risk Rules: `Open`, `Investigating`, `Confirmed` contribute to active repository risk; `Remediated`, `AcceptedRisk`, `FalsePositive`, `Resolved` contribute `0` to active repository score.
+  - Unit Tests: `RiskEngineTests` (6 unit tests) and `SecurityFindingTests` (4 unit tests) **PASSED**.
+- **C# Build**: `dotnet build` $\rightarrow$ **Build succeeded. 0 Warnings. 0 Errors.**
+- **Frontend Build**: `next build` $\rightarrow$ **Compiled successfully.**
+- **Test Suite**: `dotnet test` $\rightarrow$ **158 / 158 Passed** (152 Unit + 6 Integration, 0 Failures).
+- **Secret-Leak Scan**: Zero raw credentials leaked in code, logs, tests, or UI.
+- **APIHunterV2 Isolation**: 100% clean working tree. Untouched.
 
 ---
 
 ## Session History
 
-## 2026-08-12 — Antigravity (Phase 2 Final Exit-Gate Audit & Test Expansion)
+## 2026-08-12 — Antigravity (Phase 6 Step 2 Deterministic Risk Scoring Engine Verified & Locked)
 
 Completed:
-- Executed strict 22-step Phase 2 Exit Gate Verification procedure.
-- Added comprehensive unit tests for status mapping edge cases, reconciliation on record updates, partial failure handling, and audited key reveal.
-- Confirmed zero `TODO`, `FIXME`, or `NotImplementedException` in C# business logic.
-- Verified `APIHunterV2` repository remains 100% clean and untouched.
-- `dotnet test`: 44 / 44 tests passed.
-- `npm run build`: 9 routes compiled cleanly.
+- Implemented Phase 6 Step 2 `RiskPolicyOptions`, pure functional `RiskEngine`, `FindingRiskResult`, `RepositoryRiskResult`, and integrated risk scoring into `SecurityFindingService`.
+- Created `RiskEngineTests.cs` verifying score bounds, factor weight contributions, mathematical state transitions, severity mapping, repository aggregation, and JSON breakdown schema.
+- Verified build and test suite: `dotnet build` succeeded (0 Warnings, 0 Errors), `next build` succeeded, `dotnet test` passed 158/158 tests.
+- `APIHunterV2` remains 100% untouched and clean.
 
 Next:
-- Await user authorization to begin Phase 3 — Repository Acquisition & Indexing.
+- Await user explicit authorization before proceeding to Phase 6 Step 3.
+
+
+
+
+
+
+
+

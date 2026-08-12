@@ -78,3 +78,186 @@ Legend:
 - [x] `ApiHunterSyncTests` (Incremental sync, deduplication verification, key reveal auditing)
 - [x] All 37 unit & integration tests passing (`dotnet test`)
 - [x] Next.js production build succeeded (`npm run build` — 9 App Router routes compiled cleanly)
+
+---
+
+## Phase 3 — Repository Acquisition & Indexing (IMPLEMENTED & VERIFIED)
+
+### Domain Architecture & Data Contracts
+- [x] Domain entities added (`Repository`, `RepositorySource`, `RepositorySnapshot`, `SnapshotFile`, `CredentialCandidate`, `CandidateOccurrence`, `DetectionRule`, `AnalysisJob`)
+- [x] Domain enums added (`AcquisitionStatus`, `AnalysisStatus`, `CandidateStatus`, `JobStatus`, `JobType`, `DiscoveryType`, `RuleSource`, `SkipReason`, Audit event codes)
+- [x] Domain contracts defined (`IRepositoryProvider`, `IGitHubCredentialProvider`, `IObjectStore`, `ISecretDetector`)
+- [x] `FingerprintUtils` domain value object created for versioned HMAC-SHA256 fingerprinting & context redaction
+
+### Database & Migrations
+- [x] EF Core entity mappings configured in `PlatformDbContext`
+- [x] `IPlatformDbContext` interface extended with Phase 3 `DbSet<T>` properties
+- [x] `DesignTimeDbContextFactory` created for design-time tooling
+- [x] `AddPhase3Tables` EF Core migration generated successfully
+
+### Infrastructure Adapters & Security
+- [x] `Octokit` (14.0.0) & `AWSSDK.S3` (4.0.102.1) packages verified & restored
+- [x] `GitHubAppCredentialProvider` (Installation token refresh) & `GitHubPatCredentialProvider` (PAT fallback)
+- [x] `GitHubRepositoryProvider` (Normalized metadata, rate-limit health probe & tarball stream download)
+- [x] `S3ObjectStoreAdapter` (AWSSDK.S3) & `FileSystemObjectStore` (Development-only production guard)
+- [x] `RegexSecretDetector` (Dynamic rule evaluation, HMAC-SHA256 fingerprinting with key versioning, context redaction, ReDoS protections)
+
+### Application Services & Job Orchestration
+- [x] `RepositoryAcquisitionService` (Seeding from APIHunter repo references, tarball archive streaming, path traversal protection, file cataloging)
+- [x] `SnapshotService` (Snapshot queries, incremental file hash matching)
+- [x] `SecretDetectionService` (Snapshot scanning, HMAC candidate fingerprinting, context redaction, reusable hash occurrence creation)
+- [x] `CandidateService` (Candidate listing, triage, audited raw key reveal, raw context purge)
+- [x] `JobOrchestrationService` (PostgreSQL `FOR UPDATE SKIP LOCKED` row claiming, heartbeat tracking, exponential backoff retries, stale job sweep)
+
+### Worker Background Services
+- [x] `RepositoryAcquisitionWorker` (Durable acquisition execution via `FOR UPDATE SKIP LOCKED`)
+- [x] `SnapshotAnalysisWorker` (Durable checkpointed analysis worker)
+- [x] `StaleJobSweepWorker` (Periodic stale heartbeat sweeper & auto-recovery)
+
+### API, Health & Dashboard UI
+- [x] API Controllers (`RepositoryController`, `SecretCandidateController`, `AnalysisJobController`, `DetectionRuleController`)
+- [x] DatabaseSeeder extended with ~20 high-confidence built-in detection rules & Phase 3 permissions
+
+## Phase 4 — AI Repository Investigation & Security Intelligence Graph (COMPLETED & VERIFIED)
+
+### Step 5: Staged AI Repository Investigation Engine & Worker (COMPLETED & VERIFIED)
+- [x] Implemented `AiInvestigationEngine` in `src/Platform.Infrastructure/Services/AiInvestigationEngine.cs`
+- [x] 10-Stage Pipeline: Executes stages sequentially (`RepositoryMetadata`, `FileInventory`, `TechnologyIdentification`, `ApiHunterSeedInvestigation`, `ConfigurationAnalysis`, `CandidateDiscovery`, `CrossFileRelationshipAnalysis`, `CredentialServiceRelationshipAnalysis`, `ProductionExposureAnalysis`, `FinalIntelligenceReport`)
+- [x] Atomic Worker Lease Fencing (`ClaimToken`): Configured `.IsConcurrencyToken()` on `ClaimToken` in EF Core (`PlatformDbContext.cs`). All worker mutations (heartbeat, stage progress, checkpoint writes, job completion, job failure, pause state) execute SQL UPDATE with `WHERE Id = @Id AND claim_token = @OriginalClaimToken`. If a stale worker attempts a write after a job re-claim, 0 database rows match, triggering `DbUpdateConcurrencyException`, and the mutation is atomically rejected (`SaveWithLeaseCheckAsync` returns `false`)
+- [x] Complete Resource Limits Enforced (`AiInvestigationEngineOptions`):
+  - `MaxFilesPerInvestigation`: 50 files
+  - `MaxFileSizeBytes`: 1 MB
+  - `MaxAiCallsPerInvestigation`: 20 calls
+  - `MaxTokensPerInvestigation`: 100,000 tokens
+  - `MaxStageRetries`: 3 retries per stage
+  - `MaxInvestigationDurationMinutes`: 30 minutes
+- [x] Three Discovery Sources Preserved: `ApiHunterSync` (APIHunter seed provenance), `DeterministicDetector` (Phase 3 RegexSecretDetector baseline safety net), and `AiInvestigator` (Phase 4 contextual discovery) remain distinct and fully queryable
+- [x] Strict Semantic Boundaries: Regex matches, AI candidates, and occurrences remain `Unverified` or `Candidate` status in Phase 4. Zero auto-promotion to `Valid` status prior to Phase 5 credential validation
+- [x] Restart-Safe Checkpointing: Stage completion persists `AiInvestigationCheckpoint` with `DurableResultJson`. Worker crashes/restarts resume from uncompleted stage without re-executing finished stages
+- [x] Single-Concurrency Worker: Implemented `AiInvestigationWorker` (`BackgroundService`) in `src/Platform.Infrastructure/Workers/AiInvestigationWorker.cs` with atomic job claiming (`WorkerId`, `ClaimToken`, `LastHeartbeatAtUtc`) and Concurrency = 1
+- [x] APIHunter Seed Integration: Supports repository seeds from APIHunter `Valid` & `ValidNoCredits` while preserving APIHunter status as immutable provenance
+- [x] Raw Secret Protection: Prompts sent to AI adapters contain masked values (`****1234`) and file context — raw secrets are NEVER sent to AI
+- [x] Idempotent Evidence Storage: `AiInvestigationEvidence` records deduplicated using deterministic SHA-256 `Fingerprint` (`SnapshotId:EvidenceType:FilePath:StartLine:EndLine`)
+- [x] Global Pause Check: Pauses execution safely at stage boundary when `ai.global_enabled = false` without corrupting state or purging queued jobs
+- [x] `AiInvestigationService` implemented in `src/Platform.Application/Services/AiInvestigationService.cs` with job deduplication (`TriggerInvestigationAsync`), pause, resume, cancel, and details query
+- [x] `AiInvestigationController` API implemented in `src/Platform.Api/Controllers/AiInvestigationController.cs` (`POST /api/v1/ai/investigations`, `GET /api/v1/ai/investigations/{id}`, `POST /api/v1/ai/investigations/{id}/pause|resume|cancel`)
+
+### Step 6: Security Intelligence Graph & Edge Builder (COMPLETED & VERIFIED)
+- [x] Implemented `SecurityIntelligenceGraphBuilder` in `src/Platform.Application/Services/SecurityIntelligenceGraphBuilder.cs`
+- [x] Node & Edge Identity Strategy: Nodes deterministically indexed on `(NodeType, Name)`; Edges deterministically indexed on `(SourceNodeId, TargetNodeId, EdgeType)` (`DEC-013`)
+- [x] Node Types Supported: `Repository`, `CredentialCandidate`, `Service`, `Domain`, `Database`, `Environment`
+- [x] Safe Entity Normalization: Schemes/ports/paths stripped from domains (`https://EXAMPLE.COM/api` $\rightarrow$ `example.com`), service names lower-kebabed (`web_api` $\rightarrow$ `web-api`), environments normalized (`prod`/`live` $\rightarrow$ `production`). Raw secrets are NEVER used in node keys or labels
+- [x] Multi-Source Provenance Preservation: Edges preserve `DiscoverySource` (`ApiHunterSync`, `DeterministicDetector`, `AiInvestigator`). Multiple discovery layers enrich existing edges (`LastObservedAtUtc`, upgraded `Confidence`, appended evidence references) rather than creating duplicate edges
+- [x] Historical Observation Tracking: `FirstObservedAtUtc` and `LastObservedAtUtc` recorded on nodes and edges to maintain historical context across commit snapshots
+- [x] `SecurityIntelligenceService` implemented in `src/Platform.Application/Services/SecurityIntelligenceService.cs` supporting graph queries (`GetGraphAsync`), paginated nodes (`GetNodesAsync`), node details & relationships (`GetNodeByIdAsync`, `GetNodeRelationshipsAsync`), paginated edges (`GetEdgesAsync`), and admin rebuilds (`RebuildGraphForRepositoryAsync`)
+- [x] `SecurityIntelligenceController` API implemented in `src/Platform.Api/Controllers/SecurityIntelligenceController.cs` (`GET /api/v1/intelligence/graph`, `GET /api/v1/intelligence/nodes`, `GET /api/v1/intelligence/nodes/{id}`, `GET /api/v1/intelligence/nodes/{id}/relationships`, `GET /api/v1/intelligence/edges`, `POST /api/v1/intelligence/graph/rebuild`)
+- [x] Unit Tests: Created `SecurityIntelligenceGraphTests` covering node/edge identity, normalization, multi-source provenance enrichment, historical tracking, and API service queries
+- [x] Test Suite execution: **109 / 109 Automated Tests Passed** (103 Unit + 6 Integration, 0 Failures)
+
+## Phase 5 — Credential Validation Engine (FULLY IMPLEMENTED & LOCKED — Steps 1–5 Verified)
+- [x] Implemented `ValidationStatus` enum (`Unknown`, `Pending`, `Valid`, `ValidInsufficientScope`, `Invalid`, `Expired`, `Revoked`, `RateLimited`, `Unavailable`, `Unsupported`, `BlockedByPolicy`, `ValidationError`)
+- [x] Implemented `ValidationConfidence` enum (`Indeterminate`, `Strong`, `Confirmed`)
+- [x] Added `JobType.CredentialValidation` reusing existing `AnalysisJob` infrastructure & `.IsConcurrencyToken()` ClaimToken fencing (`DEC-014`)
+- [x] Implemented `CredentialValidationResult` database entity & EF Core mapping (`credential_validation_results`)
+- [x] Applied EF Core migration `AddPhase5ValidationTables`
+- [x] Implemented `ValidationEndpointRegistry` enforcing server-controlled target endpoints for supported providers (`OpenAI`, `Anthropic`, `GitHub`, `AWSIAM`, `Stripe`, `SendGrid`, `Mailgun`, `DeepSeek`, `Groq`, `Slack`). Candidate-supplied URLs/hosts are strictly rejected
+- [x] Implemented `SsrfProtectionService` enforcing socket-level IP connection pinning via `SocketsHttpHandler.ConnectCallback` to eliminate DNS rebinding TOCTOU risks (`DEC-015`). Validates ALL IPv4 & IPv6 addresses against private/loopback/cloud-metadata CIDRs (`127.0.0.0/8`, `::1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `fe80::/10`, `fc00::/7`, `100.64.0.0/10`)
+- [x] Verified existing Data Protection mechanism (`IDataProtectionProvider` with purpose `"Platform.SecretCandidate.RawValue"`) used for credential decryption in memory (`DEC-016`)
+- [x] Implemented `CredentialValidationService` in `Platform.Application` managing job enqueuing, secret decryption in memory, plugin dispatch, append-only historical records, and CandidateStatus preservation
+- [x] Implemented `CredentialValidationWorker` in `Platform.Worker` handling durable job polling, PostgreSQL `FOR UPDATE SKIP LOCKED` claiming, atomic `ClaimToken` fencing, retry policies, and worker recovery
+- [x] Implemented `CredentialValidationController` exposing REST APIs (`POST /validate`, `GET /history`, `GET /results/{id}`)
+- [x] Implemented 10 Provider Validator Plugins: `OpenAiCredentialValidator`, `AnthropicCredentialValidator`, `DeepSeekCredentialValidator`, `GroqCredentialValidator`, `AwsStsCredentialValidator` (SigV4 signed STS `GetCallerIdentity`), `GitHubCredentialValidator`, `StripeCredentialValidator` (returns `Unsupported` for `whsec_`/`pk_` with zero network calls), `SendGridCredentialValidator`, `MailgunCredentialValidator` (Basic auth `api:{key}`), `SlackCredentialValidator` (inspects JSON `"ok": true`)
+- [x] Implemented `FallbackCredentialValidator` returning `ValidationStatus.Unsupported` for non-platform-supported providers with zero network calls
+- [x] Extended `DiscoveryType` enum with `CredentialValidation` to preserve cross-source provenance on graph edges (`DEC-017`)
+- [x] Enhanced `SecurityIntelligenceGraphBuilder` with `IngestCredentialValidationResultsAsync` dynamically updating candidate node labels (`[Valid]`, `[Invalid]`), metadata (`isCurrentlyValidated`, `latestValidationStatus`), and graph edges while preserving node identity and discovery provenance
+- [x] Created `docs/PROVIDER_VALIDATION_MATRIX.md` auditing all 34 APIHunterV2 reference providers, 10 Step 2 MVP providers, 24 deferred providers, and 6 security overrides
+- [x] Implemented Next.js 16 Dashboard UI in `frontend/dashboard/src/app/credentials/page.tsx` featuring masked key inventory, validation status badges, rate-limited/unsupported state distinctions, provenance badges, append-only audit history modal, Security Graph topology preview, and admin-only validation triggers
+- [x] Updated `Sidebar.tsx` with direct link to `Credentials & Validation` (`/credentials`)
+- [x] Created `Phase5FullIntegrationAndSecretLeakTests` and `SecurityIntelligenceGraphValidationEnrichmentTests` verifying zero secret disclosure, status transition logic, graph enrichment, and audit trail safety
+- [x] Test Suite execution: **148 / 148 Automated Tests Passed** (142 Unit + 6 Integration, 0 Failures)
+
+- [x] Step 3 — Graph Intelligence Engine (FULLY IMPLEMENTED & LOCKED):
+  - [x] Implemented `GraphIntelligenceEngine` in `src/Platform.Application/Services/GraphIntelligenceEngine.cs` (read-only consumer of graph nodes/edges)
+  - [x] Implemented strict repository boundary scoping (`repo:{id}` 1-hop subgraph) to prevent cross-repository finding contamination
+  - [x] Implemented canonical finding identity derived from stable graph node `Id` (Guid), not labels (`DEC-018`)
+  - [x] Implemented explicit `INTERNET_FACING` edge chain rule (`Domain ←[AssociatedWith]→ Repo ←[BelongsTo]─ Service`)
+  - [x] Implemented allowlist-only `SafeEvidenceJson` projection for graph node/edge evidence
+  - [x] Enforced zero direct dependency on `RiskEngine`; all finding/evidence updates flow through `SecurityFindingService`
+  - [x] Added `GraphIntelligenceAnalysisCompleted` audit event code to `DomainEnums.cs`
+  - [x] Added `AnalyzeGraphIntelligenceAsync` method to `SecurityIntelligenceService.cs` with audit logging
+  - [x] Registered `GraphIntelligenceEngine` in DI (`Program.cs`)
+  - [x] Created `GraphIntelligenceEngineTests` covering 11 test cases (4 patterns, idempotency, evidence FK correctness, secret-leak defense, empty graph safety, risk factor integration, cross-repo isolation, and identity stability)
+  - [x] Test Suite execution: **169 / 169 Automated Tests Passed** (163 Unit + 6 Integration, 0 Failures)
+
+- [x] Step 4 — Multi-Snapshot Exposure Analysis (FULLY IMPLEMENTED & LOCKED):
+  - [x] Implemented `ExposureAnalysisService` in `src/Platform.Application/Services/ExposureAnalysisService.cs` (read-only analysis layer)
+  - [x] Implemented multi-snapshot persistence detection ($\ge 2$ distinct `CommitSha` snapshots) emitting `HistoricalExposureDetected` findings
+  - [x] Implemented canonical finding identity derived from candidate ID (`CoreEntityId = candidate.Id.ToString("N")`)
+  - [x] Implemented occurrence-granular `HistoricalCommit` evidence fingerprinting (`SourceEntityId = $"historical:{candidateId:N}:{snapshotId:N}:{snapshotFileId:N}:{lineNumber}"`)
+  - [x] Enriched existing `ValidatedCredentialExposed` and `UnvalidatedCredentialExposed` findings with `HistoricalCommit` evidence
+  - [x] Enforced zero direct dependency on `RiskEngine`; all finding and evidence updates flow through `SecurityFindingService`
+  - [x] Implemented allowlist-only `SafeEvidenceJson` projection (commit SHA, acquired date, file path, line number, masked value)
+  - [x] Preserved `CredentialCandidate.Status` immutability
+  - [x] Added `AnalyzeSnapshotExposureAsync` method to `SecurityIntelligenceService.cs`
+  - [x] Registered `ExposureAnalysisService` in DI (`Program.cs`)
+  - [x] Created `ExposureAnalysisServiceTests` unit test suite (10 test cases)
+  - [x] Test Suite execution: **179 / 179 Automated Tests Passed** (173 Unit + 6 Integration, 0 Failures)
+
+- [x] Step 5 — Finding Lifecycle Governance (FULLY IMPLEMENTED & LOCKED):
+  - [x] Implemented `SecurityFindingLifecycleService` for human-governed finding status transitions (`Confirmed`, `Remediated`, `AcceptedRisk`, `FalsePositive`, `Resolved`, `Open/Reopen`)
+  - [x] Enforced **Option A contract**: resolution fields (`ResolvedAtUtc`, `ResolvedByUserId`, `ResolutionReason`) populated ONLY when `FindingStatus.Resolved`
+  - [x] Enforced mandatory `Reason` parameter for all status transitions; `ResolutionReason` required for `Resolved` status
+  - [x] Implemented `LifecycleVersion` optimistic concurrency guard (`IsConcurrencyToken`), rejecting stale version edits (`409 Conflict`)
+  - [x] Implemented append-only `SecurityFindingStatusHistory` audit trail tracking status transitions, actor, timestamp, and reason
+  - [x] Preserved `CredentialCandidate.Status` immutability and `RiskEngine.cs` purity
+  - [x] Created `SecurityFindingLifecycleServiceTests` unit test suite (9 test cases)
+  - [x] Test Suite execution: **194 / 194 Automated Tests Passed** (188 Unit + 6 Integration, 0 Failures)
+
+- [x] Step 6 — Continuous Revalidation (FULLY IMPLEMENTED & LOCKED):
+  - [x] Implemented `ContinuousRevalidationWorker` background service polling overdue candidates based on `MinRevalidationIntervalHours`
+  - [x] Implemented `ValidationStateChangeProcessor` processing validation results atomically with PostgreSQL `FOR UPDATE SKIP LOCKED` claim token fencing
+  - [x] Added separate `FindingType.ExpiredCredentialExposed` and `FindingType.RevokedCredentialExposed` for refined alerting semantics
+  - [x] Implemented transient result exclusion (`RateLimited`, `Unavailable` results excluded from state-change detection and processed timestamp updates)
+  - [x] Implemented two-timeline rule: recent transient result does NOT suppress overdue revalidation when definitive validation is overdue
+  - [x] Enforced zero automatic finding status transitions; finding lifecycle state remains human-governed
+  - [x] Created `ValidationStateChangeProcessorTests` unit test suite (21 test cases)
+  - [x] Test Suite execution: **215 / 215 Automated Tests Passed** (209 Unit + 6 Integration, 0 Failures)
+
+- [x] Step 7 — Alerting & High-Fidelity Notifications (FULLY IMPLEMENTED & LOCKED):
+  - [x] Implemented `SecurityAlertService` decision engine with fail-closed configuration (`SecurityAlertOptions.GlobalEnabled` defaults to `false`)
+  - [x] Implemented database-backed atomic claim protocol (`SecurityAlertLog` lease) using canonical fingerprint (`finding:` or `repository:`) to prevent duplicate alerts under concurrency
+  - [x] Implemented 60-minute alert cooldown window suppressing repeated notifications within cooldown window (`AuditEventCode.AlertSuppressedByCooldown`)
+  - [x] Triggered high-fidelity alerts on explicit `Revoked`/`Expired` events, Critical score threshold crossing ($\ge 80$), High threshold crossing ($< 60 \rightarrow \ge 60$), risk jump delta ($\Delta \ge 25$), and new High/Critical findings
+  - [x] Formatted secret-safe HTML/text notification templates strictly rendering `MaskedValue` (`sk-proj-****1234`) and dispatched via Phase 1 `INotificationService`
+  - [x] Created `SecurityAlertServiceTests` unit test suite (10 test cases including concurrent `Task.WhenAll` atomic claim tests)
+  - [x] Test Suite execution: **225 / 225 Automated Tests Passed** (219 Unit + 6 Integration, 0 Failures)
+
+- [x] Step 8 — Security Center UI Dashboard Integration (FULLY IMPLEMENTED & LOCKED):
+  - [x] Implemented `SecurityCenterController` exposing read-only `GET /api/v1/security-center/posture` (reads persisted `RepositoryRiskScore` DB rows) and `GET /api/v1/security-center/alerting-status` (sanitized read-only DTO without secrets)
+  - [x] Added `/security` ("Security Center") nav item to Next.js dashboard `Sidebar.tsx`
+  - [x] Implemented typed frontend API client `security-api.ts` for posture, sanitized alerting status, paginated findings, evidence, status history, and graph endpoints
+  - [x] Built modular Next.js dashboard UI (`security/page.tsx`, `SecurityPostureCard.tsx`, `FindingFilters.tsx`, `FindingsTable.tsx`, `RiskBreakdown.tsx`, `EvidenceTimeline.tsx`, `LifecycleTimeline.tsx`, `GovernanceActions.tsx`, `FindingDetailDrawer.tsx`, `SecurityGraphView.tsx`, `AlertingStatusCard.tsx`)
+  - [x] Enforced zero client-side risk math; UI strictly displays backend `RiskEngine` scores and factor breakdown DTOs
+  - [x] Enforced backend API authorization (`403 Forbidden` on unauthorized status transitions) and optimistic concurrency version guard (`ExpectedLifecycleVersion`)
+  - [x] Verified zero raw credential display (`MaskedValue` ONLY)
+  - [x] Created `SecurityCenterControllerTests` integration test suite (3 test cases)
+  - [x] Next.js frontend build succeeded (`npm run build`)
+  - [x] Test Suite execution: **228 / 228 Automated Tests Passed** (219 Unit + 9 Integration, 0 Failures)
+
+- [x] Step 9 — Final Exit Gate (VERIFIED & LOCKED):
+  - [x] 0 Build Errors (`dotnet build`)
+  - [x] 100% Test Pass Rate (**228 / 228 Automated Tests Passed**)
+  - [x] Next.js production build succeeded (`npm run build`)
+  - [x] `APIHunterV2` 100% untouched & isolated (`git status` clean)
+  - [x] Core engine boundaries untouched (`RiskEngine.cs`, `SecurityIntelligenceGraphBuilder.cs`, `SecurityFindingLifecycleService.cs` clean)
+  - [x] EF Core migration schema integrity verified
+  - [x] API authorization & optimistic concurrency verified
+  - [x] Zero raw secret exposure verified
+  - [x] Documentation & Phase 6 lock finalized
+
+
+
+
+
+
+

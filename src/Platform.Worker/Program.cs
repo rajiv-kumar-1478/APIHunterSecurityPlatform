@@ -1,7 +1,99 @@
-using Platform.Worker;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.EntityFrameworkCore;
+using Platform.Application.Configuration;
+using Platform.Application.Permissions;
+using Platform.Application.Persistence;
+using Platform.Application.Services;
+using Platform.Domain.Contracts;
+using Platform.Infrastructure.Adapters.Detection;
+using Platform.Infrastructure.Adapters.GitHub;
+using Platform.Infrastructure.Adapters.ObjectStore;
+using Platform.Infrastructure.Persistence;
+using Platform.Worker.Workers;
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddHostedService<Worker>();
+
+// Configuration options
+builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(DatabaseOptions.SectionName));
+builder.Services.Configure<GitHubOptions>(builder.Configuration.GetSection(GitHubOptions.SectionName));
+builder.Services.Configure<ObjectStoreOptions>(builder.Configuration.GetSection(ObjectStoreOptions.SectionName));
+builder.Services.Configure<DetectionOptions>(builder.Configuration.GetSection(DetectionOptions.SectionName));
+
+// EF Core DbContext
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
+    ?? "Host=localhost;Database=apihunter_platform;Username=postgres;Password=postgres";
+
+builder.Services.AddDbContext<PlatformDbContext>(options =>
+    options.UseNpgsql(connectionString, b => b.MigrationsAssembly("Platform.Infrastructure")));
+
+builder.Services.AddScoped<IPlatformDbContext>(sp => sp.GetRequiredService<PlatformDbContext>());
+
+// Data Protection
+builder.Services.AddDataProtection();
+
+// Null audit service for worker context if no active user session
+builder.Services.AddScoped<IAuditService, AuditService>();
+builder.Services.AddScoped<ICurrentUserContext, WorkerUserContext>();
+
+// Infrastructure Adapters
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<IGitHubCredentialProvider, GitHubAppCredentialProvider>();
+builder.Services.AddScoped<IRepositoryProvider, GitHubRepositoryProvider>();
+builder.Services.AddScoped<IObjectStore, FileSystemObjectStore>();
+builder.Services.AddScoped<ISecretDetector, RegexSecretDetector>();
+
+// Application Services
+builder.Services.AddScoped<RepositoryAcquisitionService>();
+builder.Services.AddScoped<SnapshotService>();
+builder.Services.AddScoped<SecretDetectionService>();
+builder.Services.AddScoped<CandidateService>();
+builder.Services.AddScoped<JobOrchestrationService>();
+
+// Phase 5 Application Services, Validation Plugins & Workers
+builder.Services.Configure<ValidationPolicyOptions>(builder.Configuration.GetSection(ValidationPolicyOptions.SectionName));
+builder.Services.AddSingleton<Platform.Infrastructure.Security.ValidationEndpointRegistry>();
+builder.Services.AddSingleton<Platform.Infrastructure.Security.SsrfProtectionService>();
+builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.OpenAiCredentialValidator>();
+builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.AnthropicCredentialValidator>();
+builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.DeepSeekCredentialValidator>();
+builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.GroqCredentialValidator>();
+builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.AwsStsCredentialValidator>();
+builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.GitHubCredentialValidator>();
+builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.StripeCredentialValidator>();
+builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.SendGridCredentialValidator>();
+builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.MailgunCredentialValidator>();
+builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.SlackCredentialValidator>();
+builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.FallbackCredentialValidator>();
+builder.Services.AddScoped<CredentialValidationService>();
+
+// Phase 6 Services
+var riskPolicy = new RiskPolicyOptions();
+builder.Configuration.GetSection(RiskPolicyOptions.SectionName).Bind(riskPolicy);
+builder.Services.AddSingleton(riskPolicy);
+builder.Services.AddSingleton<RiskEngine>();
+builder.Services.AddScoped<SecurityFindingService>();
+
+
+
+// Hosted Workers
+builder.Services.AddHostedService<RepositoryAcquisitionWorker>();
+builder.Services.AddHostedService<SnapshotAnalysisWorker>();
+builder.Services.AddHostedService<StaleJobSweepWorker>();
+builder.Services.AddHostedService<Platform.Infrastructure.Workers.AiInvestigationWorker>();
+builder.Services.AddHostedService<CredentialValidationWorker>();
+
+
 
 var host = builder.Build();
 host.Run();
+
+// Worker identity context stub for automated background jobs
+public class WorkerUserContext : ICurrentUserContext
+{
+    public Guid? UserId => null;
+    public string? SessionId => null;
+    public bool IsAuthenticated => false;
+    public bool IsPlatformAdmin => true;
+    public string CorrelationId => Guid.NewGuid().ToString();
+    public string IpAddress => "127.0.0.1";
+}

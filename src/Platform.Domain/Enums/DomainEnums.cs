@@ -52,8 +52,62 @@ public enum AuditEventCode
     ApiHunterSyncStarted,
     ApiHunterSyncCompleted,
     ApiHunterSyncFailed,
-    CredentialRevealed
+    CredentialRevealed,
+
+    // Phase 3 — Repositories & Acquisition
+    RepositoryAdded,
+    RepositoryAcquisitionTriggered,
+    BulkRepositoryAcquisitionTriggered,
+    RepositoryAcquired,
+    RepositoryAcquisitionFailed,
+    RepositoryDisabled,
+
+    // Phase 3 — Snapshots & Analysis
+    SnapshotCreated,
+    SnapshotAnalysisCompleted,
+    SnapshotAnalysisFailed,
+
+    // Phase 3 — Secret Candidates & Occurrences
+    SecretCandidateDetected,
+    SecretCandidateRevealed,
+    SecretCandidateStatusChanged,
+    SecretCandidateResolved,
+    RawContextsPurged,
+
+    // Phase 3 — Detection Rules & Jobs
+    DetectionRuleToggled,
+    DetectionRuleCreated,
+    JobCreated,
+    JobCancelled,
+    JobPaused,
+    JobResumed,
+    JobRetried,
+    JobFailed,
+    JobSucceeded,
+
+    // Phase 4 — AI Investigation & Security Intelligence Graph
+    AiProviderConfigured,
+    AiProviderToggled,
+    AiProviderTested,
+    AiProviderCooldownReset,
+    AiGlobalPause,
+    AiGlobalResume,
+    AiInvestigationTriggered,
+    AiInvestigationCompleted,
+    AiInvestigationFailed,
+    AiInvestigationStageCheckpoint,
+    SecurityGraphUpdated,
+    GraphRebuildRequested,
+    GraphBuildCompleted,
+    RiskScoreCalculated,
+    GraphIntelligenceAnalysisCompleted,
+    FindingStatusChanged,
+
+    // Phase 6 — Continuous Revalidation & Alerting
+    CredentialRevalidationProcessed,
+    AlertSuppressedByCooldown
 }
+
 
 public enum PlatformKeyStatus
 {
@@ -86,3 +140,168 @@ public enum SettingValueType
     Boolean,
     Json
 }
+
+public enum AcquisitionStatus
+{
+    Pending,
+    Acquired,
+    Failed,
+    Disabled
+}
+
+public enum AnalysisStatus
+{
+    Pending,
+    Analyzing,
+    Completed,
+    Failed
+}
+
+public enum CandidateStatus
+{
+    Detected,
+    Triaged,
+    Resolved
+}
+
+public enum JobStatus
+{
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Retrying,
+    Cancelled,
+    Paused
+}
+
+public enum JobType
+{
+    RepositoryAcquisition,
+    SnapshotAnalysis,
+    AiInvestigation,
+    CredentialValidation
+}
+
+
+public enum DiscoveryType
+{
+    ApiHunterSync,
+    AdminManual,
+    AiInvestigator,
+    DeterministicDetector,
+    CredentialValidation
+}
+
+
+public enum RuleSource
+{
+    BuiltIn,
+    Custom,
+    GitleaksImport
+}
+
+public enum SkipReason
+{
+    Binary,
+    TooLarge,
+    VendoredLib,
+    AllowListed
+}
+
+public enum AiInvestigationStageType
+{
+    RepositoryMetadata = 1,
+    FileInventory = 2,
+    TechnologyIdentification = 3,
+    ApiHunterSeedInvestigation = 4,
+    ConfigurationAnalysis = 5,
+    CandidateDiscovery = 6,
+    CrossFileRelationshipAnalysis = 7,
+    CredentialServiceRelationshipAnalysis = 8,
+    ProductionExposureAnalysis = 9,
+    FinalIntelligenceReport = 10
+}
+
+public enum FindingType
+{
+    ValidatedCredentialExposed,
+    UnvalidatedCredentialExposed,
+    ProductionServiceExposed,
+    HistoricalExposureDetected,
+    OverprivilegedCredential,
+    DatabaseExposure,
+    /// <summary>Credential confirmed expired by provider.</summary>
+    ExpiredCredentialExposed,
+    /// <summary>Credential explicitly revoked by provider.</summary>
+    RevokedCredentialExposed
+}
+
+public enum FindingStatus
+{
+    Open,
+    Investigating,
+    Confirmed,
+    Remediated,
+    AcceptedRisk,
+    FalsePositive,
+    Resolved
+}
+
+public enum FindingEvidenceType
+{
+    ApiHunterSeed,
+    DeterministicOccurrence,
+    AiInvestigationEvidence,
+    ValidationResult,
+    IntelligenceNode,
+    IntelligenceEdge,
+    HistoricalCommit
+}
+
+
+public enum AiHealthStatus
+{
+    Healthy,
+    Degraded,
+    RateLimited,
+    Unreachable,
+    Disabled
+}
+
+public enum IntelligenceNodeType
+{
+    Repository,
+    CredentialCandidate,
+    Service,
+    Domain,
+    Environment,
+    Database
+}
+
+public enum IntelligenceEdgeType
+{
+    DiscoveredIn,
+    AppearsIn,
+    RelatedTo,
+    UsedBy,
+    AssociatedWith,
+    BelongsTo
+}
+
+public enum FindingConfidence
+{
+    Low,
+    Medium,
+    High
+}
+
+public enum RiskSeverity
+{
+    Low,
+    Medium,
+    High,
+    Critical
+}
+
+
