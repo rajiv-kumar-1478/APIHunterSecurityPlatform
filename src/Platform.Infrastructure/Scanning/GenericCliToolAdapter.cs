@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
+using Platform.Application.Services;
 using Platform.Domain.Enums;
 
 namespace Platform.Infrastructure.Scanning;

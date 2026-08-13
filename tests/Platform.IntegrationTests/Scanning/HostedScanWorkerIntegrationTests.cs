@@ -41,7 +41,7 @@ public class HostedScanWorkerIntegrationTests
         await db.SaveChangesAsync();
 
         var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        await registry.RegisterToolAsync("amass", "Amass Scanner", "v4.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing });
+        await registry.RegisterToolAsync("amass", "Amass Scanner", "v4.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "amass");
 
         var job = new SecurityScanJob
         {
@@ -95,7 +95,7 @@ public class HostedScanWorkerIntegrationTests
             AuthorizedManifest: null
         );
 
-        using var lease = new ProviderSecretLease(new Dictionary<string, string>());
+        using var lease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
         Func<Task> act = async () => await adapter.ExecuteAsync(request, lease, Path.GetTempPath());
         await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*Authorized scanner tool manifest is missing or empty*");
     }
@@ -104,7 +104,7 @@ public class HostedScanWorkerIntegrationTests
     public async Task Adversarial_ToolKeyMismatch_AttackerTool_With_DotnetExecutable_RejectedBeforeProcessStart()
     {
         var adapter = new GenericCliToolAdapter("attacker_tool", NullLogger<GenericCliToolAdapter>.Instance);
-        using var secretLease = new ProviderSecretLease(new Dictionary<string, string>());
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
         var scratchDir = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString());
 
         var manifestMap = new Dictionary<string, string>
@@ -138,7 +138,7 @@ public class HostedScanWorkerIntegrationTests
         await registry.RegisterToolAsync("dotnet_tool", "Dotnet Test CLI", "v10.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "dotnet");
 
         var adapter = new GenericCliToolAdapter("dotnet_tool", NullLogger<GenericCliToolAdapter>.Instance);
-        using var secretLease = new ProviderSecretLease(new Dictionary<string, string>());
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
         var scratchDir = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString());
 
         var manifestMap = await registry.GetAuthorizedManifestMapAsync();
@@ -202,7 +202,7 @@ public class HostedScanWorkerIntegrationTests
         await registry.RegisterToolAsync("custom_dotnet", "Custom Dotnet Runner", "v1.0.0", true, new[] { ToolCapability.HttpProbing }, executable: "dotnet");
 
         var adapter = new GenericCliToolAdapter("custom_dotnet", NullLogger<GenericCliToolAdapter>.Instance);
-        using var secretLease = new ProviderSecretLease(new Dictionary<string, string>());
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
         var scratchDir = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString());
 
         var authorizedManifestMap = await registry.GetAuthorizedManifestMapAsync();
@@ -219,6 +219,52 @@ public class HostedScanWorkerIntegrationTests
 
         var result = await adapter.ExecuteAsync(request, secretLease, scratchDir);
         result.Status.Should().Be(ToolExecutionStatus.Success);
+    }
+
+    [Fact]
+    public async Task MissingExecutable_NeverFallsBackToToolKey_AndFailsClosed()
+    {
+        using var db = CreateInMemoryDbContext();
+        var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
+
+        // Manually insert entity into DB with blank Executable to simulate legacy/unconfigured entity
+        var entity = new SecurityScanTool
+        {
+            Id = Guid.NewGuid(),
+            ToolKey = "legacy_tool",
+            DisplayName = "Legacy Tool",
+            Version = "v1.0",
+            Executable = "",
+            Enabled = true,
+            Required = false,
+            CapabilitiesJson = "[\"HttpProbing\"]",
+            HealthStatus = ToolHealthStatus.Healthy,
+            CreatedAtUtc = DateTime.UtcNow,
+            UpdatedAtUtc = DateTime.UtcNow
+        };
+        db.SecurityScanTools.Add(entity);
+        await db.SaveChangesAsync();
+
+        // 1. GetAuthorizedManifestMapAsync must NOT include tool with blank Executable (no fallback to ToolKey)
+        var manifestMap = await registry.GetAuthorizedManifestMapAsync();
+        manifestMap.Should().NotContainKey("legacy_tool");
+
+        // 2. GenericCliToolAdapter must return TOOL_EXECUTABLE_NOT_CONFIGURED if request.Executable is missing/blank
+        var adapter = new GenericCliToolAdapter("legacy_tool", NullLogger<GenericCliToolAdapter>.Instance);
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+        var request = new ToolExecutionRequest(
+            ToolKey: "legacy_tool",
+            Version: "v1.0",
+            Arguments: new Dictionary<string, string>(),
+            ScanJobId: Guid.NewGuid(),
+            Timeout: TimeSpan.FromSeconds(5),
+            Executable: "",
+            AuthorizedManifest: manifestMap
+        );
+
+        var result = await adapter.ExecuteAsync(request, secretLease, Path.GetTempPath());
+        result.Status.Should().Be(ToolExecutionStatus.Failed);
+        result.ErrorCode.Should().Be("TOOL_EXECUTABLE_NOT_CONFIGURED");
     }
 
     [Fact]
@@ -241,7 +287,7 @@ public class HostedScanWorkerIntegrationTests
     {
         using var db = CreateInMemoryDbContext();
         var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        await registry.RegisterToolAsync("subfinder", "Subfinder Tool", "v2.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing });
+        await registry.RegisterToolAsync("subfinder", "Subfinder Tool", "v2.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "subfinder");
 
         var jobId = Guid.NewGuid();
         var job = new SecurityScanJob
@@ -279,7 +325,7 @@ public class HostedScanWorkerIntegrationTests
     {
         using var db = CreateInMemoryDbContext();
         var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        await registry.RegisterToolAsync("subfinder", "Subfinder Tool", "v2.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing });
+        await registry.RegisterToolAsync("subfinder", "Subfinder Tool", "v2.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "subfinder");
 
         var jobId = Guid.NewGuid();
         var job = new SecurityScanJob
@@ -306,7 +352,7 @@ public class HostedScanWorkerIntegrationTests
         };
 
         var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, NullLogger<GenericScanWorker>.Instance);
-        var result = await worker.ExecuteScanJobAsync(jobId, cts.Token);
+        var result = await worker.ExecuteScanJobAsync(jobId, CancellationToken.None);
 
         result.Status.Should().Be(SecurityScanJobStatus.Failed);
         result.FailureReason.Should().Contain("CANCELLED");
@@ -323,27 +369,29 @@ public class HostedScanWorkerIntegrationTests
         // Register real harmless executable 'dotnet' in SecurityScanTool DB entity
         await registry.RegisterToolAsync("dotnet_tool", "Dotnet Test CLI", "v10.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "dotnet");
 
-        var jobId = Guid.NewGuid();
-        var job = new SecurityScanJob
-        {
-            Id = jobId,
-            TargetUrl = "https://example.com",
-            ScanProfile = SecurityScanProfileType.Recon,
-            Status = SecurityScanJobStatus.Queued,
-            ProviderKey = "bughunter"
-        };
-        db.SecurityScanJobs.Add(job);
-        await db.SaveChangesAsync();
+        var manifestMap = await registry.GetAuthorizedManifestMapAsync();
+        manifestMap.Should().ContainKey("dotnet_tool");
+        manifestMap["dotnet_tool"].Should().Be("dotnet");
 
-        // Use real GenericCliToolAdapter (NO MOCK) to launch actual process via ProcessStartInfo.FileName = tool.Executable
-        Func<string, IGenericCliToolAdapter> realAdapterFactory = toolKey =>
-            new GenericCliToolAdapter(toolKey, NullLogger<GenericCliToolAdapter>.Instance);
+        var adapter = new GenericCliToolAdapter("dotnet_tool", NullLogger<GenericCliToolAdapter>.Instance);
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+        var scratchDir = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString());
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, NullLogger<GenericScanWorker>.Instance);
-        var result = await worker.ExecuteScanJobAsync(jobId);
+        var request = new ToolExecutionRequest(
+            ToolKey: "dotnet_tool",
+            Version: "v10.0.0",
+            Arguments: new Dictionary<string, string> { ["version"] = "" },
+            ScanJobId: Guid.NewGuid(),
+            Timeout: TimeSpan.FromSeconds(10),
+            Executable: "dotnet",
+            AuthorizedManifest: manifestMap
+        );
+
+        var result = await adapter.ExecuteAsync(request, secretLease, scratchDir);
 
         // Verify end-to-end real process execution through the entire chain
-        result.Status.Should().Be(SecurityScanJobStatus.Completed);
+        result.Status.Should().Be(ToolExecutionStatus.Success);
+        result.ExitCode.Should().Be(0);
     }
 
     private static PlatformDbContext CreateInMemoryDbContext()

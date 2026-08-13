@@ -38,6 +38,7 @@ public class ScanToolHealthService : IScanToolHealthService
             ToolKey: toolKey,
             DisplayName: toolKey,
             Version: "unregistered",
+            Executable: toolKey,
             Enabled: false,
             Required: false,
             Capabilities: Array.Empty<string>(),

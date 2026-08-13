@@ -97,7 +97,7 @@ public class GenericCliToolAdapterSecurityTests
             ScanJobId: Guid.NewGuid(),
             Timeout: TimeSpan.FromSeconds(5),
             Executable: "subfinder",
-            AuthorizedManifest: new HashSet<string> { "subfinder" }
+            AuthorizedManifest: new Dictionary<string, string> { ["subfinder"] = "subfinder" }
         );
 
         using var lease = new ProviderSecretLease("test", new Dictionary<string, string>(), TimeSpan.FromMinutes(1));
@@ -120,7 +120,7 @@ public class GenericCliToolAdapterSecurityTests
             ScanJobId: Guid.NewGuid(),
             Timeout: TimeSpan.FromMilliseconds(1), // Trigger rapid timeout
             Executable: "subfinder",
-            AuthorizedManifest: new HashSet<string> { "subfinder" }
+            AuthorizedManifest: new Dictionary<string, string> { ["subfinder"] = "subfinder" }
         );
 
         using var lease = new ProviderSecretLease("test", new Dictionary<string, string>(), TimeSpan.FromMinutes(1));
@@ -146,7 +146,7 @@ public class GenericCliToolAdapterSecurityTests
             ScanJobId: Guid.NewGuid(),
             Timeout: TimeSpan.FromSeconds(10),
             Executable: "subfinder",
-            AuthorizedManifest: new HashSet<string> { "subfinder" }
+            AuthorizedManifest: new Dictionary<string, string> { ["subfinder"] = "subfinder" }
         );
 
         using var lease = new ProviderSecretLease("test", new Dictionary<string, string>(), TimeSpan.FromMinutes(1));
@@ -170,7 +170,7 @@ public class GenericCliToolAdapterSecurityTests
             ScanJobId: Guid.NewGuid(),
             Timeout: TimeSpan.FromSeconds(10),
             Executable: "subfinder",
-            AuthorizedManifest: new HashSet<string> { "subfinder" }
+            AuthorizedManifest: new Dictionary<string, string> { ["subfinder"] = "subfinder" }
         );
 
         using var lease = new ProviderSecretLease("test", new Dictionary<string, string>(), TimeSpan.FromMinutes(1));
@@ -276,9 +276,10 @@ public class GenericCliToolAdapterSecurityTests
     [Fact]
     public void Test13_UnregisteredBinaryExecution_Throws_SecurityViolation()
     {
-        Action act = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("malicious_unregistered_tool");
+        var manifestMap = new Dictionary<string, string> { ["subfinder"] = "subfinder" };
+        Action act = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("malicious_unregistered_tool", "malicious_unregistered_tool", manifestMap);
         act.Should().Throw<InvalidOperationException>()
-           .WithMessage("*Executable binary 'malicious_unregistered_tool' is not registered*");
+           .WithMessage("*not registered in the authorized scanner tool manifest*");
     }
 
     [Fact]

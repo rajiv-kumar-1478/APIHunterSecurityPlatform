@@ -39,8 +39,12 @@ public class ScanToolRegistryService
         CancellationToken ct = default)
     {
         toolKey = toolKey.Trim().ToLowerInvariant();
-        var targetExecutable = !string.IsNullOrWhiteSpace(executable) ? executable.Trim() : toolKey;
+        if (string.IsNullOrWhiteSpace(executable))
+        {
+            throw new ArgumentException("Tool executable must be explicitly configured and cannot be empty.", nameof(executable));
+        }
 
+        var targetExecutable = executable.Trim();
         ValidateExecutableName(targetExecutable);
 
         var existing = await _dbContext.SecurityScanTools.FirstOrDefaultAsync(t => t.ToolKey == toolKey, ct);
@@ -87,8 +91,10 @@ public class ScanToolRegistryService
         foreach (var t in tools)
         {
             var key = t.ToolKey.Trim().ToLowerInvariant();
-            var exe = !string.IsNullOrWhiteSpace(t.Executable) ? t.Executable.Trim() : key;
-            map[key] = exe;
+            if (!string.IsNullOrWhiteSpace(t.Executable))
+            {
+                map[key] = t.Executable.Trim();
+            }
         }
 
         return map;
@@ -137,7 +143,7 @@ public class ScanToolRegistryService
         ToolKey: tool.ToolKey,
         DisplayName: tool.DisplayName,
         Version: tool.Version,
-        Executable: string.IsNullOrWhiteSpace(tool.Executable) ? tool.ToolKey : tool.Executable,
+        Executable: tool.Executable ?? string.Empty,
         Enabled: tool.Enabled,
         Required: tool.Required,
         Capabilities: ParseCapabilities(tool.CapabilitiesJson),
