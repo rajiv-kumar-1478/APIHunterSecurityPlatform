@@ -39,18 +39,18 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         string scratchDirectory,
         CancellationToken ct = default)
     {
-        // 1. Enforce Whitelisted Binary Execution Guard
-        ValidateToolExecutableWhitelist(request.ToolKey);
+        var binaryName = !string.IsNullOrWhiteSpace(request.Executable)
+            ? request.Executable
+            : GetBinaryFileName(request.ToolKey);
+
+        // 1. Enforce Whitelisted Binary Execution Guard on resolved binaryName
+        ValidateToolExecutableWhitelist(binaryName);
 
         // 2. Path Traversal & Symlink/Junction Filesystem Guard
         ValidateScratchDirectoryPath(scratchDirectory, _scratchRoot);
 
         Directory.CreateDirectory(scratchDirectory);
         VerifyNoReparsePointOrSymlink(scratchDirectory);
-
-        var binaryName = !string.IsNullOrWhiteSpace(request.Executable)
-            ? request.Executable
-            : GetBinaryFileName(request.ToolKey);
         var stdoutBuilder = new StringBuilder();
         var stderrBuilder = new StringBuilder();
 
