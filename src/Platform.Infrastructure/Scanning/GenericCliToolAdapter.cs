@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -32,7 +31,7 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         string scratchDirectory,
         CancellationToken ct = default)
     {
-        // 1. Path Traversal Guard
+        // 1. Path Traversal & Filesystem Guard
         ValidateScratchDirectoryPath(scratchDirectory);
 
         Directory.CreateDirectory(scratchDirectory);
@@ -54,12 +53,24 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
             CreateNoWindow = true
         };
 
-        // Inject tool arguments safely
+        // Inject tool arguments safely (CLI flag validation)
         if (request.Arguments != null)
         {
             foreach (var kvp in request.Arguments)
             {
-                startInfo.ArgumentList.Add($"--{kvp.Key}");
+                if (kvp.Key.StartsWith("-"))
+                {
+                    startInfo.ArgumentList.Add(kvp.Key);
+                }
+                else if (kvp.Key.Length == 1)
+                {
+                    startInfo.ArgumentList.Add($"/{kvp.Key}");
+                }
+                else
+                {
+                    startInfo.ArgumentList.Add($"--{kvp.Key}");
+                }
+
                 if (!string.IsNullOrWhiteSpace(kvp.Value))
                 {
                     startInfo.ArgumentList.Add(SanitizeArgumentValue(kvp.Value));
@@ -67,7 +78,7 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
             }
         }
 
-        // Environment Variable secret injection (Leased Secrets ONLY)
+        // Environment Variable secret injection (Leased Secrets ONLY - NEVER in CLI args or DTOs)
         if (secretLease?.Secrets != null)
         {
             foreach (var (key, value) in secretLease.Secrets)
@@ -104,6 +115,7 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
             await process.WaitForExitAsync(cts.Token);
 
             var exitCode = process.ExitCode;
+            // Process completed without token cancellation
             var status = exitCode == 0 ? ToolExecutionStatus.Success : ToolExecutionStatus.Failed;
             var artifactRef = Path.Combine(scratchDirectory, $"{request.ToolKey}_output.json");
 
@@ -118,8 +130,13 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         }
         catch (OperationCanceledException)
         {
+            // Explicit timeout or cancellation handling - terminate child process tree before returning
             KillProcessTreeSafely(process);
-            _logger.LogWarning("Execution of CLI tool '{ToolKey}' timed out or was cancelled (Job: {ScanJobId}).", request.ToolKey, request.ScanJobId);
+
+            var isExplicitCancel = ct.IsCancellationRequested;
+            var errorCode = isExplicitCancel ? "CANCELLED" : "TIMED_OUT";
+
+            _logger.LogWarning("Execution of CLI tool '{ToolKey}' was aborted ({ErrorCode}, Job: {ScanJobId}).", request.ToolKey, errorCode, request.ScanJobId);
 
             return new ToolExecutionResult(
                 ToolKey: request.ToolKey,
@@ -127,7 +144,7 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
                 Status: ToolExecutionStatus.TimedOut,
                 ExitCode: 124,
                 ArtifactReference: null,
-                ErrorCode: ct.IsCancellationRequested ? "CANCELLED" : "TIMED_OUT"
+                ErrorCode: errorCode
             );
         }
         catch (Win32Exception ex) when (ex.NativeErrorCode == 2)
@@ -145,7 +162,9 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         catch (Exception ex)
         {
             KillProcessTreeSafely(process);
-            _logger.LogError(ex, "Unexpected error executing CLI tool '{ToolKey}'.", request.ToolKey);
+            var sanitizedMessage = SanitizeOutput(ex.Message, secretLease);
+            _logger.LogError(ex, "Unexpected error executing CLI tool '{ToolKey}': {Message}", request.ToolKey, sanitizedMessage);
+
             return new ToolExecutionResult(
                 ToolKey: request.ToolKey,
                 Version: request.Version,
@@ -169,11 +188,16 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
             throw new InvalidOperationException($"Security Violation: Path traversal attempt detected in scratch directory path '{path}'.");
         }
 
-        var fullPath = Path.GetFullPath(path);
-        var baseTmpPath = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "scans"));
+        var fullPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var baseTmpPath = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "scans")).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-        // Allow workspace scratch paths or temp scan paths
-        if (!fullPath.StartsWith(baseTmpPath, StringComparison.OrdinalIgnoreCase) && !fullPath.Contains("APIHunterSecurityPlatform"))
+        // Strict prefix check ensuring directory boundary separation
+        var isSubDirOfTemp = fullPath.Equals(baseTmpPath, StringComparison.OrdinalIgnoreCase) ||
+                             fullPath.StartsWith(baseTmpPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+
+        var isWorkspacePath = fullPath.Contains("APIHunterSecurityPlatform", StringComparison.OrdinalIgnoreCase);
+
+        if (!isSubDirOfTemp && !isWorkspacePath)
         {
             throw new InvalidOperationException($"Security Violation: Scratch directory '{fullPath}' escapes allowed temp root '{baseTmpPath}'.");
         }

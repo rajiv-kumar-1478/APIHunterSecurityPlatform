@@ -39,7 +39,19 @@ public class GenericCliToolAdapterSecurityTests
     }
 
     [Fact]
-    public void Test3_SanitizeOutput_MasksRawSecrets()
+    public void Test3_ValidateScratchDirectoryPath_Rejects_SiblingPrefixAttack()
+    {
+        // /tmp/scans-evil vs /tmp/scans
+        var baseTmpPath = Path.Combine(Path.GetTempPath(), "scans");
+        var siblingPrefixPath = baseTmpPath + "-evil";
+
+        Action act = () => GenericCliToolAdapter.ValidateScratchDirectoryPath(siblingPrefixPath);
+        act.Should().Throw<InvalidOperationException>()
+           .WithMessage("*Scratch directory*escapes allowed temp root*");
+    }
+
+    [Fact]
+    public void Test4_SanitizeOutput_MasksRawSecrets_InLogsAndExceptions()
     {
         var secretDict = new Dictionary<string, string>
         {
@@ -55,7 +67,7 @@ public class GenericCliToolAdapterSecurityTests
     }
 
     [Fact]
-    public async Task Test4_ExecuteAsync_Handles_MissingBinary()
+    public async Task Test5_ExecuteAsync_Handles_MissingBinary()
     {
         var adapter = new GenericCliToolAdapter("non_existent_binary_xyz_123", NullLogger<GenericCliToolAdapter>.Instance);
         var scratch = Path.Combine(Path.GetTempPath(), "scans", Guid.NewGuid().ToString("N"));
@@ -76,7 +88,7 @@ public class GenericCliToolAdapterSecurityTests
     }
 
     [Fact]
-    public async Task Test5_ExecuteAsync_Handles_Timeout()
+    public async Task Test6_ExecuteAsync_Handles_Timeout()
     {
         var adapter = new GenericCliToolAdapter("powershell.exe", NullLogger<GenericCliToolAdapter>.Instance);
         var scratch = Path.Combine(Path.GetTempPath(), "scans", Guid.NewGuid().ToString("N"));
@@ -97,7 +109,7 @@ public class GenericCliToolAdapterSecurityTests
     }
 
     [Fact]
-    public async Task Test6_ExecuteAsync_Handles_Cancellation()
+    public async Task Test7_ExecuteAsync_Handles_Cancellation()
     {
         var adapter = new GenericCliToolAdapter("powershell.exe", NullLogger<GenericCliToolAdapter>.Instance);
         var scratch = Path.Combine(Path.GetTempPath(), "scans", Guid.NewGuid().ToString("N"));
@@ -121,7 +133,31 @@ public class GenericCliToolAdapterSecurityTests
     }
 
     [Fact]
-    public async Task Test7_ToolReplacement_SwapsToolDefinition_WithoutChangingOrchestration()
+    public async Task Test8_ExecuteAsync_Disambiguates_NormalExitCode124_From_Timeout()
+    {
+        // Command exiting natively with exit code 124 without cancellation token trigger
+        var adapter = new GenericCliToolAdapter("cmd.exe", NullLogger<GenericCliToolAdapter>.Instance);
+        var scratch = Path.Combine(Path.GetTempPath(), "scans", Guid.NewGuid().ToString("N"));
+
+        var request = new ToolExecutionRequest(
+            ToolKey: "cmd.exe",
+            Version: "v1.0.0",
+            Arguments: new Dictionary<string, string> { ["c"] = "exit /b 124" },
+            ScanJobId: Guid.NewGuid(),
+            Timeout: TimeSpan.FromSeconds(10)
+        );
+
+        using var lease = new ProviderSecretLease("test", new Dictionary<string, string>(), TimeSpan.FromMinutes(1));
+        var result = await adapter.ExecuteAsync(request, lease, scratch, default);
+
+        // Native exit code 124 without cancellation token trigger must be mapped as Failed with EXIT_CODE_124
+        result.Status.Should().Be(ToolExecutionStatus.Failed);
+        result.ExitCode.Should().Be(124);
+        result.ErrorCode.Should().Be("EXIT_CODE_124");
+    }
+
+    [Fact]
+    public async Task Test9_ToolReplacement_SwapsToolDefinition_WithoutChangingOrchestration()
     {
         var options = new DbContextOptionsBuilder<PlatformDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
