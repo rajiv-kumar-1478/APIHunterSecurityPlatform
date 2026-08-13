@@ -406,11 +406,56 @@ public class GenericCliToolAdapterSecurityTests
     [Fact]
     public void Test15_ShellPrimitives_PowershellAndCmd_Are_Rejected()
     {
-        Action act1 = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("powershell.exe");
-        act1.Should().Throw<InvalidOperationException>().WithMessage("*not registered*");
+        Action act1 = () => ScanToolRegistryService.ValidateExecutableName("powershell.exe");
+        act1.Should().Throw<InvalidOperationException>().WithMessage("*Shell interpreter*prohibited*");
 
-        Action act2 = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("cmd.exe");
-        act2.Should().Throw<InvalidOperationException>().WithMessage("*not registered*");
+        Action act2 = () => ScanToolRegistryService.ValidateExecutableName("cmd.exe");
+        act2.Should().Throw<InvalidOperationException>().WithMessage("*Shell interpreter*prohibited*");
+    }
+
+    [Fact]
+    public async Task Test16_RegisterTool_With_ExecutablePathTraversal_Or_AbsolutePaths_Is_Rejected()
+    {
+        using var db = CreateInMemoryDbContext();
+        var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
+
+        Func<Task> act1 = async () => await registry.RegisterToolAsync("malicious1", "Malicious Tool 1", "v1.0.0", false, new[] { ToolCapability.HttpProbing }, executable: "../bin/evil.exe");
+        await act1.Should().ThrowAsync<InvalidOperationException>().WithMessage("*prohibited path separators*");
+
+        Func<Task> act2 = async () => await registry.RegisterToolAsync("malicious2", "Malicious Tool 2", "v1.0.0", false, new[] { ToolCapability.HttpProbing }, executable: "C:\\Windows\\System32\\cmd.exe");
+        await act2.Should().ThrowAsync<InvalidOperationException>().WithMessage("*prohibited path separators*");
+    }
+
+    [Fact]
+    public async Task Test17_RegisterTool_With_ShellInterpreter_Is_Rejected()
+    {
+        using var db = CreateInMemoryDbContext();
+        var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
+
+        Func<Task> act = async () => await registry.RegisterToolAsync("bash_tool", "Bash Tool", "v1.0.0", false, new[] { ToolCapability.HttpProbing }, executable: "bash");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*Shell interpreter*prohibited*");
+    }
+
+    [Fact]
+    public void Test18_ValidateToolExecutableWhitelist_Rejects_Unknown_Executable_NotInManifest()
+    {
+        Action act = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("unregistered_tool", manifestWhitelist: new[] { "subfinder", "httpx" });
+        act.Should().Throw<InvalidOperationException>().WithMessage("*not present in the provided scanner manifest*");
+    }
+
+    [Fact]
+    public async Task Test19_ConfigurationDriven_Addition_Of_NewTool_Dnsx_Succeeds_Without_AdapterCodeChanges()
+    {
+        using var db = CreateInMemoryDbContext();
+        var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
+
+        // Configuration-driven addition of brand-new scanner 'dnsx' requiring zero adapter/orchestration code changes
+        var registered = await registry.RegisterToolAsync("dnsx", "DNSX Fast DNS Resolver", "v1.1.5", true, new[] { ToolCapability.DnsResolution }, executable: "dnsx");
+        registered.Should().NotBeNull();
+        registered.Executable.Should().Be("dnsx");
+
+        var tools = await registry.GetToolsForCapabilitiesAsync(new[] { ToolCapability.DnsResolution });
+        tools.Should().Contain(t => t.ToolKey == "dnsx" && t.Executable == "dnsx");
     }
 
     private static PlatformDbContext CreateInMemoryDbContext()

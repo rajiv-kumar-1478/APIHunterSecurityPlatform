@@ -24,6 +24,11 @@ public class ScanToolRegistryService
         _logger = logger;
     }
 
+    private static readonly HashSet<string> ForbiddenShellInterpreters = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "cmd", "cmd.exe", "powershell", "powershell.exe", "bash", "sh", "zsh", "csh", "ksh", "wscript", "cscript", "python", "python.exe", "perl", "ruby"
+    };
+
     public async Task<SecurityScanTool> RegisterToolAsync(
         string toolKey,
         string displayName,
@@ -34,6 +39,9 @@ public class ScanToolRegistryService
         CancellationToken ct = default)
     {
         toolKey = toolKey.Trim().ToLowerInvariant();
+        var targetExecutable = !string.IsNullOrWhiteSpace(executable) ? executable.Trim() : toolKey;
+
+        ValidateExecutableName(targetExecutable);
 
         var existing = await _dbContext.SecurityScanTools.FirstOrDefaultAsync(t => t.ToolKey == toolKey, ct);
         if (existing != null)
@@ -48,7 +56,7 @@ public class ScanToolRegistryService
             ToolKey = toolKey,
             DisplayName = displayName,
             Version = version,
-            Executable = !string.IsNullOrWhiteSpace(executable) ? executable.Trim() : toolKey,
+            Executable = targetExecutable,
             Required = required,
             Enabled = true,
             CapabilitiesJson = JsonSerializer.Serialize(capabilities.Select(c => c.ToString())),
@@ -150,4 +158,28 @@ public class ScanToolRegistryService
         ToolCapability.ReportGeneration => "Normalized security assessment artifact and finding report generation.",
         _ => "Security intelligence scanning capability."
     };
+
+    public static void ValidateExecutableName(string executable)
+    {
+        if (string.IsNullOrWhiteSpace(executable))
+        {
+            throw new ArgumentException("Tool executable name cannot be empty.", nameof(executable));
+        }
+
+        var trimmed = executable.Trim();
+        if (trimmed.Contains("..") || trimmed.Contains('/') || trimmed.Contains('\\') || Path.IsPathRooted(trimmed))
+        {
+            throw new InvalidOperationException($"Security Violation: Executable '{executable}' contains prohibited path separators, path traversal, or absolute path specifiers.");
+        }
+
+        if (ForbiddenShellInterpreters.Contains(trimmed))
+        {
+            throw new InvalidOperationException($"Security Violation: Shell interpreter or command primitive '{executable}' is strictly prohibited as a security scanner executable.");
+        }
+
+        if (!System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^[a-zA-Z0-9_\-\.]+$"))
+        {
+            throw new InvalidOperationException($"Security Violation: Executable name '{executable}' contains prohibited special characters.");
+        }
+    }
 }

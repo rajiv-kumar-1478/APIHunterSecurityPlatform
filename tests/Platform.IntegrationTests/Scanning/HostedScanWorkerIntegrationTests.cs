@@ -171,6 +171,40 @@ public class HostedScanWorkerIntegrationTests
         result.FailureReason.Should().Contain("CANCELLED");
     }
 
+    [Fact]
+    public async Task RealProcess_FullChain_SecurityScanToolExecutable_To_ProcessStartInfo()
+    {
+        using var db = CreateInMemoryDbContext();
+        db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "https://example.com", Enabled = true });
+        await db.SaveChangesAsync();
+
+        var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
+        // Register real harmless executable 'dotnet' in SecurityScanTool DB entity
+        await registry.RegisterToolAsync("dotnet_tool", "Dotnet Test CLI", "v10.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "dotnet");
+
+        var jobId = Guid.NewGuid();
+        var job = new SecurityScanJob
+        {
+            Id = jobId,
+            TargetUrl = "https://example.com",
+            ScanProfile = SecurityScanProfileType.Recon,
+            Status = SecurityScanJobStatus.Queued,
+            ProviderKey = "bughunter"
+        };
+        db.SecurityScanJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        // Use real GenericCliToolAdapter (NO MOCK) to launch actual process via ProcessStartInfo.FileName = tool.Executable
+        Func<string, IGenericCliToolAdapter> realAdapterFactory = toolKey =>
+            new GenericCliToolAdapter(toolKey, NullLogger<GenericCliToolAdapter>.Instance);
+
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, NullLogger<GenericScanWorker>.Instance);
+        var result = await worker.ExecuteScanJobAsync(jobId);
+
+        // Verify end-to-end real process execution through the entire chain
+        result.Status.Should().Be(SecurityScanJobStatus.Completed);
+    }
+
     private static PlatformDbContext CreateInMemoryDbContext()
     {
         var dbOptions = new DbContextOptionsBuilder<PlatformDbContext>()

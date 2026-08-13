@@ -16,11 +16,6 @@ namespace Platform.Infrastructure.Scanning;
 
 public class GenericCliToolAdapter : IGenericCliToolAdapter
 {
-    private static readonly HashSet<string> WhitelistedBinaries = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "subfinder", "httpx", "katana", "nuclei", "bughunter", "amass", "nmap", "ffuf"
-    };
-
     private readonly ILogger<GenericCliToolAdapter> _logger;
     private readonly string _scratchRoot;
 
@@ -190,15 +185,19 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         }
     }
 
-    public static void ValidateToolExecutableWhitelist(string toolKey, IEnumerable<string>? manifestWhitelist = null)
+    public static void ValidateToolExecutableWhitelist(string binaryName, IEnumerable<string>? manifestWhitelist = null)
     {
-        var effectiveWhitelist = manifestWhitelist != null
-            ? new HashSet<string>(manifestWhitelist, StringComparer.OrdinalIgnoreCase)
-            : WhitelistedBinaries;
+        // 1. Enforce trusted executable identifier rules (reject shell interpreters, path traversal, absolute paths)
+        ScanToolRegistryService.ValidateExecutableName(binaryName);
 
-        if (string.IsNullOrWhiteSpace(toolKey) || !effectiveWhitelist.Contains(toolKey.Trim()))
+        // 2. Validate against explicit manifest whitelist if provided
+        if (manifestWhitelist != null)
         {
-            throw new InvalidOperationException($"Security Violation: Executable binary '{toolKey}' is not registered in the authorized scanner tool manifest.");
+            var whitelistSet = new HashSet<string>(manifestWhitelist, StringComparer.OrdinalIgnoreCase);
+            if (!whitelistSet.Contains(binaryName.Trim()))
+            {
+                throw new InvalidOperationException($"Security Violation: Executable binary '{binaryName}' is not present in the provided scanner manifest.");
+            }
         }
     }
 
