@@ -193,8 +193,8 @@ public class SecurityAlertServiceTests : IDisposable
         var results = await Task.WhenAll(task1, task2);
 
         // Exactly one call should return true (sent), and one false (suppressed/claimed)
-        Assert.Single(results.Where(r => r));
-        Assert.Single(results.Where(r => !r));
+        Assert.Single(results, r => r);
+        Assert.Single(results, r => !r);
 
         _mockNotificationService.Verify(n => n.SendAsync(It.IsAny<Notification>(), It.IsAny<CancellationToken>()), Times.Once);
     }

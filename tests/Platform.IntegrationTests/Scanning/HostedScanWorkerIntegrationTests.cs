@@ -6,6 +6,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Platform.Application.Common;
@@ -325,13 +327,13 @@ public class HostedScanWorkerIntegrationTests
     {
         using var db = CreateInMemoryDbContext();
         var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        await registry.RegisterToolAsync("dotnet_tool", "Dotnet Test CLI", "v10.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "dotnet");
+        await registry.RegisterToolAsync("ping_tool", "Ping Long Runner", "v1.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "ping");
 
         var jobId = Guid.NewGuid();
         var job = new SecurityScanJob
         {
             Id = jobId,
-            TargetUrl = "version",
+            TargetUrl = "127.0.0.1",
             ScanProfile = SecurityScanProfileType.Recon,
             Status = SecurityScanJobStatus.Queued,
             ProviderKey = "bughunter"
@@ -340,20 +342,47 @@ public class HostedScanWorkerIntegrationTests
         await db.SaveChangesAsync();
 
         using var cts = new CancellationTokenSource();
+        CancellationTestCliToolAdapter? cancellationAdapter = null;
 
         Func<string, IGenericCliToolAdapter> realAdapterFactory = toolKey =>
-            new GenericCliToolAdapter(toolKey, NullLogger<GenericCliToolAdapter>.Instance);
+        {
+            cancellationAdapter = new CancellationTestCliToolAdapter(toolKey, NullLogger<GenericCliToolAdapter>.Instance);
+            return cancellationAdapter;
+        };
 
         var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, NullLogger<GenericScanWorker>.Instance);
 
         var workerTask = worker.ExecuteScanJobAsync(jobId, cts.Token);
-        await Task.Delay(100);
+
+        // Deterministic synchronization: Wait for real process to start
+        var liveProcess = await cancellationAdapter!.ProcessStartedTask;
+        liveProcess.Should().NotBeNull();
+        liveProcess.HasExited.Should().BeFalse("Real process must be running prior to cancellation");
+
+        // Cancel execution token while real process is actively executing
         cts.Cancel();
 
         var result = await workerTask;
 
+        // Verify worker status
         result.Status.Should().Be(SecurityScanJobStatus.Failed);
         result.FailureReason.Should().Contain("CANCELLED");
+
+        // Verify actual process termination
+        Func<bool> processIsTerminated = () =>
+        {
+            try
+            {
+                liveProcess.Refresh();
+                return liveProcess.HasExited;
+            }
+            catch
+            {
+                return true;
+            }
+        };
+
+        processIsTerminated().Should().BeTrue("Child process tree must be terminated after cancellation");
     }
 
     [Fact]
@@ -378,29 +407,81 @@ public class HostedScanWorkerIntegrationTests
         db.SecurityScanJobs.Add(job);
         await db.SaveChangesAsync();
 
-        ToolExecutionRequest? capturedRequest = null;
+        RecordingCliToolAdapter? recordingAdapter = null;
         Func<string, IGenericCliToolAdapter> realAdapterFactory = toolKey =>
         {
-            var adapter = new GenericCliToolAdapter(toolKey, NullLogger<GenericCliToolAdapter>.Instance);
-            var mockAdapter = new Mock<IGenericCliToolAdapter>();
-            mockAdapter.Setup(a => a.ToolKey).Returns(toolKey);
-            mockAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                       .Returns<ToolExecutionRequest, ProviderSecretLease, string, CancellationToken>(async (req, lease, scratch, ct) =>
-                       {
-                           capturedRequest = req;
-                           return await adapter.ExecuteAsync(req, lease, scratch, ct);
-                       });
-            return mockAdapter.Object;
+            recordingAdapter = new RecordingCliToolAdapter(toolKey, NullLogger<GenericCliToolAdapter>.Instance);
+            return recordingAdapter;
         };
 
         var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, NullLogger<GenericScanWorker>.Instance);
         var result = await worker.ExecuteScanJobAsync(jobId);
 
         result.Status.Should().Be(SecurityScanJobStatus.Completed);
-        capturedRequest.Should().NotBeNull();
-        capturedRequest!.Executable.Should().Be("dotnet");
-        capturedRequest.AuthorizedManifest.Should().ContainKey("dotnet_tool");
-        capturedRequest.AuthorizedManifest!["dotnet_tool"].Should().Be("dotnet");
+        recordingAdapter.Should().NotBeNull();
+        recordingAdapter!.LastRequest.Should().NotBeNull();
+        recordingAdapter.LastRequest!.Executable.Should().Be("dotnet");
+        recordingAdapter.LastRequest.AuthorizedManifest.Should().ContainKey("dotnet_tool");
+        recordingAdapter.LastRequest.AuthorizedManifest!["dotnet_tool"].Should().Be("dotnet");
+    }
+
+    private sealed class RecordingCliToolAdapter : IGenericCliToolAdapter
+    {
+        private readonly GenericCliToolAdapter _inner;
+
+        public ToolExecutionRequest? LastRequest { get; private set; }
+        public string ToolKey => _inner.ToolKey;
+
+        public RecordingCliToolAdapter(string toolKey, ILogger<GenericCliToolAdapter> logger)
+        {
+            _inner = new GenericCliToolAdapter(toolKey, logger);
+        }
+
+        public async Task<ToolExecutionResult> ExecuteAsync(ToolExecutionRequest request, ProviderSecretLease secretLease, string scratchDirectory, CancellationToken cancellationToken = default)
+        {
+            LastRequest = request;
+            return await _inner.ExecuteAsync(request, secretLease, scratchDirectory, cancellationToken);
+        }
+    }
+
+    private sealed class CancellationTestCliToolAdapter : IGenericCliToolAdapter
+    {
+        private readonly GenericCliToolAdapter _inner;
+        private readonly TaskCompletionSource<Process> _processStartedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<Process> ProcessStartedTask => _processStartedTcs.Task;
+        public string ToolKey => _inner.ToolKey;
+
+        public CancellationTestCliToolAdapter(string toolKey, ILogger<GenericCliToolAdapter> logger)
+        {
+            _inner = new GenericCliToolAdapter(toolKey, logger);
+        }
+
+        public async Task<ToolExecutionResult> ExecuteAsync(ToolExecutionRequest request, ProviderSecretLease secretLease, string scratchDirectory, CancellationToken cancellationToken = default)
+        {
+            var longRunningRequest = request with
+            {
+                Arguments = OperatingSystem.IsWindows()
+                    ? new Dictionary<string, string> { ["-n"] = "30", ["127.0.0.1"] = "" }
+                    : new Dictionary<string, string> { ["-c"] = "30", ["127.0.0.1"] = "" }
+            };
+
+            var execTask = _inner.ExecuteAsync(longRunningRequest, secretLease, scratchDirectory, cancellationToken);
+
+            for (var i = 0; i < 50; i++)
+            {
+                var procs = Process.GetProcessesByName("ping");
+                var active = procs.FirstOrDefault(p => !p.HasExited);
+                if (active != null)
+                {
+                    _processStartedTcs.TrySetResult(active);
+                    break;
+                }
+                await Task.Delay(20);
+            }
+
+            return await execTask;
+        }
     }
 
     private static PlatformDbContext CreateInMemoryDbContext()

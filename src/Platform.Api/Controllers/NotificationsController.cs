@@ -10,8 +10,7 @@ namespace Platform.Api.Controllers;
 [RequireAdmin]
 public class NotificationsController(
     IEnumerable<INotificationProvider> providers,
-    INotificationService notificationService,
-    ICurrentUserContext currentUser) : ControllerBase
+    INotificationService notificationService) : ControllerBase
 {
     [HttpGet("providers")]
     public async Task<IActionResult> GetProviderStatus(CancellationToken ct)
