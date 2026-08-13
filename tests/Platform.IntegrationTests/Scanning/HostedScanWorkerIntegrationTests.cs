@@ -342,11 +342,11 @@ public class HostedScanWorkerIntegrationTests
         await db.SaveChangesAsync();
 
         using var cts = new CancellationTokenSource();
-        CancellationTestCliToolAdapter? cancellationAdapter = null;
+        ObservableCancellationCliToolAdapter? cancellationAdapter = null;
 
         Func<string, IGenericCliToolAdapter> realAdapterFactory = toolKey =>
         {
-            cancellationAdapter = new CancellationTestCliToolAdapter(toolKey, NullLogger<GenericCliToolAdapter>.Instance);
+            cancellationAdapter = new ObservableCancellationCliToolAdapter(toolKey, NullLogger<GenericCliToolAdapter>.Instance);
             return cancellationAdapter;
         };
 
@@ -354,12 +354,12 @@ public class HostedScanWorkerIntegrationTests
 
         var workerTask = worker.ExecuteScanJobAsync(jobId, cts.Token);
 
-        // Deterministic synchronization: Wait for real process to start
-        var liveProcess = await cancellationAdapter!.ProcessStartedTask;
+        // Bounded startup wait (max 5 seconds): wait for exact child process instance to start
+        var liveProcess = await cancellationAdapter!.ProcessStartedTask.WaitAsync(TimeSpan.FromSeconds(5));
         liveProcess.Should().NotBeNull();
-        liveProcess.HasExited.Should().BeFalse("Real process must be running prior to cancellation");
+        liveProcess.HasExited.Should().BeFalse("Exact child process instance must be running prior to cancellation");
 
-        // Cancel execution token while real process is actively executing
+        // Cancel execution token only after exact child process is confirmed alive
         cts.Cancel();
 
         var result = await workerTask;
@@ -368,7 +368,7 @@ public class HostedScanWorkerIntegrationTests
         result.Status.Should().Be(SecurityScanJobStatus.Failed);
         result.FailureReason.Should().Contain("CANCELLED");
 
-        // Verify actual process termination
+        // Assert exact captured process instance is terminated
         Func<bool> processIsTerminated = () =>
         {
             try
@@ -376,13 +376,14 @@ public class HostedScanWorkerIntegrationTests
                 liveProcess.Refresh();
                 return liveProcess.HasExited;
             }
-            catch
+            catch (InvalidOperationException)
             {
+                // Process object was disposed following process termination
                 return true;
             }
         };
 
-        processIsTerminated().Should().BeTrue("Child process tree must be terminated after cancellation");
+        processIsTerminated().Should().BeTrue("Exact child process instance must be terminated after cancellation");
     }
 
     [Fact]
@@ -444,20 +445,27 @@ public class HostedScanWorkerIntegrationTests
         }
     }
 
-    private sealed class CancellationTestCliToolAdapter : IGenericCliToolAdapter
+    private sealed class ObservableCancellationCliToolAdapter : GenericCliToolAdapter
     {
-        private readonly GenericCliToolAdapter _inner;
         private readonly TaskCompletionSource<Process> _processStartedTcs = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public Task<Process> ProcessStartedTask => _processStartedTcs.Task;
-        public string ToolKey => _inner.ToolKey;
 
-        public CancellationTestCliToolAdapter(string toolKey, ILogger<GenericCliToolAdapter> logger)
+        public ObservableCancellationCliToolAdapter(string toolKey, ILogger<GenericCliToolAdapter> logger)
+            : base(toolKey, logger)
         {
-            _inner = new GenericCliToolAdapter(toolKey, logger);
         }
 
-        public async Task<ToolExecutionResult> ExecuteAsync(ToolExecutionRequest request, ProviderSecretLease secretLease, string scratchDirectory, CancellationToken cancellationToken = default)
+        protected override void OnProcessStarted(Process process)
+        {
+            _processStartedTcs.TrySetResult(process);
+        }
+
+        public override async Task<ToolExecutionResult> ExecuteAsync(
+            ToolExecutionRequest request,
+            ProviderSecretLease secretLease,
+            string scratchDirectory,
+            CancellationToken ct = default)
         {
             var longRunningRequest = request with
             {
@@ -466,21 +474,7 @@ public class HostedScanWorkerIntegrationTests
                     : new Dictionary<string, string> { ["-c"] = "30", ["127.0.0.1"] = "" }
             };
 
-            var execTask = _inner.ExecuteAsync(longRunningRequest, secretLease, scratchDirectory, cancellationToken);
-
-            for (var i = 0; i < 50; i++)
-            {
-                var procs = Process.GetProcessesByName("ping");
-                var active = procs.FirstOrDefault(p => !p.HasExited);
-                if (active != null)
-                {
-                    _processStartedTcs.TrySetResult(active);
-                    break;
-                }
-                await Task.Delay(20);
-            }
-
-            return await execTask;
+            return await base.ExecuteAsync(longRunningRequest, secretLease, scratchDirectory, ct);
         }
     }
 

@@ -29,7 +29,7 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         _scratchRoot = scratchRoot ?? Path.Combine(Path.GetTempPath(), "apihunter_scans");
     }
 
-    public async Task<ToolExecutionResult> ExecuteAsync(
+    public virtual async Task<ToolExecutionResult> ExecuteAsync(
         ToolExecutionRequest request,
         ProviderSecretLease secretLease,
         string scratchDirectory,
@@ -130,6 +130,7 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
 
             _logger.LogInformation("Starting CLI tool '{ToolKey}' (Job: {ScanJobId}) in '{ScratchDirectory}'.", request.ToolKey, request.ScanJobId, scratchDirectory);
             process.Start();
+            OnProcessStarted(process);
             process.BeginOutputReadLine();
             process.BeginErrorReadLine();
 
@@ -251,6 +252,10 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
                 throw new InvalidOperationException($"Security Violation: Scratch directory '{directoryPath}' is a symlink or junction point.");
             }
         }
+    }
+
+    protected virtual void OnProcessStarted(Process process)
+    {
     }
 
     public static string SanitizeOutput(string raw, ProviderSecretLease? secretLease)
