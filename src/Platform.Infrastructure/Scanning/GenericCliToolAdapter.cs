@@ -48,7 +48,9 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         Directory.CreateDirectory(scratchDirectory);
         VerifyNoReparsePointOrSymlink(scratchDirectory);
 
-        var binaryName = GetBinaryFileName(request.ToolKey);
+        var binaryName = !string.IsNullOrWhiteSpace(request.Executable)
+            ? request.Executable
+            : GetBinaryFileName(request.ToolKey);
         var stdoutBuilder = new StringBuilder();
         var stderrBuilder = new StringBuilder();
 

@@ -48,7 +48,8 @@ public record ToolExecutionRequest(
     string Version,
     IReadOnlyDictionary<string, string> Arguments,
     Guid ScanJobId,
-    TimeSpan Timeout
+    TimeSpan Timeout,
+    string? Executable = null
 );
 
 public record ToolExecutionResult(

@@ -79,7 +79,8 @@ public class GenericScanWorker : IScanWorker
                     Version: tool.Version,
                     Arguments: new Dictionary<string, string> { ["target"] = job.TargetUrl },
                     ScanJobId: job.Id,
-                    Timeout: TimeSpan.FromMinutes(10)
+                    Timeout: TimeSpan.FromMinutes(10),
+                    Executable: tool.Executable
                 );
 
                 var toolResult = await cliAdapter.ExecuteAsync(toolRequest, secretLease, scratchDirectory, ct);

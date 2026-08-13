@@ -174,7 +174,7 @@ public class GenericCliToolAdapterSecurityTests
     }
 
     [Fact]
-    public void Test9_ProviderSecretLease_Dispose_ZeroesSecretsContainer()
+    public void Test9_ProviderSecretLease_Dispose_ReleasesContainerReferences()
     {
         var secretDict = new Dictionary<string, string>
         {
@@ -185,7 +185,7 @@ public class GenericCliToolAdapterSecurityTests
         lease.Secrets.Should().ContainKey("GROQ_API_KEY");
         lease.Dispose();
 
-        lease.Secrets.Should().BeEmpty();
+        lease.Secrets.Should().BeEmpty("Disposal must release all managed dictionary secret references");
     }
 
     [Fact]
