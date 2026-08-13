@@ -120,7 +120,68 @@ public enum AuditEventCode
     RemediateActionExecutionFailed,
     RemediateActionVerificationStarted,
     RemediateActionVerificationCompleted,
-    RemediateActionVerificationFailed
+    RemediateActionVerificationFailed,
+
+    // Phase 8 — Hosted Security Scanning & Provider Foundation
+    ScanJobCreated,
+    ScanJobStatusChanged,
+    ScanJobCancelled,
+    ScanToolRegistered,
+    ScanToolStatusChanged,
+    ScanProviderConfigured
+}
+
+public enum SecurityScanJobStatus
+{
+    Queued,
+    Validating,
+    Running,
+    Completed,
+    CompletedWithWarnings,
+    Partial,
+    Failed,
+    Cancelled,
+    TimedOut,
+    Blocked
+}
+
+public enum SecurityScanProfileType
+{
+    Recon,
+    WebAssessment,
+    FullAssessment
+}
+
+public enum ToolCapability
+{
+    SubdomainEnumeration,
+    DnsResolution,
+    HttpProbing,
+    UrlCrawling,
+    VulnerabilityScanning,
+    Fuzzing,
+    SecretScanning,
+    Web3Analysis,
+    AiAssistedHunting,
+    ReportGeneration
+}
+
+public enum ToolHealthStatus
+{
+    Healthy,
+    Degraded,
+    Missing,
+    Unreachable,
+    Disabled
+}
+
+public enum ToolExecutionStatus
+{
+    Success,
+    Warning,
+    Failed,
+    TimedOut,
+    Skipped
 }
 
 public enum RemediationVerificationStatus

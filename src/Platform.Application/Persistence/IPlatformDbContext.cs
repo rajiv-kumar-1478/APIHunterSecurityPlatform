@@ -55,9 +55,13 @@ public interface IPlatformDbContext
     DbSet<RemediationExecution> RemediationExecutions { get; }
     DbSet<RemediationVerification> RemediationVerifications { get; }
 
+    // Phase 8 DbSets
+    DbSet<SecurityTarget> SecurityTargets { get; }
+    DbSet<SecurityScanJob> SecurityScanJobs { get; }
+    DbSet<SecurityScanTool> SecurityScanTools { get; }
+    DbSet<SecurityProviderCredential> SecurityProviderCredentials { get; }
+
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 
 }
-
-

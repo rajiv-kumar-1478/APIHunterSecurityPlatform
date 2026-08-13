@@ -54,6 +54,12 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
     public DbSet<RemediationExecution> RemediationExecutions => Set<RemediationExecution>();
     public DbSet<RemediationVerification> RemediationVerifications => Set<RemediationVerification>();
 
+    // Phase 8 DbSets
+    public DbSet<SecurityTarget> SecurityTargets => Set<SecurityTarget>();
+    public DbSet<SecurityScanJob> SecurityScanJobs => Set<SecurityScanJob>();
+    public DbSet<SecurityScanTool> SecurityScanTools => Set<SecurityScanTool>();
+    public DbSet<SecurityProviderCredential> SecurityProviderCredentials => Set<SecurityProviderCredential>();
+
 
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -701,6 +707,73 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
              .WithMany()
              .HasForeignKey(rv => rv.RemediationExecutionId)
              .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // SecurityTarget
+        modelBuilder.Entity<SecurityTarget>(e =>
+        {
+            e.ToTable("security_targets");
+            e.HasKey(st => st.Id);
+            e.HasIndex(st => st.BaseUrl);
+            e.Property(st => st.Name).HasMaxLength(200).IsRequired();
+            e.Property(st => st.BaseUrl).HasMaxLength(1024).IsRequired();
+            e.Property(st => st.TargetType).HasMaxLength(100).IsRequired();
+        });
+
+        // SecurityScanJob
+        modelBuilder.Entity<SecurityScanJob>(e =>
+        {
+            e.ToTable("security_scan_jobs");
+            e.HasKey(sj => sj.Id);
+            e.HasIndex(sj => sj.Status);
+            e.HasIndex(sj => sj.TargetUrl);
+            e.HasIndex(sj => sj.CreatedAtUtc);
+            e.Property(sj => sj.TargetUrl).HasMaxLength(1024).IsRequired();
+            e.Property(sj => sj.ProviderKey).HasMaxLength(100).IsRequired();
+            e.Property(sj => sj.CorrelationId).HasMaxLength(100).IsRequired();
+            e.Property(sj => sj.ScanProfile).HasConversion<string>().HasMaxLength(50);
+            e.Property(sj => sj.Status).HasConversion<string>().HasMaxLength(50);
+            e.Property(sj => sj.Version).IsConcurrencyToken();
+
+            e.HasOne(sj => sj.Target)
+             .WithMany()
+             .HasForeignKey(sj => sj.TargetId)
+             .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(sj => sj.Repository)
+             .WithMany()
+             .HasForeignKey(sj => sj.RepositoryId)
+             .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(sj => sj.RequestedByUser)
+             .WithMany()
+             .HasForeignKey(sj => sj.RequestedByUserId)
+             .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        // SecurityScanTool
+        modelBuilder.Entity<SecurityScanTool>(e =>
+        {
+            e.ToTable("security_scan_tools");
+            e.HasKey(st => st.Id);
+            e.HasIndex(st => st.ToolKey).IsUnique();
+            e.Property(st => st.ToolKey).HasMaxLength(100).IsRequired();
+            e.Property(st => st.DisplayName).HasMaxLength(200).IsRequired();
+            e.Property(st => st.Version).HasMaxLength(100).IsRequired();
+            e.Property(st => st.CapabilitiesJson).HasColumnType("jsonb");
+            e.Property(st => st.HealthStatus).HasConversion<string>().HasMaxLength(50);
+        });
+
+        // SecurityProviderCredential
+        modelBuilder.Entity<SecurityProviderCredential>(e =>
+        {
+            e.ToTable("security_provider_credentials");
+            e.HasKey(pc => pc.Id);
+            e.HasIndex(pc => new { pc.ProviderKey, pc.SecretReference }).IsUnique();
+            e.Property(pc => pc.ProviderKey).HasMaxLength(100).IsRequired();
+            e.Property(pc => pc.SecretReference).HasMaxLength(250).IsRequired();
+            e.Property(pc => pc.CredentialType).HasMaxLength(100).IsRequired();
+            e.Property(pc => pc.ValidationStatus).HasMaxLength(50);
         });
     }
 }

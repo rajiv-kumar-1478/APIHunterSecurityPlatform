@@ -13,6 +13,9 @@ using Platform.Application.Audit;
 using Platform.Application.Configuration;
 using Platform.Application.Health;
 using Platform.Application.Notifications;
+using Platform.Application.Scanning;
+using Platform.Application.Scanning.Contracts;
+using Platform.Infrastructure.Scanning;
 using Platform.Application.Permissions;
 using Platform.Application.Persistence;
 using Platform.Application.Providers;
@@ -260,6 +263,22 @@ try
     builder.Services.AddSingleton<IVerificationStrategy, RevokeCredentialVerificationStrategy>();
     builder.Services.AddSingleton<IVerificationStrategy, FallbackVerificationStrategy>();
     builder.Services.AddScoped<PostRemediationVerificationService>();
+
+    // Phase 8 — Hosted Security Scanning & Scan Foundation
+    builder.Services.AddScoped<ScanToolRegistryService>();
+    builder.Services.AddScoped<ScanJobService>();
+    builder.Services.AddScoped<IScanToolHealthService, ScanToolHealthService>();
+    builder.Services.AddSingleton<IBugHunterProvider, BugHunterScanProvider>();
+    builder.Services.AddSingleton<IScanProvider, BugHunterScanProvider>();
+
+    if (builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing"))
+    {
+        builder.Services.AddSingleton<IScanProviderSecretStore, InMemoryScanProviderSecretStore>();
+    }
+    else
+    {
+        builder.Services.AddSingleton<IScanProviderSecretStore, ConfigurationScanProviderSecretStore>();
+    }
 
 
 
