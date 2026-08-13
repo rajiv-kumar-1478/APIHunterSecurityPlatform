@@ -138,3 +138,35 @@ public record CreateScanJobRequest(
     SecurityScanProfileType ScanProfile = SecurityScanProfileType.Recon,
     string ProviderKey = "bughunter"
 );
+
+public sealed record EgressTarget(
+    string RawTargetUrl,
+    string CanonicalHost,
+    int Port,
+    string Scheme,
+    IReadOnlySet<System.Net.IPAddress> ApprovedIpAddresses,
+    DateTime ResolvedAtUtc,
+    DateTime ExpiresAtUtc,
+    string PolicyVersion
+)
+{
+    public bool IsExpired(DateTime? nowUtc = null) => (nowUtc ?? DateTime.UtcNow) >= ExpiresAtUtc;
+}
+
+public record ToolProbeResult(
+    string ToolKey,
+    bool Success,
+    string ProbeName,
+    string? ErrorCode,
+    string? ErrorMessage,
+    DateTime ProbedAtUtc
+);
+
+public record ProvisioningResult(
+    string ToolKey,
+    string Version,
+    bool Success,
+    string InstallPath,
+    string? ErrorCode,
+    string? ErrorMessage
+);

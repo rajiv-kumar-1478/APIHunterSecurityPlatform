@@ -58,6 +58,7 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
     public DbSet<SecurityTarget> SecurityTargets => Set<SecurityTarget>();
     public DbSet<SecurityScanJob> SecurityScanJobs => Set<SecurityScanJob>();
     public DbSet<SecurityScanTool> SecurityScanTools => Set<SecurityScanTool>();
+    public DbSet<ToolDependency> ToolDependencies => Set<ToolDependency>();
     public DbSet<SecurityProviderCredential> SecurityProviderCredentials => Set<SecurityProviderCredential>();
 
 
@@ -761,8 +762,25 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.Property(st => st.DisplayName).HasMaxLength(200).IsRequired();
             e.Property(st => st.Version).HasMaxLength(100).IsRequired();
             e.Property(st => st.Executable).HasMaxLength(200).IsRequired();
+            e.Property(st => st.ArtifactSourceType).HasMaxLength(100);
+            e.Property(st => st.ArtifactRepository).HasMaxLength(256);
+            e.Property(st => st.ArtifactSha256).HasMaxLength(128);
+            e.Property(st => st.ArtifactSignature).HasMaxLength(512);
+            e.Property(st => st.ContainerImageDigest).HasMaxLength(128);
             e.Property(st => st.CapabilitiesJson).HasColumnType("jsonb");
             e.Property(st => st.HealthStatus).HasConversion<string>().HasMaxLength(50);
+        });
+
+        // ToolDependency
+        modelBuilder.Entity<ToolDependency>(e =>
+        {
+            e.ToTable("tool_dependencies");
+            e.HasKey(td => td.Id);
+            e.HasIndex(td => new { td.ParentToolKey, td.DependencyToolKey }).IsUnique();
+            e.Property(td => td.ParentToolKey).HasMaxLength(100).IsRequired();
+            e.Property(td => td.DependencyToolKey).HasMaxLength(100).IsRequired();
+            e.Property(td => td.RequiredVersion).HasMaxLength(100).IsRequired();
+            e.Property(td => td.RequiredSha256).HasMaxLength(128).IsRequired();
         });
 
         // SecurityProviderCredential

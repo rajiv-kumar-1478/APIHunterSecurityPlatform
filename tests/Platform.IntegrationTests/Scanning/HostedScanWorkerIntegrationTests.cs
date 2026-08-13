@@ -478,6 +478,50 @@ public class HostedScanWorkerIntegrationTests
         }
     }
 
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Step2_Worker_RejectsProhibitedTarget_BeforeToolDispatch()
+    {
+        using var db = CreateInMemoryDbContext();
+        db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "http://169.254.169.254", Enabled = true });
+        await db.SaveChangesAsync();
+
+        var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
+        await registry.RegisterToolAsync("amass", "Amass", "v4.0.0", true, new[] { ToolCapability.SubdomainEnumeration }, executable: "amass");
+
+        var job = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            TargetUrl = "http://169.254.169.254/latest/meta-data/",
+            ScanProfile = SecurityScanProfileType.Recon,
+            Status = SecurityScanJobStatus.Queued,
+            ProviderKey = "bughunter"
+        };
+        db.SecurityScanJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var adapterCalled = false;
+        Func<string, IGenericCliToolAdapter> factory = toolKey =>
+        {
+            var mockAdapter = new Mock<IGenericCliToolAdapter>();
+            mockAdapter.Setup(a => a.ToolKey).Returns(toolKey);
+            mockAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                       .Callback(() => adapterCalled = true)
+                       .ReturnsAsync(new ToolExecutionResult(toolKey, "v4.0.0", ToolExecutionStatus.Success, 0, null, null));
+            return mockAdapter.Object;
+        };
+
+        var egressEngine = new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, NullLogger<GenericScanWorker>.Instance, egressEngine);
+
+        Func<Task> act = async () => await worker.ExecuteScanJobAsync(job.Id);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*prohibited*");
+
+        adapterCalled.Should().BeFalse("Tool adapter must never be invoked for prohibited SSRF targets");
+    }
+
     private static PlatformDbContext CreateInMemoryDbContext()
     {
         var dbOptions = new DbContextOptionsBuilder<PlatformDbContext>()

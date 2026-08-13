@@ -59,6 +59,7 @@ public interface IPlatformDbContext
     DbSet<SecurityTarget> SecurityTargets { get; }
     DbSet<SecurityScanJob> SecurityScanJobs { get; }
     DbSet<SecurityScanTool> SecurityScanTools { get; }
+    DbSet<ToolDependency> ToolDependencies { get; }
     DbSet<SecurityProviderCredential> SecurityProviderCredentials { get; }
 
 

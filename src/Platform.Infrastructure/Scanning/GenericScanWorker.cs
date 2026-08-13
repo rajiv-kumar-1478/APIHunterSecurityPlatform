@@ -18,6 +18,7 @@ public class GenericScanWorker : IScanWorker
     private readonly IScanProviderSecretStore _secretStore;
     private readonly ScanToolRegistryService _toolRegistryService;
     private readonly Func<string, IGenericCliToolAdapter> _cliAdapterFactory;
+    private readonly IEgressPolicyEngine? _egressPolicyEngine;
     private readonly ILogger<GenericScanWorker> _logger;
 
     public GenericScanWorker(
@@ -25,13 +26,15 @@ public class GenericScanWorker : IScanWorker
         IScanProviderSecretStore secretStore,
         ScanToolRegistryService toolRegistryService,
         Func<string, IGenericCliToolAdapter> cliAdapterFactory,
-        ILogger<GenericScanWorker> logger)
+        ILogger<GenericScanWorker> logger,
+        IEgressPolicyEngine? egressPolicyEngine = null)
     {
         _dbContext = dbContext;
         _secretStore = secretStore;
         _toolRegistryService = toolRegistryService;
         _cliAdapterFactory = cliAdapterFactory;
         _logger = logger;
+        _egressPolicyEngine = egressPolicyEngine;
     }
 
     public async Task<ScanExecutionResult> ExecuteScanJobAsync(Guid scanJobId, CancellationToken ct = default)
@@ -40,6 +43,14 @@ public class GenericScanWorker : IScanWorker
         if (job == null)
         {
             throw new KeyNotFoundException($"Scan job '{scanJobId}' not found.");
+        }
+
+        // Validate target URL against Egress Policy Sandbox if available
+        if (_egressPolicyEngine != null)
+        {
+            var egressTarget = await _egressPolicyEngine.EvaluateAndBuildTargetAsync(job.TargetUrl, TimeSpan.FromMinutes(10), ct);
+            _logger.LogInformation("Worker validated target '{TargetUrl}' to canonical host '{CanonicalHost}' with {Count} approved IP(s).",
+                job.TargetUrl, egressTarget.CanonicalHost, egressTarget.ApprovedIpAddresses.Count);
         }
 
         var scratchRoot = Path.Combine(Path.GetTempPath(), "apihunter_scans");

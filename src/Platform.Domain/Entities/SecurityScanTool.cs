@@ -19,6 +19,16 @@ public class SecurityScanTool
 
     public string ImageDigest { get; set; } = string.Empty;
 
+    public string ArtifactSourceType { get; set; } = string.Empty;
+
+    public string ArtifactRepository { get; set; } = string.Empty;
+
+    public string ArtifactSha256 { get; set; } = string.Empty;
+
+    public string? ArtifactSignature { get; set; }
+
+    public string? ContainerImageDigest { get; set; }
+
     public bool Enabled { get; set; } = true;
 
     public bool Required { get; set; } = false;
