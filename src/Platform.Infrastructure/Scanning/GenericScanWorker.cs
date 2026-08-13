@@ -110,6 +110,23 @@ public class GenericScanWorker : IScanWorker
             var summary = $"Executed {toolResults.Count} tools for target '{job.TargetUrl}'.";
             return new ScanExecutionResult(job.Id, job.Status, job.CorrelationId, scratchDirectory, summary, DateTime.UtcNow);
         }
+        catch (OperationCanceledException ex)
+        {
+            _logger.LogWarning(ex, "Scan execution for job '{ScanJobId}' was cancelled.", scanJobId);
+            job.Status = SecurityScanJobStatus.Failed;
+            job.FailureReason = "CANCELLED: Tool execution cancelled or timed out.";
+            job.CompletedAtUtc = DateTime.UtcNow;
+            try
+            {
+                await _dbContext.SaveChangesAsync(CancellationToken.None);
+            }
+            catch
+            {
+                // Suppress secondary save errors on cancellation
+            }
+
+            return new ScanExecutionResult(job.Id, job.Status, null, null, job.FailureReason, DateTime.UtcNow);
+        }
         finally
         {
             // Guaranteed Scratch Directory Cleanup

@@ -325,13 +325,13 @@ public class HostedScanWorkerIntegrationTests
     {
         using var db = CreateInMemoryDbContext();
         var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        await registry.RegisterToolAsync("subfinder", "Subfinder Tool", "v2.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "subfinder");
+        await registry.RegisterToolAsync("dotnet_tool", "Dotnet Test CLI", "v10.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "dotnet");
 
         var jobId = Guid.NewGuid();
         var job = new SecurityScanJob
         {
             Id = jobId,
-            TargetUrl = "https://example.com",
+            TargetUrl = "version",
             ScanProfile = SecurityScanProfileType.Recon,
             Status = SecurityScanJobStatus.Queued,
             ProviderKey = "bughunter"
@@ -340,19 +340,17 @@ public class HostedScanWorkerIntegrationTests
         await db.SaveChangesAsync();
 
         using var cts = new CancellationTokenSource();
+
+        Func<string, IGenericCliToolAdapter> realAdapterFactory = toolKey =>
+            new GenericCliToolAdapter(toolKey, NullLogger<GenericCliToolAdapter>.Instance);
+
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, NullLogger<GenericScanWorker>.Instance);
+
+        var workerTask = worker.ExecuteScanJobAsync(jobId, cts.Token);
+        await Task.Delay(100);
         cts.Cancel();
 
-        Func<string, IGenericCliToolAdapter> factory = toolKey =>
-        {
-            var mockAdapter = new Mock<IGenericCliToolAdapter>();
-            mockAdapter.Setup(a => a.ToolKey).Returns(toolKey);
-            mockAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                       .ReturnsAsync(new ToolExecutionResult(toolKey, "v2.0.0", ToolExecutionStatus.TimedOut, 124, null, "CANCELLED"));
-            return mockAdapter.Object;
-        };
-
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, NullLogger<GenericScanWorker>.Instance);
-        var result = await worker.ExecuteScanJobAsync(jobId, CancellationToken.None);
+        var result = await workerTask;
 
         result.Status.Should().Be(SecurityScanJobStatus.Failed);
         result.FailureReason.Should().Contain("CANCELLED");
@@ -362,36 +360,47 @@ public class HostedScanWorkerIntegrationTests
     public async Task RealProcess_FullChain_SecurityScanToolExecutable_To_ProcessStartInfo()
     {
         using var db = CreateInMemoryDbContext();
-        db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "https://example.com", Enabled = true });
+        db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "version", Enabled = true });
         await db.SaveChangesAsync();
 
         var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        // Register real harmless executable 'dotnet' in SecurityScanTool DB entity
-        await registry.RegisterToolAsync("dotnet_tool", "Dotnet Test CLI", "v10.0.0", true, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "dotnet");
+        await registry.RegisterToolAsync("dotnet_tool", "Dotnet Test CLI", "v10.0.0", false, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "dotnet");
 
-        var manifestMap = await registry.GetAuthorizedManifestMapAsync();
-        manifestMap.Should().ContainKey("dotnet_tool");
-        manifestMap["dotnet_tool"].Should().Be("dotnet");
+        var jobId = Guid.NewGuid();
+        var job = new SecurityScanJob
+        {
+            Id = jobId,
+            TargetUrl = "version",
+            ScanProfile = SecurityScanProfileType.Recon,
+            Status = SecurityScanJobStatus.Queued,
+            ProviderKey = "bughunter"
+        };
+        db.SecurityScanJobs.Add(job);
+        await db.SaveChangesAsync();
 
-        var adapter = new GenericCliToolAdapter("dotnet_tool", NullLogger<GenericCliToolAdapter>.Instance);
-        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
-        var scratchDir = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString());
+        ToolExecutionRequest? capturedRequest = null;
+        Func<string, IGenericCliToolAdapter> realAdapterFactory = toolKey =>
+        {
+            var adapter = new GenericCliToolAdapter(toolKey, NullLogger<GenericCliToolAdapter>.Instance);
+            var mockAdapter = new Mock<IGenericCliToolAdapter>();
+            mockAdapter.Setup(a => a.ToolKey).Returns(toolKey);
+            mockAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                       .Returns<ToolExecutionRequest, ProviderSecretLease, string, CancellationToken>(async (req, lease, scratch, ct) =>
+                       {
+                           capturedRequest = req;
+                           return await adapter.ExecuteAsync(req, lease, scratch, ct);
+                       });
+            return mockAdapter.Object;
+        };
 
-        var request = new ToolExecutionRequest(
-            ToolKey: "dotnet_tool",
-            Version: "v10.0.0",
-            Arguments: new Dictionary<string, string> { ["version"] = "" },
-            ScanJobId: Guid.NewGuid(),
-            Timeout: TimeSpan.FromSeconds(10),
-            Executable: "dotnet",
-            AuthorizedManifest: manifestMap
-        );
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, NullLogger<GenericScanWorker>.Instance);
+        var result = await worker.ExecuteScanJobAsync(jobId);
 
-        var result = await adapter.ExecuteAsync(request, secretLease, scratchDir);
-
-        // Verify end-to-end real process execution through the entire chain
-        result.Status.Should().Be(ToolExecutionStatus.Success);
-        result.ExitCode.Should().Be(0);
+        result.Status.Should().Be(SecurityScanJobStatus.Completed);
+        capturedRequest.Should().NotBeNull();
+        capturedRequest!.Executable.Should().Be("dotnet");
+        capturedRequest.AuthorizedManifest.Should().ContainKey("dotnet_tool");
+        capturedRequest.AuthorizedManifest!["dotnet_tool"].Should().Be("dotnet");
     }
 
     private static PlatformDbContext CreateInMemoryDbContext()
