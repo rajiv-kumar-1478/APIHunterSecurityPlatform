@@ -50,4 +50,5 @@ public class SecurityFinding
     public User? ResolvedByUser { get; set; }
     public ICollection<SecurityFindingEvidence> Evidences { get; set; } = new List<SecurityFindingEvidence>();
     public ICollection<SecurityFindingStatusHistory> StatusHistories { get; set; } = new List<SecurityFindingStatusHistory>();
+    public ICollection<RemediationAction> RemediationActions { get; set; } = new List<RemediationAction>();
 }

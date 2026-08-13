@@ -49,6 +49,12 @@ public interface IPlatformDbContext
     DbSet<SecurityFindingStatusHistory> SecurityFindingStatusHistories { get; }
     DbSet<SecurityAlertLog> SecurityAlertLogs { get; }
 
+    // Phase 7 DbSets
+    DbSet<RemediationAction> RemediationActions { get; }
+    DbSet<RemediationActionHistory> RemediationActionHistories { get; }
+    DbSet<RemediationExecution> RemediationExecutions { get; }
+    DbSet<RemediationVerification> RemediationVerifications { get; }
+
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 

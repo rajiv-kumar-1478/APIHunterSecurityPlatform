@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Platform.Infrastructure.Persistence;
@@ -11,9 +12,11 @@ using Platform.Infrastructure.Persistence;
 namespace Platform.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(PlatformDbContext))]
-    partial class PlatformDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260813055202_AddPhase7RemediationActionTables")]
+    partial class AddPhase7RemediationActionTables
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1081,12 +1084,6 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("VerificationClaimToken")
-                        .HasColumnType("text");
-
-                    b.Property<DateTime?>("VerificationClaimedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
                     b.Property<int>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("integer");
@@ -1157,129 +1154,6 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.HasIndex("RemediationActionId");
 
                     b.ToTable("remediation_action_histories", (string)null);
-                });
-
-            modelBuilder.Entity("Platform.Domain.Entities.RemediationExecution", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("ActionVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTime?>("CompletedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<long?>("ExecutionDurationMs")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("FailureCode")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("FailureReason")
-                        .HasMaxLength(1024)
-                        .HasColumnType("character varying(1024)");
-
-                    b.Property<int?>("PostExecutionRiskScore")
-                        .HasColumnType("integer");
-
-                    b.Property<int?>("PreExecutionRiskScore")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("ProviderKey")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("ProviderOperationId")
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)");
-
-                    b.Property<string>("ProviderResourceReference")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)");
-
-                    b.Property<Guid>("RemediationActionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("StartedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<bool>("Success")
-                        .HasColumnType("boolean");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("StartedAtUtc");
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("RemediationActionId", "ActionVersion")
-                        .IsUnique();
-
-                    b.ToTable("remediation_executions", (string)null);
-                });
-
-            modelBuilder.Entity("Platform.Domain.Entities.RemediationVerification", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTime>("CreatedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<int>("PostExecutionRiskScore")
-                        .HasColumnType("integer");
-
-                    b.Property<int>("PreExecutionRiskScore")
-                        .HasColumnType("integer");
-
-                    b.Property<Guid>("RemediationActionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid?>("RemediationExecutionId")
-                        .HasColumnType("uuid");
-
-                    b.Property<int>("RiskDelta")
-                        .HasColumnType("integer");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("character varying(50)");
-
-                    b.Property<string>("ValidationResultStatus")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)");
-
-                    b.Property<string>("VerificationDetailsJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb");
-
-                    b.Property<DateTime>("VerifiedAtUtc")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RemediationActionId")
-                        .IsUnique();
-
-                    b.HasIndex("RemediationExecutionId");
-
-                    b.HasIndex("Status");
-
-                    b.ToTable("remediation_verifications", (string)null);
                 });
 
             modelBuilder.Entity("Platform.Domain.Entities.Repository", b =>
@@ -2257,35 +2131,6 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Navigation("RemediationAction");
                 });
 
-            modelBuilder.Entity("Platform.Domain.Entities.RemediationExecution", b =>
-                {
-                    b.HasOne("Platform.Domain.Entities.RemediationAction", "RemediationAction")
-                        .WithMany("Executions")
-                        .HasForeignKey("RemediationActionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("RemediationAction");
-                });
-
-            modelBuilder.Entity("Platform.Domain.Entities.RemediationVerification", b =>
-                {
-                    b.HasOne("Platform.Domain.Entities.RemediationAction", "RemediationAction")
-                        .WithOne("Verification")
-                        .HasForeignKey("Platform.Domain.Entities.RemediationVerification", "RemediationActionId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("Platform.Domain.Entities.RemediationExecution", "RemediationExecution")
-                        .WithMany()
-                        .HasForeignKey("RemediationExecutionId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("RemediationAction");
-
-                    b.Navigation("RemediationExecution");
-                });
-
             modelBuilder.Entity("Platform.Domain.Entities.RepositoryRiskScore", b =>
                 {
                     b.HasOne("Platform.Domain.Entities.Repository", "Repository")
@@ -2460,11 +2305,7 @@ namespace Platform.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Platform.Domain.Entities.RemediationAction", b =>
                 {
-                    b.Navigation("Executions");
-
                     b.Navigation("Histories");
-
-                    b.Navigation("Verification");
                 });
 
             modelBuilder.Entity("Platform.Domain.Entities.Repository", b =>

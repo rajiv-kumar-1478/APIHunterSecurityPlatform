@@ -15,7 +15,10 @@ using Platform.Application.Health;
 using Platform.Application.Notifications;
 using Platform.Application.Permissions;
 using Platform.Application.Persistence;
+using Platform.Application.Providers;
 using Platform.Application.Services;
+using Platform.Application.Verification;
+using Platform.Infrastructure.Remediation;
 using Platform.Application.Users;
 using Platform.Domain.Contracts;
 using Platform.Domain.Entities;
@@ -232,6 +235,31 @@ try
     builder.Services.Configure<SecurityAlertOptions>(
         builder.Configuration.GetSection(SecurityAlertOptions.SectionName));
     builder.Services.AddScoped<SecurityAlertService>();
+
+    // Phase 7 Step 1, 2 & 3 — Remediation Action Domain, Recommendation & Response Policy Engine
+    var recPolicy = new RemediationRecommendationPolicyOptions();
+    builder.Configuration.GetSection(RemediationRecommendationPolicyOptions.SectionName).Bind(recPolicy);
+    builder.Services.AddSingleton(recPolicy);
+    builder.Services.AddSingleton<RemediationRecommendationEngine>();
+
+    var respPolicy = new ResponsePolicyOptions();
+    builder.Configuration.GetSection(ResponsePolicyOptions.SectionName).Bind(respPolicy);
+    builder.Services.AddSingleton(respPolicy);
+    builder.Services.AddSingleton<ResponsePolicyEngine>();
+
+    builder.Services.AddScoped<RemediationActionService>();
+    builder.Services.AddScoped<RemediationApprovalService>();
+
+    // Phase 7 Step 5 — Remediation Execution Engine & Providers
+    builder.Services.AddSingleton<IProtectedCredentialResolver, SafeProtectedCredentialResolver>();
+    builder.Services.AddSingleton<IRemediationProvider, GitHubRemediationProvider>();
+    builder.Services.AddSingleton<IRemediationProvider, SafeFallbackRemediationProvider>();
+    builder.Services.AddScoped<RemediationExecutionService>();
+
+    // Phase 7 Step 6 — Post-Remediation Verification Engine & Strategies
+    builder.Services.AddSingleton<IVerificationStrategy, RevokeCredentialVerificationStrategy>();
+    builder.Services.AddSingleton<IVerificationStrategy, FallbackVerificationStrategy>();
+    builder.Services.AddScoped<PostRemediationVerificationService>();
 
 
 

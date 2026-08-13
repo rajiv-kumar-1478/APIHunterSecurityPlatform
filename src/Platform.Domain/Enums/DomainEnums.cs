@@ -105,7 +105,41 @@ public enum AuditEventCode
 
     // Phase 6 — Continuous Revalidation & Alerting
     CredentialRevalidationProcessed,
-    AlertSuppressedByCooldown
+    AlertSuppressedByCooldown,
+
+    // Phase 7 — Remediation Response
+    RemediateActionProposed,
+    RemediateActionStatusChanged,
+    RemediateActionApproved,
+    RemediateActionRejected,
+    RemediateActionCancelled,
+    RemediateActionPolicyEvaluated,
+    RemediateActionPolicySuppressed,
+    RemediateActionExecutionStarted,
+    RemediateActionExecutionCompleted,
+    RemediateActionExecutionFailed,
+    RemediateActionVerificationStarted,
+    RemediateActionVerificationCompleted,
+    RemediateActionVerificationFailed
+}
+
+public enum RemediationVerificationStatus
+{
+    Pending,
+    Verified,
+    VerificationFailed
+}
+
+public enum RemediationExecutionStatus
+{
+    Pending,
+    Executing,
+    Succeeded,
+    Failed,
+    Cancelled,
+    VerificationPending,
+    Verified,
+    VerificationFailed
 }
 
 
@@ -303,5 +337,32 @@ public enum RiskSeverity
     High,
     Critical
 }
+
+public enum RemediationActionType
+{
+    RevokeCredential,
+    RotateCredential,
+    RestrictCredentialScope,
+    RemoveCurrentExposure,
+    RemoveHistoricalExposure,
+    DisableExposedService,
+    InvestigateExposure
+}
+
+public enum RemediationActionStatus
+{
+    Proposed,
+    PendingApproval,
+    Approved,
+    Rejected,
+    Executing,
+    Succeeded,
+    Failed,
+    Cancelled,
+    VerificationPending,
+    Verified,
+    VerificationFailed
+}
+
 
 

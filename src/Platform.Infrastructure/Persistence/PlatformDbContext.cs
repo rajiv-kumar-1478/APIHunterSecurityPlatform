@@ -48,6 +48,12 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
     public DbSet<SecurityFindingStatusHistory> SecurityFindingStatusHistories => Set<SecurityFindingStatusHistory>();
     public DbSet<SecurityAlertLog> SecurityAlertLogs => Set<SecurityAlertLog>();
 
+    // Phase 7 DbSets
+    public DbSet<RemediationAction> RemediationActions => Set<RemediationAction>();
+    public DbSet<RemediationActionHistory> RemediationActionHistories => Set<RemediationActionHistory>();
+    public DbSet<RemediationExecution> RemediationExecutions => Set<RemediationExecution>();
+    public DbSet<RemediationVerification> RemediationVerifications => Set<RemediationVerification>();
+
 
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -584,8 +590,121 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.Property(a => a.Severity).HasConversion<string>().HasMaxLength(20);
             e.Property(a => a.Recipient).HasMaxLength(256).IsRequired();
         });
+
+        // RemediationAction
+        modelBuilder.Entity<RemediationAction>(e =>
+        {
+            e.ToTable("remediation_actions");
+            e.HasKey(ra => ra.Id);
+            e.HasIndex(ra => ra.ActionFingerprint).IsUnique();
+            e.HasIndex(ra => ra.FindingId);
+            e.HasIndex(ra => ra.RepositoryId);
+            e.HasIndex(ra => ra.Status);
+            e.HasIndex(ra => ra.CreatedAtUtc);
+            e.HasIndex(ra => ra.ExpiresAtUtc);
+            e.Property(ra => ra.Version).IsConcurrencyToken();
+            e.Property(ra => ra.ActionFingerprint).HasMaxLength(128).IsRequired();
+            e.Property(ra => ra.ActionType).HasConversion<string>().HasMaxLength(50);
+            e.Property(ra => ra.Status).HasConversion<string>().HasMaxLength(50);
+            e.Property(ra => ra.Title).HasMaxLength(256).IsRequired();
+            e.Property(ra => ra.Description).HasMaxLength(2048);
+            e.Property(ra => ra.ProviderKey).HasMaxLength(100);
+            e.Property(ra => ra.ProviderResourceReference).HasMaxLength(512);
+
+            e.HasOne(ra => ra.Finding)
+             .WithMany(f => f.RemediationActions)
+             .HasForeignKey(ra => ra.FindingId)
+             .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasOne(ra => ra.Repository)
+             .WithMany()
+             .HasForeignKey(ra => ra.RepositoryId)
+             .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasOne(ra => ra.ProposedByUser)
+             .WithMany()
+             .HasForeignKey(ra => ra.ProposedByUserId)
+             .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(ra => ra.ApprovedByUser)
+             .WithMany()
+             .HasForeignKey(ra => ra.ApprovedByUserId)
+             .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasOne(ra => ra.RejectedByUser)
+             .WithMany()
+             .HasForeignKey(ra => ra.RejectedByUserId)
+             .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // RemediationActionHistory
+        modelBuilder.Entity<RemediationActionHistory>(e =>
+        {
+            e.ToTable("remediation_action_histories");
+            e.HasKey(rah => rah.Id);
+            e.HasIndex(rah => rah.RemediationActionId);
+            e.HasIndex(rah => rah.CreatedAtUtc);
+            e.Property(rah => rah.FromStatus).HasConversion<string>().HasMaxLength(50);
+            e.Property(rah => rah.ToStatus).HasConversion<string>().HasMaxLength(50);
+            e.Property(rah => rah.Reason).HasMaxLength(1024).IsRequired();
+            e.Property(rah => rah.MetadataJson).HasColumnType("jsonb");
+
+            e.HasOne(rah => rah.RemediationAction)
+             .WithMany(ra => ra.Histories)
+             .HasForeignKey(rah => rah.RemediationActionId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasOne(rah => rah.ChangedByUser)
+             .WithMany()
+             .HasForeignKey(rah => rah.ChangedByUserId)
+             .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        // RemediationExecution
+        modelBuilder.Entity<RemediationExecution>(e =>
+        {
+            e.ToTable("remediation_executions");
+            e.HasKey(re => re.Id);
+            e.HasIndex(re => new { re.RemediationActionId, re.ActionVersion }).IsUnique();
+            e.HasIndex(re => re.Status);
+            e.HasIndex(re => re.StartedAtUtc);
+            e.Property(re => re.Status).HasConversion<string>().HasMaxLength(50);
+            e.Property(re => re.ProviderKey).HasMaxLength(100).IsRequired();
+            e.Property(re => re.ProviderResourceReference).HasMaxLength(500);
+            e.Property(re => re.FailureCode).HasMaxLength(100);
+            e.Property(re => re.FailureReason).HasMaxLength(1024);
+            e.Property(re => re.ProviderOperationId).HasMaxLength(200);
+
+            e.HasOne(re => re.RemediationAction)
+             .WithMany(ra => ra.Executions)
+             .HasForeignKey(re => re.RemediationActionId)
+             .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // RemediationVerification
+        modelBuilder.Entity<RemediationVerification>(e =>
+        {
+            e.ToTable("remediation_verifications");
+            e.HasKey(rv => rv.Id);
+            e.HasIndex(rv => rv.RemediationActionId).IsUnique();
+            e.HasIndex(rv => rv.Status);
+            e.Property(rv => rv.Status).HasConversion<string>().HasMaxLength(50);
+            e.Property(rv => rv.ValidationResultStatus).HasMaxLength(100);
+            e.Property(rv => rv.VerificationDetailsJson).HasColumnType("jsonb");
+
+            e.HasOne(rv => rv.RemediationAction)
+             .WithOne(ra => ra.Verification)
+             .HasForeignKey<RemediationVerification>(rv => rv.RemediationActionId)
+             .OnDelete(DeleteBehavior.Cascade);
+
+            e.HasOne(rv => rv.RemediationExecution)
+             .WithMany()
+             .HasForeignKey(rv => rv.RemediationExecutionId)
+             .OnDelete(DeleteBehavior.SetNull);
+        });
     }
 }
+
 
 
 
