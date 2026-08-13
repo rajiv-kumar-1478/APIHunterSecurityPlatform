@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using Platform.Application.Scanning;
 using Platform.Domain.Entities;
 using Platform.Infrastructure.Scanning;
@@ -15,7 +16,25 @@ namespace Platform.UnitTests.Scanning;
 
 public class ToolProvisioningServiceTests
 {
-    private readonly ToolProvisioningService _service = new(NullLogger<ToolProvisioningService>.Instance);
+    private readonly Mock<IEgressPolicyEngine> _mockEgressEngine;
+    private readonly ToolProvisioningService _service;
+
+    public ToolProvisioningServiceTests()
+    {
+        _mockEgressEngine = new Mock<IEgressPolicyEngine>();
+        _mockEgressEngine.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<System.Threading.CancellationToken>()))
+                         .ReturnsAsync((string url, TimeSpan? timeout, System.Threading.CancellationToken ct) =>
+                             new Platform.Application.Scanning.Contracts.EgressTarget("github.com", "140.82.121.4", 443, "https", new System.Collections.Generic.HashSet<System.Net.IPAddress> { System.Net.IPAddress.Parse("140.82.121.4") }, DateTime.UtcNow, DateTime.UtcNow.AddMinutes(10), "v1.0"));
+
+        _service = new ToolProvisioningService(NullLogger<ToolProvisioningService>.Instance, _mockEgressEngine.Object);
+    }
+
+    [Fact]
+    public void Constructor_ThrowsArgumentNullException_WhenEgressEngineIsNull()
+    {
+        Action act = () => new ToolProvisioningService(NullLogger<ToolProvisioningService>.Instance, egressPolicyEngine: null!);
+        act.Should().Throw<ArgumentNullException>().WithParameterName("egressPolicyEngine");
+    }
 
     [Fact]
     public async Task ProvisionToolAsync_RejectsUntrustedSourceType()
@@ -91,13 +110,32 @@ public class ToolProvisioningServiceTests
     }
 
     [Fact]
+    public async Task ProvisionToolAsync_RejectsRepositoryUrlMismatch()
+    {
+        var tool = new SecurityScanTool
+        {
+            ToolKey = "subfinder",
+            Version = "v2.6.6",
+            ArtifactSourceType = "github-release",
+            ArtifactRepository = "projectdiscovery/subfinder",
+            ArtifactUrl = "https://github.com/malicious/other-repo/releases/v2.6.6/subfinder.zip",
+            ArtifactSha256 = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            Executable = "subfinder"
+        };
+
+        var result = await _service.ProvisionToolAsync(tool);
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("REPOSITORY_URL_MISMATCH");
+    }
+
+    [Fact]
     public async Task ProvisionToolAsync_RejectsProhibitedSsrfArtifactUrl()
     {
-        var mockEgressEngine = new Moq.Mock<IEgressPolicyEngine>();
-        mockEgressEngine.Setup(e => e.EvaluateAndBuildTargetAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<TimeSpan?>(), Moq.It.IsAny<System.Threading.CancellationToken>()))
+        var mockEgressEngine = new Mock<IEgressPolicyEngine>();
+        mockEgressEngine.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<System.Threading.CancellationToken>()))
                          .Throws(new InvalidOperationException("Prohibited IMDS metadata IP target."));
 
-        var service = new ToolProvisioningService(NullLogger<ToolProvisioningService>.Instance, egressPolicyEngine: mockEgressEngine.Object);
+        var service = new ToolProvisioningService(NullLogger<ToolProvisioningService>.Instance, mockEgressEngine.Object);
 
         var tool = new SecurityScanTool
         {
@@ -123,6 +161,7 @@ public class ToolProvisioningServiceTests
 
         var service = new ToolProvisioningService(
             NullLogger<ToolProvisioningService>.Instance,
+            _mockEgressEngine.Object,
             artifactDownloader: (t, ct) => Task.FromResult<Stream>(new MemoryStream(artifactBytes)));
 
         var tool = new SecurityScanTool
@@ -154,6 +193,7 @@ public class ToolProvisioningServiceTests
 
         var service = new ToolProvisioningService(
             NullLogger<ToolProvisioningService>.Instance,
+            _mockEgressEngine.Object,
             artifactDownloader: (t, ct) => Task.FromResult<Stream>(new MemoryStream(artifactBytes)));
 
         var tool = new SecurityScanTool
@@ -192,6 +232,7 @@ public class ToolProvisioningServiceTests
 
             var service = new ToolProvisioningService(
                 NullLogger<ToolProvisioningService>.Instance,
+                _mockEgressEngine.Object,
                 artifactDownloader: (t, ct) => Task.FromResult<Stream>(new MemoryStream(zipBytes)));
 
             var tool = new SecurityScanTool
@@ -209,6 +250,52 @@ public class ToolProvisioningServiceTests
             var result = await service.ProvisionToolAsync(tool);
             result.Success.Should().BeFalse();
             result.ErrorCode.Should().Be("ZIP_SLIP_VULNERABILITY_DETECTED");
+        }
+        finally
+        {
+            if (File.Exists(tempZipPath)) File.Delete(tempZipPath);
+        }
+    }
+
+    [Fact]
+    public async Task ProvisionToolAsync_RejectsZipArchiveWithDuplicateEntries()
+    {
+        var tempZipPath = Path.Combine(Path.GetTempPath(), $"zip_dup_{Guid.NewGuid():N}.zip");
+        try
+        {
+            using (var zipStream = File.Create(tempZipPath))
+            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
+            {
+                var entry1 = archive.CreateEntry("subfinder");
+                using (var w1 = new StreamWriter(entry1.Open())) w1.Write("content1");
+
+                var entry2 = archive.CreateEntry("subfinder");
+                using (var w2 = new StreamWriter(entry2.Open())) w2.Write("content2");
+            }
+
+            var zipBytes = await File.ReadAllBytesAsync(tempZipPath);
+            var expectedSha256 = Convert.ToHexStringLower(SHA256.HashData(zipBytes));
+
+            var service = new ToolProvisioningService(
+                NullLogger<ToolProvisioningService>.Instance,
+                _mockEgressEngine.Object,
+                artifactDownloader: (t, ct) => Task.FromResult<Stream>(new MemoryStream(zipBytes)));
+
+            var tool = new SecurityScanTool
+            {
+                ToolKey = "subfinder",
+                Version = "v2.6.6",
+                ArtifactSourceType = "github-release",
+                ArtifactRepository = "projectdiscovery/subfinder",
+                ArtifactUrl = "https://github.com/projectdiscovery/subfinder/releases/v2.6.6/subfinder.zip",
+                ArtifactFormat = "zip",
+                ArtifactSha256 = expectedSha256,
+                Executable = "subfinder"
+            };
+
+            var result = await service.ProvisionToolAsync(tool);
+            result.Success.Should().BeFalse();
+            result.ErrorCode.Should().Be("DUPLICATE_ZIP_ENTRY");
         }
         finally
         {

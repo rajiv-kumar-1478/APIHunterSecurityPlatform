@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Threading;
@@ -16,9 +17,13 @@ namespace Platform.Infrastructure.Scanning;
 
 public class ToolProvisioningService : IToolProvisioningService
 {
+    private const int MaxRedirectHops = 5;
+    private const int MaxZipFileCount = 1000;
+    private const long MaxUncompressedZipSizeBytes = 500 * 1024 * 1024; // 500 MB limit
+
     private readonly string _toolsRoot;
     private readonly IEgressPolicyEngine _egressPolicyEngine;
-    private readonly Func<SecurityScanTool, CancellationToken, Task<Stream>> _artifactDownloader;
+    private readonly Func<SecurityScanTool, CancellationToken, Task<Stream>>? _customArtifactDownloader;
     private readonly ILogger<ToolProvisioningService> _logger;
 
     private static readonly HashSet<string> AllowedSourceTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -36,27 +41,25 @@ public class ToolProvisioningService : IToolProvisioningService
         "apihunter/bughunter"
     };
 
-    private static readonly HashSet<string> AllowedArtifactDomains = new(StringComparer.OrdinalIgnoreCase)
+    public static readonly HashSet<string> AllowedArtifactDomains = new(StringComparer.OrdinalIgnoreCase)
     {
         "github.com",
         "github-releases.githubusercontent.com",
         "raw.githubusercontent.com",
         "s3.amazonaws.com",
-        "apihunter.io",
-        "localhost",
-        "127.0.0.1"
+        "apihunter.io"
     };
 
     public ToolProvisioningService(
         ILogger<ToolProvisioningService> logger,
+        IEgressPolicyEngine egressPolicyEngine,
         string? toolsRoot = null,
-        IEgressPolicyEngine? egressPolicyEngine = null,
         Func<SecurityScanTool, CancellationToken, Task<Stream>>? artifactDownloader = null)
     {
-        _logger = logger;
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _egressPolicyEngine = egressPolicyEngine ?? throw new ArgumentNullException(nameof(egressPolicyEngine));
         _toolsRoot = toolsRoot ?? Path.Combine(Path.GetTempPath(), "apihunter_tools");
-        _egressPolicyEngine = egressPolicyEngine ?? new EgressPolicyEngine(Microsoft.Extensions.Logging.Abstractions.NullLogger<EgressPolicyEngine>.Instance);
-        _artifactDownloader = artifactDownloader ?? DefaultDownloadArtifactStreamAsync;
+        _customArtifactDownloader = artifactDownloader;
     }
 
     public async Task<ProvisioningResult> ProvisionToolAsync(SecurityScanTool tool, CancellationToken ct = default)
@@ -90,7 +93,7 @@ public class ToolProvisioningService : IToolProvisioningService
             return new ProvisioningResult(toolKey, version, false, string.Empty, "MISSING_ARTIFACT_SHA256", "Mandatory ArtifactSha256 digest is missing.");
         }
 
-        // 4. Validate ArtifactUrl Host & Egress Policy SSRF Protection
+        // 4. Validate ArtifactUrl Host, Repository Identity Binding, & Egress Policy SSRF Protection
         if (!string.IsNullOrWhiteSpace(tool.ArtifactUrl))
         {
             if (!Uri.TryCreate(tool.ArtifactUrl, UriKind.Absolute, out var artifactUri))
@@ -98,12 +101,30 @@ public class ToolProvisioningService : IToolProvisioningService
                 return new ProvisioningResult(toolKey, version, false, string.Empty, "INVALID_ARTIFACT_URL", $"ArtifactUrl '{tool.ArtifactUrl}' is invalid.");
             }
 
+            // Require HTTPS scheme for remote artifact URLs
+            if (artifactUri.Scheme != Uri.UriSchemeHttps)
+            {
+                return new ProvisioningResult(toolKey, version, false, string.Empty, "NON_HTTPS_ARTIFACT_URL", "Artifact URL must use HTTPS.");
+            }
+
+            // Domain Allowlist Check
             var host = artifactUri.Host;
             var isDomainAllowed = AllowedArtifactDomains.Contains(host) || AllowedArtifactDomains.Any(domain => host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase));
             if (!isDomainAllowed)
             {
                 _logger.LogError("Tool '{ToolKey}' ArtifactUrl host '{Host}' is not in untrusted artifact domain allowlist.", toolKey, host);
                 return new ProvisioningResult(toolKey, version, false, string.Empty, "UNTRUSTED_ARTIFACT_URL_DOMAIN", $"Artifact URL host '{host}' is prohibited.");
+            }
+
+            // Bind ArtifactRepository to ArtifactUrl Path for github-release sources
+            if (string.Equals(tool.ArtifactSourceType, "github-release", StringComparison.OrdinalIgnoreCase))
+            {
+                var expectedPathSegment = $"/{tool.ArtifactRepository.Trim().ToLowerInvariant()}/";
+                if (!artifactUri.AbsolutePath.ToLowerInvariant().StartsWith(expectedPathSegment))
+                {
+                    _logger.LogError("Tool '{ToolKey}' ArtifactUrl path '{Path}' does not match registered ArtifactRepository '{Repo}'.", toolKey, artifactUri.AbsolutePath, tool.ArtifactRepository);
+                    return new ProvisioningResult(toolKey, version, false, string.Empty, "REPOSITORY_URL_MISMATCH", $"ArtifactUrl does not match registered repository '{tool.ArtifactRepository}'.");
+                }
             }
 
             // Egress Policy SSRF Verification (reject private/metadata IP targets)
@@ -138,12 +159,14 @@ public class ToolProvisioningService : IToolProvisioningService
             File.Delete(executablePath);
         }
 
-        // 7. Real Artifact Download & Stream SHA-256 Computation
+        // 7. Download Artifact Stream & Validate Redirects
         var tempFile = Path.Combine(toolDir, $"{toolKey}_{version}_{Guid.NewGuid():N}.tmp");
         try
         {
             _logger.LogInformation("Downloading artifact stream for '{ToolKey}'...", toolKey);
-            await using (var artifactStream = await _artifactDownloader(tool, ct))
+            await using (var artifactStream = _customArtifactDownloader != null
+                ? await _customArtifactDownloader(tool, ct)
+                : await DownloadArtifactStreamWithRedirectValidationAsync(tool, ct))
             {
                 if (artifactStream == null)
                 {
@@ -165,21 +188,68 @@ public class ToolProvisioningService : IToolProvisioningService
                 return new ProvisioningResult(toolKey, version, false, string.Empty, "CHECKSUM_MISMATCH", $"Downloaded artifact SHA-256 '{downloadedHash}' does not match expected '{expectedHash}'.");
             }
 
-            // 9. Handle ArtifactFormat Extraction & Zip Slip Protection
+            // 9. Handle ArtifactFormat Extraction & Hardened ZIP Protections
             var format = tool.ArtifactFormat?.Trim().ToLowerInvariant() ?? "binary";
             if (format == "zip")
             {
-                _logger.LogInformation("Extracting zip archive for '{ToolKey}' with Zip Slip guards...", toolKey);
+                _logger.LogInformation("Extracting zip archive for '{ToolKey}' with hardened safety guards...", toolKey);
+                var canonicalRootDir = Path.GetFullPath(toolDir);
+                if (!canonicalRootDir.EndsWith(Path.DirectorySeparatorChar.ToString()))
+                {
+                    canonicalRootDir += Path.DirectorySeparatorChar;
+                }
+
+                var seenEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                long totalUncompressedBytes = 0;
+                int totalFileCount = 0;
+
                 using (var archiveStream = File.OpenRead(tempFile))
                 using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Read))
                 {
                     foreach (var entry in archive.Entries)
                     {
-                        if (entry.FullName.Contains("..") || entry.FullName.StartsWith('/') || entry.FullName.StartsWith('\\'))
+                        totalFileCount++;
+                        if (totalFileCount > MaxZipFileCount)
                         {
                             archiveStream.Close();
                             File.Delete(tempFile);
-                            return new ProvisioningResult(toolKey, version, false, string.Empty, "ZIP_SLIP_VULNERABILITY_DETECTED", "Archive entry contains prohibited path escape.");
+                            return new ProvisioningResult(toolKey, version, false, string.Empty, "ZIP_FILE_COUNT_EXCEEDED", $"ZIP archive exceeds maximum file count limit of {MaxZipFileCount}.");
+                        }
+
+                        // Duplicate Entry Check
+                        var normalizedEntryName = entry.FullName.Trim().ToLowerInvariant();
+                        if (!seenEntries.Add(normalizedEntryName))
+                        {
+                            archiveStream.Close();
+                            File.Delete(tempFile);
+                            return new ProvisioningResult(toolKey, version, false, string.Empty, "DUPLICATE_ZIP_ENTRY", $"Duplicate entry path '{entry.FullName}' detected in ZIP archive.");
+                        }
+
+                        // Decompression Bomb Check
+                        totalUncompressedBytes += entry.Length;
+                        if (totalUncompressedBytes > MaxUncompressedZipSizeBytes)
+                        {
+                            archiveStream.Close();
+                            File.Delete(tempFile);
+                            return new ProvisioningResult(toolKey, version, false, string.Empty, "ZIP_DECOMPRESSION_BOMB_EXCEEDED", $"Total uncompressed size exceeds limit of {MaxUncompressedZipSizeBytes} bytes.");
+                        }
+
+                        // Canonical Extraction-Root Path Validation (Zip Slip Protection)
+                        var destinationPath = Path.GetFullPath(Path.Combine(canonicalRootDir, entry.FullName));
+                        if (!destinationPath.StartsWith(canonicalRootDir, StringComparison.OrdinalIgnoreCase))
+                        {
+                            archiveStream.Close();
+                            File.Delete(tempFile);
+                            return new ProvisioningResult(toolKey, version, false, string.Empty, "ZIP_SLIP_VULNERABILITY_DETECTED", "Archive entry path escapes extraction root directory.");
+                        }
+
+                        // Symlink / Reparse Point Attribute Verification
+                        const int unixSymlinkFlag = 0xA000;
+                        if ((entry.ExternalAttributes & (unixSymlinkFlag << 16)) != 0)
+                        {
+                            archiveStream.Close();
+                            File.Delete(tempFile);
+                            return new ProvisioningResult(toolKey, version, false, string.Empty, "ZIP_SYMLINK_PROHIBITED", "Symlinks are prohibited inside tool archives.");
                         }
                     }
 
@@ -219,17 +289,58 @@ public class ToolProvisioningService : IToolProvisioningService
         }
     }
 
-    private static async Task<Stream> DefaultDownloadArtifactStreamAsync(SecurityScanTool tool, CancellationToken ct)
+    private async Task<Stream> DownloadArtifactStreamWithRedirectValidationAsync(SecurityScanTool tool, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(tool.ArtifactUrl))
         {
             throw new InvalidOperationException($"Tool '{tool.ToolKey}' has no ArtifactUrl configured.");
         }
 
-        using var client = new HttpClient();
-        var response = await client.GetAsync(tool.ArtifactUrl, HttpCompletionOption.ResponseHeadersRead, ct);
-        response.EnsureSuccessStatusCode();
-        return await response.Content.ReadAsStreamAsync(ct);
+        var currentUrl = tool.ArtifactUrl;
+        var handler = new SocketsHttpHandler { AllowAutoRedirect = false };
+        using var client = new HttpClient(handler);
+
+        for (var hop = 0; hop < MaxRedirectHops; hop++)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, currentUrl);
+            var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            if ((int)response.StatusCode >= 300 && (int)response.StatusCode <= 399)
+            {
+                var redirectLocation = response.Headers.Location;
+                if (redirectLocation == null)
+                {
+                    throw new InvalidOperationException($"Redirect response missing Location header from '{currentUrl}'.");
+                }
+
+                var nextUri = redirectLocation.IsAbsoluteUri ? redirectLocation : new Uri(new Uri(currentUrl), redirectLocation);
+
+                // 1. Require HTTPS for redirect targets
+                if (nextUri.Scheme != Uri.UriSchemeHttps)
+                {
+                    throw new InvalidOperationException($"Redirect target '{nextUri}' is prohibited: Non-HTTPS scheme.");
+                }
+
+                // 2. Validate redirect host against domain allowlist
+                var nextHost = nextUri.Host;
+                var isAllowed = AllowedArtifactDomains.Contains(nextHost) || AllowedArtifactDomains.Any(domain => nextHost.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase));
+                if (!isAllowed)
+                {
+                    throw new InvalidOperationException($"Redirect target host '{nextHost}' is untrusted.");
+                }
+
+                // 3. Re-evaluate SSRF Egress Policy for redirect URL
+                await _egressPolicyEngine.EvaluateAndBuildTargetAsync(nextUri.ToString(), TimeSpan.FromMinutes(5), ct);
+
+                currentUrl = nextUri.ToString();
+                continue;
+            }
+
+            response.EnsureSuccessStatusCode();
+            return await response.Content.ReadAsStreamAsync(ct);
+        }
+
+        throw new InvalidOperationException($"Download exceeded maximum allowed redirect limit of {MaxRedirectHops} hops.");
     }
 
     private static async Task<string> ComputeFileSha256Async(string filePath, CancellationToken ct)
