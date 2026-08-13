@@ -37,6 +37,39 @@ public class ToolProvisioningServiceTests
     }
 
     [Fact]
+    public async Task CustomDownloader_Cannot_Bypass_EgressPolicy()
+    {
+        var mockEgressEngine = new Mock<IEgressPolicyEngine>();
+        mockEgressEngine.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<System.Threading.CancellationToken>()))
+                         .Throws(new InvalidOperationException("Prohibited target egress."));
+
+        var downloaderInvoked = false;
+        Func<SecurityScanTool, System.Threading.CancellationToken, Task<Stream>> customDownloader = (t, ct) =>
+        {
+            downloaderInvoked = true;
+            return Task.FromResult<Stream>(new MemoryStream(Encoding.UTF8.GetBytes("EVIL")));
+        };
+
+        var service = new ToolProvisioningService(NullLogger<ToolProvisioningService>.Instance, mockEgressEngine.Object, artifactDownloader: customDownloader);
+
+        var tool = new SecurityScanTool
+        {
+            ToolKey = "subfinder",
+            Version = "v2.6.6",
+            ArtifactSourceType = "github-release",
+            ArtifactRepository = "projectdiscovery/subfinder",
+            ArtifactUrl = "https://github.com/projectdiscovery/subfinder/releases/v2.6.6/subfinder.zip",
+            ArtifactSha256 = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            Executable = "subfinder"
+        };
+
+        var result = await service.ProvisionToolAsync(tool);
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("ARTIFACT_URL_PROHIBITED_SSRF");
+        downloaderInvoked.Should().BeFalse("Custom downloader must NEVER be invoked if egress policy evaluation fails");
+    }
+
+    [Fact]
     public async Task ProvisionToolAsync_RejectsUntrustedSourceType()
     {
         var tool = new SecurityScanTool
@@ -214,17 +247,43 @@ public class ToolProvisioningServiceTests
     }
 
     [Fact]
-    public async Task ProvisionToolAsync_RejectsZipArchiveWithZipSlipTraversal()
+    public async Task ZIP_SiblingPrefixEscape_IsRejected()
     {
-        var tempZipPath = Path.Combine(Path.GetTempPath(), $"zip_slip_{Guid.NewGuid():N}.zip");
+        await AssertZipEntryRejectedAsync("../apihunter_tools_sibling/evil.exe", "ZIP_SLIP_VULNERABILITY_DETECTED");
+    }
+
+    [Fact]
+    public async Task ZIP_AbsoluteWindowsPath_IsRejected()
+    {
+        await AssertZipEntryRejectedAsync(@"C:\Windows\System32\malicious.exe", "ZIP_SLIP_VULNERABILITY_DETECTED");
+    }
+
+    [Fact]
+    public async Task ZIP_AbsoluteUnixPath_IsRejected()
+    {
+        await AssertZipEntryRejectedAsync("/etc/passwd", "ZIP_SLIP_VULNERABILITY_DETECTED");
+    }
+
+    [Fact]
+    public async Task ZIP_NestedTraversal_IsRejected()
+    {
+        await AssertZipEntryRejectedAsync("subdir/../../escape.exe", "ZIP_SLIP_VULNERABILITY_DETECTED");
+    }
+
+    [Fact]
+    public async Task ZIP_Symlink_IsRejected()
+    {
+        var tempZipPath = Path.Combine(Path.GetTempPath(), $"zip_symlink_{Guid.NewGuid():N}.zip");
         try
         {
             using (var zipStream = File.Create(tempZipPath))
             using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
             {
-                var entry = archive.CreateEntry("../escape.exe");
+                var entry = archive.CreateEntry("symlink_target");
+                // Unix symlink bit flag 0xA000 << 16
+                entry.ExternalAttributes = 0xA000 << 16;
                 using var entryWriter = new StreamWriter(entry.Open());
-                entryWriter.Write("malicious");
+                entryWriter.Write("/etc/passwd");
             }
 
             var zipBytes = await File.ReadAllBytesAsync(tempZipPath);
@@ -249,7 +308,7 @@ public class ToolProvisioningServiceTests
 
             var result = await service.ProvisionToolAsync(tool);
             result.Success.Should().BeFalse();
-            result.ErrorCode.Should().Be("ZIP_SLIP_VULNERABILITY_DETECTED");
+            result.ErrorCode.Should().Be("ZIP_SYMLINK_PROHIBITED");
         }
         finally
         {
@@ -257,20 +316,17 @@ public class ToolProvisioningServiceTests
         }
     }
 
-    [Fact]
-    public async Task ProvisionToolAsync_RejectsZipArchiveWithDuplicateEntries()
+    private async Task AssertZipEntryRejectedAsync(string zipEntryPath, string expectedErrorCode)
     {
-        var tempZipPath = Path.Combine(Path.GetTempPath(), $"zip_dup_{Guid.NewGuid():N}.zip");
+        var tempZipPath = Path.Combine(Path.GetTempPath(), $"zip_test_{Guid.NewGuid():N}.zip");
         try
         {
             using (var zipStream = File.Create(tempZipPath))
             using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
             {
-                var entry1 = archive.CreateEntry("subfinder");
-                using (var w1 = new StreamWriter(entry1.Open())) w1.Write("content1");
-
-                var entry2 = archive.CreateEntry("subfinder");
-                using (var w2 = new StreamWriter(entry2.Open())) w2.Write("content2");
+                var entry = archive.CreateEntry(zipEntryPath);
+                using var entryWriter = new StreamWriter(entry.Open());
+                entryWriter.Write("malicious_content");
             }
 
             var zipBytes = await File.ReadAllBytesAsync(tempZipPath);
@@ -295,7 +351,7 @@ public class ToolProvisioningServiceTests
 
             var result = await service.ProvisionToolAsync(tool);
             result.Success.Should().BeFalse();
-            result.ErrorCode.Should().Be("DUPLICATE_ZIP_ENTRY");
+            result.ErrorCode.Should().Be(expectedErrorCode);
         }
         finally
         {

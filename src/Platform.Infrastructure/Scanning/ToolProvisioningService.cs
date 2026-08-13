@@ -116,14 +116,22 @@ public class ToolProvisioningService : IToolProvisioningService
                 return new ProvisioningResult(toolKey, version, false, string.Empty, "UNTRUSTED_ARTIFACT_URL_DOMAIN", $"Artifact URL host '{host}' is prohibited.");
             }
 
-            // Bind ArtifactRepository to ArtifactUrl Path for github-release sources
+            // Bind ArtifactRepository to ArtifactUrl Path for github-release sources (explicit owner/repo parsing)
             if (string.Equals(tool.ArtifactSourceType, "github-release", StringComparison.OrdinalIgnoreCase))
             {
-                var expectedPathSegment = $"/{tool.ArtifactRepository.Trim().ToLowerInvariant()}/";
-                if (!artifactUri.AbsolutePath.ToLowerInvariant().StartsWith(expectedPathSegment))
+                var segments = artifactUri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+                if (segments.Length < 2)
                 {
-                    _logger.LogError("Tool '{ToolKey}' ArtifactUrl path '{Path}' does not match registered ArtifactRepository '{Repo}'.", toolKey, artifactUri.AbsolutePath, tool.ArtifactRepository);
-                    return new ProvisioningResult(toolKey, version, false, string.Empty, "REPOSITORY_URL_MISMATCH", $"ArtifactUrl does not match registered repository '{tool.ArtifactRepository}'.");
+                    _logger.LogError("Tool '{ToolKey}' ArtifactUrl path '{Path}' is missing owner/repository structure.", toolKey, artifactUri.AbsolutePath);
+                    return new ProvisioningResult(toolKey, version, false, string.Empty, "REPOSITORY_URL_MISMATCH", "ArtifactUrl does not contain owner/repository segments.");
+                }
+
+                var actualRepo = $"{segments[0]}/{segments[1]}".ToLowerInvariant();
+                var expectedRepo = tool.ArtifactRepository.Trim().ToLowerInvariant();
+                if (!string.Equals(actualRepo, expectedRepo, StringComparison.OrdinalIgnoreCase))
+                {
+                    _logger.LogError("Tool '{ToolKey}' ArtifactUrl repository '{Actual}' does not match registered ArtifactRepository '{Expected}'.", toolKey, actualRepo, expectedRepo);
+                    return new ProvisioningResult(toolKey, version, false, string.Empty, "REPOSITORY_URL_MISMATCH", $"ArtifactUrl repository '{actualRepo}' does not match registered repository '{expectedRepo}'.");
                 }
             }
 
@@ -234,7 +242,23 @@ public class ToolProvisioningService : IToolProvisioningService
                             return new ProvisioningResult(toolKey, version, false, string.Empty, "ZIP_DECOMPRESSION_BOMB_EXCEEDED", $"Total uncompressed size exceeds limit of {MaxUncompressedZipSizeBytes} bytes.");
                         }
 
-                        // Canonical Extraction-Root Path Validation (Zip Slip Protection)
+                        // Absolute Unix Root Path Check
+                        if (entry.FullName.StartsWith('/') || entry.FullName.StartsWith('\\'))
+                        {
+                            archiveStream.Close();
+                            File.Delete(tempFile);
+                            return new ProvisioningResult(toolKey, version, false, string.Empty, "ZIP_SLIP_VULNERABILITY_DETECTED", "Archive entry uses absolute root path.");
+                        }
+
+                        // Absolute Windows Drive Path Check
+                        if (entry.FullName.Length >= 2 && entry.FullName[1] == ':')
+                        {
+                            archiveStream.Close();
+                            File.Delete(tempFile);
+                            return new ProvisioningResult(toolKey, version, false, string.Empty, "ZIP_SLIP_VULNERABILITY_DETECTED", "Archive entry uses absolute Windows drive path.");
+                        }
+
+                        // Canonical Extraction-Root Path Validation (Zip Slip, SiblingPrefixEscape, & NestedTraversal Protection)
                         var destinationPath = Path.GetFullPath(Path.Combine(canonicalRootDir, entry.FullName));
                         if (!destinationPath.StartsWith(canonicalRootDir, StringComparison.OrdinalIgnoreCase))
                         {
