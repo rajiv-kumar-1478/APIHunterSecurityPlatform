@@ -318,6 +318,63 @@ public class ToolProvisioningServiceTests
     }
 
     [Fact]
+    public async Task ProvisionToolAsync_RejectsInstalledArtifact_WhenFinalHashDiffers()
+    {
+        var tempZipPath = Path.Combine(Path.GetTempPath(), $"zip_hash_diff_{Guid.NewGuid():N}.zip");
+        string targetInstallPath = string.Empty;
+        try
+        {
+            using (var zipStream = File.Create(tempZipPath))
+            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
+            {
+                var entry = archive.CreateEntry("subfinder");
+                using var entryWriter = new StreamWriter(entry.Open());
+                entryWriter.Write("EXTRACTED_EXECUTABLE_CONTENT");
+            }
+
+            var zipBytes = await File.ReadAllBytesAsync(tempZipPath);
+            var expectedArchiveSha256 = Convert.ToHexStringLower(SHA256.HashData(zipBytes));
+
+            Func<HttpRequestMessage, System.Threading.CancellationToken, Task<HttpResponseMessage>> testHandler = (req, ct) =>
+            {
+                var res = new HttpResponseMessage(HttpStatusCode.OK);
+                res.Content = new ByteArrayContent(zipBytes);
+                return Task.FromResult(res);
+            };
+
+            var service = new ToolProvisioningService(
+                NullLogger<ToolProvisioningService>.Instance,
+                _mockEgressEngine.Object,
+                testHttpResponseHandler: testHandler);
+
+            var tool = new SecurityScanTool
+            {
+                ToolKey = "subfinder",
+                Version = "v2.6.6",
+                ArtifactSourceType = "github-release",
+                ArtifactRepository = "projectdiscovery/subfinder",
+                ArtifactUrl = "https://github.com/projectdiscovery/subfinder/releases/v2.6.6/subfinder.zip",
+                ArtifactFormat = "zip",
+                ArtifactSha256 = expectedArchiveSha256,
+                Executable = "subfinder"
+            };
+
+            targetInstallPath = Path.Combine(Path.GetTempPath(), "apihunter_tools", "subfinder", "v2.6.6", "subfinder");
+
+            var result = await service.ProvisionToolAsync(tool);
+
+            result.Success.Should().BeFalse();
+            result.ErrorCode.Should().Be("INSTALLED_HASH_MISMATCH");
+            File.Exists(targetInstallPath).Should().BeFalse("Installed executable binary must be deleted when post-installation hash validation fails");
+        }
+        finally
+        {
+            if (File.Exists(tempZipPath)) File.Delete(tempZipPath);
+            if (File.Exists(targetInstallPath)) File.Delete(targetInstallPath);
+        }
+    }
+
+    [Fact]
     public async Task ZIP_DuplicateEntry_IsRejected()
     {
         var tempZipPath = Path.Combine(Path.GetTempPath(), $"zip_dup_{Guid.NewGuid():N}.zip");
