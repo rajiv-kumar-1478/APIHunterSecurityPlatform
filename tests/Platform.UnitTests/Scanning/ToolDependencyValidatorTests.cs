@@ -40,9 +40,9 @@ public class ToolDependencyValidatorTests
     public async Task ValidateDependencyGraphAsync_RejectsCircularDependency()
     {
         using var db = CreateDbContext();
-        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "tool_a", Executable = "tool_a", Version = "1.0.0", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
-        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "tool_b", Executable = "tool_b", Version = "1.0.0", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
-        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "tool_c", Executable = "tool_c", Version = "1.0.0", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
+        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "tool_a", Executable = "tool_a", Version = "1.0.0", ArtifactSha256 = "abc", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
+        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "tool_b", Executable = "tool_b", Version = "1.0.0", ArtifactSha256 = "abc", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
+        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "tool_c", Executable = "tool_c", Version = "1.0.0", ArtifactSha256 = "abc", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
 
         // Cycle: A -> B -> C -> A
         db.ToolDependencies.Add(new ToolDependency { ParentToolKey = "tool_a", DependencyToolKey = "tool_b", RequiredVersion = "1.0.0", RequiredSha256 = "abc" });
@@ -102,6 +102,22 @@ public class ToolDependencyValidatorTests
         Func<Task> act = async () => await validator.ValidateDependencyGraphAsync("bughunter");
         await act.Should().ThrowAsync<InvalidOperationException>()
             .WithMessage("*requires 'subfinder' SHA-256 'expected_sha256', but found 'actual_sha256'*");
+    }
+
+    [Fact]
+    public async Task ValidateDependencyGraphAsync_RejectsMissingChildSha256()
+    {
+        using var db = CreateDbContext();
+        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "bughunter", Executable = "bughunter", Version = "1.0.0", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
+        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "subfinder", Executable = "subfinder", Version = "2.6.6", ArtifactSha256 = "", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
+        db.ToolDependencies.Add(new ToolDependency { ParentToolKey = "bughunter", DependencyToolKey = "subfinder", RequiredVersion = "2.6.6", RequiredSha256 = "expected_sha256" });
+        await db.SaveChangesAsync();
+
+        var validator = new ToolDependencyValidator(db, NullLogger<ToolDependencyValidator>.Instance);
+
+        Func<Task> act = async () => await validator.ValidateDependencyGraphAsync("bughunter");
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*has no ArtifactSha256 configured*");
     }
 
     [Fact]

@@ -77,11 +77,17 @@ public class ToolDependencyValidator : IToolDependencyValidator
             }
 
             // Verify SHA-256 digest constraint if specified
-            if (!string.IsNullOrWhiteSpace(dep.RequiredSha256) &&
-                !string.IsNullOrWhiteSpace(childTool.ArtifactSha256) &&
-                !string.Equals(childTool.ArtifactSha256.Trim(), dep.RequiredSha256.Trim(), StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrWhiteSpace(dep.RequiredSha256))
             {
-                throw new InvalidOperationException($"Dependency Validation Error: Tool '{parent}' requires '{child}' SHA-256 '{dep.RequiredSha256}', but found '{childTool.ArtifactSha256}'.");
+                if (string.IsNullOrWhiteSpace(childTool.ArtifactSha256))
+                {
+                    throw new InvalidOperationException($"Dependency Validation Error: Tool '{parent}' requires '{child}' SHA-256 '{dep.RequiredSha256}', but child tool has no ArtifactSha256 configured.");
+                }
+
+                if (!string.Equals(childTool.ArtifactSha256.Trim(), dep.RequiredSha256.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException($"Dependency Validation Error: Tool '{parent}' requires '{child}' SHA-256 '{dep.RequiredSha256}', but found '{childTool.ArtifactSha256}'.");
+                }
             }
         }
 

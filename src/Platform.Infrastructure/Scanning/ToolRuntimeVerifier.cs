@@ -112,12 +112,15 @@ public class ToolRuntimeVerifier : IToolRuntimeVerifier
         }
 
         // ─────────────────────────────────────────────────────────────────────
-        // Stage 4: CapabilitySupported Probe (--help dry-run execution)
+        // Stage 4: CapabilitySupported Probe (Manifest-defined command & keyword probe)
         // ─────────────────────────────────────────────────────────────────────
+        var probeCmd = !string.IsNullOrWhiteSpace(tool.CapabilityProbeCommand) ? tool.CapabilityProbeCommand.Trim() : "--help";
+        var expectedKeyword = tool.CapabilityProbeExpectedKeyword?.Trim() ?? string.Empty;
+
         var helpStartInfo = new ProcessStartInfo
         {
             FileName = resolvedBinary,
-            ArgumentList = { "--help" },
+            ArgumentList = { probeCmd },
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
@@ -140,8 +143,14 @@ public class ToolRuntimeVerifier : IToolRuntimeVerifier
 
             if (string.IsNullOrWhiteSpace(helpOutput))
             {
-                _logger.LogWarning("Probe 'CapabilitySupported' failed for '{ToolKey}': Empty help/capability output.", toolKey);
+                _logger.LogWarning("Probe 'CapabilitySupported' failed for '{ToolKey}': Empty capability probe output.", toolKey);
                 return new ToolProbeResult(toolKey, false, "CapabilitySupported", "CAPABILITY_PROBE_EMPTY", "Capability dry-run probe returned empty output.", now);
+            }
+
+            if (!string.IsNullOrWhiteSpace(expectedKeyword) && !helpOutput.Contains(expectedKeyword, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogWarning("Probe 'CapabilitySupported' failed for '{ToolKey}': Expected keyword '{Keyword}' missing in output.", toolKey, expectedKeyword);
+                return new ToolProbeResult(toolKey, false, "CapabilitySupported", "CAPABILITY_KEYWORD_MISMATCH", $"Capability probe output missing manifest-required keyword '{expectedKeyword}'.", now);
             }
 
             _logger.LogInformation("All 4 runtime probes successfully passed for tool '{ToolKey}'.", toolKey);

@@ -765,6 +765,9 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.Property(st => st.ArtifactSourceType).HasMaxLength(100);
             e.Property(st => st.ArtifactRepository).HasMaxLength(256);
             e.Property(st => st.ArtifactUrl).HasMaxLength(1024);
+            e.Property(st => st.ArtifactFormat).HasMaxLength(50);
+            e.Property(st => st.CapabilityProbeCommand).HasMaxLength(100);
+            e.Property(st => st.CapabilityProbeExpectedKeyword).HasMaxLength(100);
             e.Property(st => st.ArtifactSha256).HasMaxLength(128);
             e.Property(st => st.ArtifactSignature).HasMaxLength(512);
             e.Property(st => st.ContainerImageDigest).HasMaxLength(128);

@@ -27,6 +27,12 @@ public class SecurityScanTool
 
     public string ArtifactSha256 { get; set; } = string.Empty;
 
+    public string ArtifactFormat { get; set; } = "binary"; // binary, zip, tar.gz
+
+    public string CapabilityProbeCommand { get; set; } = "--help";
+
+    public string CapabilityProbeExpectedKeyword { get; set; } = string.Empty;
+
     public string? ArtifactSignature { get; set; }
 
     public string? ContainerImageDigest { get; set; }
