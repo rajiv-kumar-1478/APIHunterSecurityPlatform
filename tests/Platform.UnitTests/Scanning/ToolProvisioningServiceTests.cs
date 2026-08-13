@@ -73,6 +73,60 @@ public class ToolProvisioningServiceTests
     }
 
     [Fact]
+    public async Task ProvisionToolAsync_RejectsExecutablePathTraversal()
+    {
+        var tool = new SecurityScanTool
+        {
+            ToolKey = "subfinder",
+            Version = "v2.6.6",
+            ArtifactSourceType = "github-release",
+            ArtifactRepository = "projectdiscovery/subfinder",
+            ArtifactSha256 = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            Executable = "../../somewhere/evil"
+        };
+
+        var result = await _service.ProvisionToolAsync(tool);
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("INVALID_EXECUTABLE_NAME");
+    }
+
+    [Fact]
+    public async Task ProvisionToolAsync_RejectsAbsoluteExecutablePath()
+    {
+        var tool = new SecurityScanTool
+        {
+            ToolKey = "subfinder",
+            Version = "v2.6.6",
+            ArtifactSourceType = "github-release",
+            ArtifactRepository = "projectdiscovery/subfinder",
+            ArtifactSha256 = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            Executable = @"C:\Windows\System32\cmd.exe"
+        };
+
+        var result = await _service.ProvisionToolAsync(tool);
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("INVALID_EXECUTABLE_NAME");
+    }
+
+    [Fact]
+    public async Task ProvisionToolAsync_RejectsShellExecutable()
+    {
+        var tool = new SecurityScanTool
+        {
+            ToolKey = "subfinder",
+            Version = "v2.6.6",
+            ArtifactSourceType = "github-release",
+            ArtifactRepository = "projectdiscovery/subfinder",
+            ArtifactSha256 = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+            Executable = "bash"
+        };
+
+        var result = await _service.ProvisionToolAsync(tool);
+        result.Success.Should().BeFalse();
+        result.ErrorCode.Should().Be("INVALID_EXECUTABLE_NAME");
+    }
+
+    [Fact]
     public async Task ProvisionToolAsync_RejectsUntrustedSourceType()
     {
         var tool = new SecurityScanTool

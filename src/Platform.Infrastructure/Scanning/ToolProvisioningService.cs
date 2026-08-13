@@ -11,6 +11,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
+using Platform.Application.Services;
 using Platform.Domain.Entities;
 
 namespace Platform.Infrastructure.Scanning;
@@ -104,7 +105,18 @@ public class ToolProvisioningService : IToolProvisioningService
             return new ProvisioningResult(toolKey, version, false, string.Empty, "MISSING_ARTIFACT_SHA256", "Mandatory ArtifactSha256 digest is missing.");
         }
 
-        // 4. Validate Initial ArtifactUrl Host, Repository Identity Binding, & Egress Policy SSRF Protection
+        // 4. Validate Executable Name Integrity (Defense-in-Depth against path traversal / absolute paths / shells)
+        try
+        {
+            ScanToolRegistryService.ValidateExecutableName(tool.Executable);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Tool '{ToolKey}' specifies invalid executable name '{Executable}'.", toolKey, tool.Executable);
+            return new ProvisioningResult(toolKey, version, false, string.Empty, "INVALID_EXECUTABLE_NAME", ex.Message);
+        }
+
+        // 5. Validate Initial ArtifactUrl Host, Repository Identity Binding, & Egress Policy SSRF Protection
         if (!string.IsNullOrWhiteSpace(tool.ArtifactUrl))
         {
             if (!Uri.TryCreate(tool.ArtifactUrl, UriKind.Absolute, out var artifactUri))
@@ -158,13 +170,13 @@ public class ToolProvisioningService : IToolProvisioningService
             }
         }
 
-        // 5. Construct Target Installation Directory
+        // 6. Construct Target Installation Directory
         var toolDir = Path.Combine(_toolsRoot, toolKey, version);
         Directory.CreateDirectory(toolDir);
 
         var executablePath = Path.Combine(toolDir, tool.Executable);
 
-        // 6. Check if binary already exists locally with matching SHA-256
+        // 7. Check if binary already exists locally with matching SHA-256
         if (File.Exists(executablePath))
         {
             var calculatedCacheHash = await ComputeFileSha256Async(executablePath, ct);
@@ -178,7 +190,7 @@ public class ToolProvisioningService : IToolProvisioningService
             File.Delete(executablePath);
         }
 
-        // 7. Download Artifact Stream via Mandatory Redirect Validation Boundary
+        // 8. Download Artifact Stream via Mandatory Redirect Validation Boundary
         var tempFile = Path.Combine(toolDir, $"{toolKey}_{version}_{Guid.NewGuid():N}.tmp");
         try
         {
@@ -194,7 +206,7 @@ public class ToolProvisioningService : IToolProvisioningService
                 await artifactStream.CopyToAsync(fileStream, ct);
             }
 
-            // 8. Verify Downloaded Artifact SHA-256 Stream Hash
+            // 9. Verify Downloaded Artifact SHA-256 Stream Hash
             var downloadedHash = await ComputeFileSha256Async(tempFile, ct);
             if (!string.Equals(downloadedHash, expectedHash, StringComparison.OrdinalIgnoreCase))
             {
@@ -205,7 +217,7 @@ public class ToolProvisioningService : IToolProvisioningService
                 return new ProvisioningResult(toolKey, version, false, string.Empty, "CHECKSUM_MISMATCH", $"Downloaded artifact SHA-256 '{downloadedHash}' does not match expected '{expectedHash}'.");
             }
 
-            // 9. Handle ArtifactFormat Extraction & Hardened ZIP Protections
+            // 10. Handle ArtifactFormat Extraction & Hardened ZIP Protections
             var format = tool.ArtifactFormat?.Trim().ToLowerInvariant() ?? "binary";
             if (format == "zip")
             {
@@ -307,7 +319,21 @@ public class ToolProvisioningService : IToolProvisioningService
                 File.Move(tempFile, executablePath);
             }
 
+            // 11. Post-Installation SHA-256 Integrity Verification
             var installedHash = await ComputeFileSha256Async(executablePath, ct);
+            if (!string.Equals(installedHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.LogError("Installed binary for '{ToolKey}' failed post-installation SHA-256 validation. Expected '{Expected}', calculated '{Actual}'.",
+                    toolKey, expectedHash, installedHash);
+
+                if (File.Exists(executablePath))
+                {
+                    try { File.Delete(executablePath); } catch { }
+                }
+
+                return new ProvisioningResult(toolKey, version, false, string.Empty, "INSTALLED_HASH_MISMATCH", "Installed executable failed post-installation SHA-256 validation.");
+            }
+
             _logger.LogInformation("Successfully provisioned tool '{ToolKey}' at '{ExecutablePath}' (verified hash: {Hash}).", toolKey, executablePath, installedHash);
 
             return new ProvisioningResult(toolKey, version, true, executablePath, null, null);
