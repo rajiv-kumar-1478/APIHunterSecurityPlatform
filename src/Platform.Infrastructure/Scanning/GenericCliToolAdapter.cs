@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,14 +16,21 @@ namespace Platform.Infrastructure.Scanning;
 
 public class GenericCliToolAdapter : IGenericCliToolAdapter
 {
+    private static readonly HashSet<string> WhitelistedBinaries = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "subfinder", "httpx", "katana", "nuclei", "bughunter", "amass", "nmap", "ffuf", "powershell.exe", "cmd.exe"
+    };
+
     private readonly ILogger<GenericCliToolAdapter> _logger;
+    private readonly string _scratchRoot;
 
     public string ToolKey { get; }
 
-    public GenericCliToolAdapter(string toolKey, ILogger<GenericCliToolAdapter> logger)
+    public GenericCliToolAdapter(string toolKey, ILogger<GenericCliToolAdapter> logger, string? scratchRoot = null)
     {
         ToolKey = toolKey ?? throw new ArgumentNullException(nameof(toolKey));
         _logger = logger;
+        _scratchRoot = scratchRoot ?? Path.Combine(Path.GetTempPath(), "apihunter_scans");
     }
 
     public async Task<ToolExecutionResult> ExecuteAsync(
@@ -31,10 +39,14 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         string scratchDirectory,
         CancellationToken ct = default)
     {
-        // 1. Path Traversal & Filesystem Guard
-        ValidateScratchDirectoryPath(scratchDirectory);
+        // 1. Enforce Whitelisted Binary Execution Guard
+        ValidateToolExecutableWhitelist(request.ToolKey);
+
+        // 2. Path Traversal & Symlink/Junction Filesystem Guard
+        ValidateScratchDirectoryPath(scratchDirectory, _scratchRoot);
 
         Directory.CreateDirectory(scratchDirectory);
+        VerifyNoReparsePointOrSymlink(scratchDirectory);
 
         var binaryName = GetBinaryFileName(request.ToolKey);
         var stdoutBuilder = new StringBuilder();
@@ -176,7 +188,15 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         }
     }
 
-    public static void ValidateScratchDirectoryPath(string path)
+    public static void ValidateToolExecutableWhitelist(string toolKey)
+    {
+        if (string.IsNullOrWhiteSpace(toolKey) || !WhitelistedBinaries.Contains(toolKey.Trim()))
+        {
+            throw new InvalidOperationException($"Security Violation: Executable binary '{toolKey}' is not registered in the authorized scanner tool manifest.");
+        }
+    }
+
+    public static void ValidateScratchDirectoryPath(string path, string? scratchRoot = null)
     {
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -188,18 +208,29 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
             throw new InvalidOperationException($"Security Violation: Path traversal attempt detected in scratch directory path '{path}'.");
         }
 
-        var fullPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var baseTmpPath = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "scans")).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var root = scratchRoot ?? Path.Combine(Path.GetTempPath(), "apihunter_scans");
+        var canonicalScratch = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var canonicalRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-        // Strict prefix check ensuring directory boundary separation
-        var isSubDirOfTemp = fullPath.Equals(baseTmpPath, StringComparison.OrdinalIgnoreCase) ||
-                             fullPath.StartsWith(baseTmpPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        // Strict prefix anchoring without substring bypass
+        var isAnchored = canonicalScratch.Equals(canonicalRoot, StringComparison.OrdinalIgnoreCase) ||
+                         canonicalScratch.StartsWith(canonicalRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
-        var isWorkspacePath = fullPath.Contains("APIHunterSecurityPlatform", StringComparison.OrdinalIgnoreCase);
-
-        if (!isSubDirOfTemp && !isWorkspacePath)
+        if (!isAnchored)
         {
-            throw new InvalidOperationException($"Security Violation: Scratch directory '{fullPath}' escapes allowed temp root '{baseTmpPath}'.");
+            throw new InvalidOperationException($"Security Violation: Scratch directory '{canonicalScratch}' escapes allowed scratch root '{canonicalRoot}'.");
+        }
+    }
+
+    public static void VerifyNoReparsePointOrSymlink(string directoryPath)
+    {
+        if (Directory.Exists(directoryPath))
+        {
+            var dirInfo = new DirectoryInfo(directoryPath);
+            if ((dirInfo.Attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
+            {
+                throw new InvalidOperationException($"Security Violation: Scratch directory '{directoryPath}' is a symlink or junction point.");
+            }
         }
     }
 

@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
@@ -12,19 +13,23 @@ namespace Platform.Infrastructure.Scanning;
 
 /// <summary>
 /// Production Secret Store implementation resolving protected secret references via ASP.NET Core DataProtection.
+/// Plaintext secrets are strictly rejected in Production environments.
 /// </summary>
 public class ConfigurationScanProviderSecretStore : IScanProviderSecretStore
 {
     private readonly IConfiguration _configuration;
+    private readonly IHostEnvironment _environment;
     private readonly IDataProtector _protector;
     private readonly ILogger<ConfigurationScanProviderSecretStore> _logger;
 
     public ConfigurationScanProviderSecretStore(
         IConfiguration configuration,
+        IHostEnvironment environment,
         IDataProtectionProvider dataProtectionProvider,
         ILogger<ConfigurationScanProviderSecretStore> logger)
     {
         _configuration = configuration;
+        _environment = environment;
         _protector = dataProtectionProvider.CreateProtector("Platform.Scanning.ProviderSecrets");
         _logger = logger;
     }
@@ -54,15 +59,27 @@ public class ConfigurationScanProviderSecretStore : IScanProviderSecretStore
             {
                 if (!string.IsNullOrEmpty(child.Value))
                 {
-                    try
+                    if (child.Value.StartsWith("CfDJ8"))
                     {
-                        // Decrypt protected secret reference if encrypted, else fallback to configured key
-                        var decrypted = child.Value.StartsWith("CfDJ8") ? _protector.Unprotect(child.Value) : child.Value;
-                        leaseSecrets[child.Key] = decrypted;
+                        try
+                        {
+                            var decrypted = _protector.Unprotect(child.Value);
+                            leaseSecrets[child.Key] = decrypted;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to unprotect secret '{SecretKey}' for provider '{ProviderKey}'.", child.Key, providerKey);
+                        }
                     }
-                    catch (Exception ex)
+                    else if (_environment.IsDevelopment() || _environment.IsEnvironment("Testing"))
                     {
-                        _logger.LogWarning(ex, "Failed to unprotect secret '{SecretKey}' for provider '{ProviderKey}'.", child.Key, providerKey);
+                        // Plaintext configuration allowed strictly in Development/Testing
+                        leaseSecrets[child.Key] = child.Value;
+                    }
+                    else
+                    {
+                        _logger.LogError("Production Secret Protection Security Violation: Unprotected secret key '{SecretKey}' configured for provider '{ProviderKey}'.", child.Key, providerKey);
+                        throw new InvalidOperationException($"Security Violation: Plaintext secrets are strictly prohibited in production environment for key '{child.Key}'.");
                     }
                 }
             }

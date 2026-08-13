@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -6,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Platform.Application.Persistence;
 using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
+using Platform.Application.Services;
 using Platform.Domain.Enums;
 
 namespace Platform.Infrastructure.Scanning;
@@ -14,18 +16,21 @@ public class GenericScanWorker : IScanWorker
 {
     private readonly IPlatformDbContext _dbContext;
     private readonly IScanProviderSecretStore _secretStore;
-    private readonly IScanProvider _scanProvider;
+    private readonly ScanToolRegistryService _toolRegistryService;
+    private readonly Func<string, IGenericCliToolAdapter> _cliAdapterFactory;
     private readonly ILogger<GenericScanWorker> _logger;
 
     public GenericScanWorker(
         IPlatformDbContext dbContext,
         IScanProviderSecretStore secretStore,
-        IScanProvider scanProvider,
+        ScanToolRegistryService toolRegistryService,
+        Func<string, IGenericCliToolAdapter> cliAdapterFactory,
         ILogger<GenericScanWorker> logger)
     {
         _dbContext = dbContext;
         _secretStore = secretStore;
-        _scanProvider = scanProvider;
+        _toolRegistryService = toolRegistryService;
+        _cliAdapterFactory = cliAdapterFactory;
         _logger = logger;
     }
 
@@ -37,8 +42,12 @@ public class GenericScanWorker : IScanWorker
             throw new KeyNotFoundException($"Scan job '{scanJobId}' not found.");
         }
 
-        var scratchDirectory = Path.Combine(Path.GetTempPath(), "scans", scanJobId.ToString("N"));
+        var scratchRoot = Path.Combine(Path.GetTempPath(), "apihunter_scans");
+        var scratchDirectory = Path.Combine(scratchRoot, scanJobId.ToString("N"));
+
+        GenericCliToolAdapter.ValidateScratchDirectoryPath(scratchDirectory, scratchRoot);
         Directory.CreateDirectory(scratchDirectory);
+        GenericCliToolAdapter.VerifyNoReparsePointOrSymlink(scratchDirectory);
 
         _logger.LogInformation("Worker allocated scratch directory '{ScratchDirectory}' for job '{ScanJobId}'.", scratchDirectory, scanJobId);
 
@@ -46,31 +55,57 @@ public class GenericScanWorker : IScanWorker
 
         try
         {
-            var startResult = await _scanProvider.StartAsync(new ScanExecutionRequest(
-                ScanJobId: job.Id,
-                TargetUrl: job.TargetUrl,
-                Profile: job.ScanProfile,
-                ProviderKey: job.ProviderKey,
-                Parameters: new System.Collections.Generic.Dictionary<string, string>(),
-                Timeout: TimeSpan.FromMinutes(15)
-            ), ct);
+            job.Status = SecurityScanJobStatus.Running;
+            job.StartedAtUtc = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
 
-            if (!startResult.Success)
+            // Resolve required tool capabilities for scan profile
+            var requiredCapabilities = ScanJobService.GetRequiredCapabilitiesForProfile(job.ScanProfile);
+            var tools = await _toolRegistryService.GetToolsForCapabilitiesAsync(requiredCapabilities, ct);
+
+            var toolResults = new List<ToolExecutionResult>();
+
+            foreach (var tool in tools)
             {
-                job.Status = SecurityScanJobStatus.Failed;
-                job.FailureReason = startResult.ErrorMessage ?? "Provider failed to start scan.";
-                job.CompletedAtUtc = DateTime.UtcNow;
-                await _dbContext.SaveChangesAsync(ct);
+                if (!tool.Enabled || tool.HealthStatus != ToolHealthStatus.Healthy)
+                {
+                    _logger.LogWarning("Worker skipping disabled or unhealthy tool '{ToolKey}' for job '{ScanJobId}'.", tool.ToolKey, scanJobId);
+                    continue;
+                }
 
-                return new ScanExecutionResult(job.Id, job.Status, null, null, job.FailureReason, DateTime.UtcNow);
+                var cliAdapter = _cliAdapterFactory(tool.ToolKey);
+                var toolRequest = new ToolExecutionRequest(
+                    ToolKey: tool.ToolKey,
+                    Version: tool.Version,
+                    Arguments: new Dictionary<string, string> { ["target"] = job.TargetUrl },
+                    ScanJobId: job.Id,
+                    Timeout: TimeSpan.FromMinutes(10)
+                );
+
+                var toolResult = await cliAdapter.ExecuteAsync(toolRequest, secretLease, scratchDirectory, ct);
+                toolResults.Add(toolResult);
+
+                if (toolResult.Status == ToolExecutionStatus.TimedOut || toolResult.Status == ToolExecutionStatus.Failed)
+                {
+                    if (tool.Required)
+                    {
+                        _logger.LogError("Required tool '{ToolKey}' failed or timed out for job '{ScanJobId}'. Aborting scan.", tool.ToolKey, scanJobId);
+                        job.Status = SecurityScanJobStatus.Failed;
+                        job.FailureReason = $"Required tool '{tool.ToolKey}' failed: {toolResult.ErrorCode}";
+                        job.CompletedAtUtc = DateTime.UtcNow;
+                        await _dbContext.SaveChangesAsync(ct);
+
+                        return new ScanExecutionResult(job.Id, job.Status, null, null, job.FailureReason, DateTime.UtcNow);
+                    }
+                }
             }
 
-            var providerResult = await _scanProvider.GetResultAsync(startResult.ExternalScanId, ct);
-            job.Status = providerResult.Status;
+            job.Status = SecurityScanJobStatus.Completed;
             job.CompletedAtUtc = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
 
-            return new ScanExecutionResult(job.Id, job.Status, startResult.ExternalScanId, providerResult.ArtifactReference, providerResult.Summary, DateTime.UtcNow);
+            var summary = $"Executed {toolResults.Count} tools for target '{job.TargetUrl}'.";
+            return new ScanExecutionResult(job.Id, job.Status, job.CorrelationId, scratchDirectory, summary, DateTime.UtcNow);
         }
         finally
         {

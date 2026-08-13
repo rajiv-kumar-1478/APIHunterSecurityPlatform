@@ -270,6 +270,9 @@ try
     builder.Services.AddScoped<IScanToolHealthService, ScanToolHealthService>();
     builder.Services.AddSingleton<IBugHunterProvider, BugHunterScanProvider>();
     builder.Services.AddSingleton<IScanProvider, BugHunterScanProvider>();
+    builder.Services.AddTransient<Func<string, IGenericCliToolAdapter>>(sp => toolKey =>
+        new GenericCliToolAdapter(toolKey, sp.GetRequiredService<ILogger<GenericCliToolAdapter>>()));
+    builder.Services.AddScoped<IScanWorker, GenericScanWorker>();
 
     if (builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing"))
     {

@@ -176,16 +176,22 @@ public class ScanJobService
         }
         else
         {
-            // Verify if target URL matches any registered authorized target
+            // Fail-closed target scope validation
+            var registeredTargets = await _dbContext.SecurityTargets.AsNoTracking().Where(t => t.Enabled).ToListAsync(ct);
+            if (!registeredTargets.Any())
+            {
+                _logger.LogWarning("Target scope validation rejected for '{TargetUrl}': zero authorized security targets are configured in the platform.", targetUrl);
+                throw new InvalidOperationException($"Target URL '{targetUrl}' is out of scope. No authorized security targets are currently configured in the platform.");
+            }
+
             var uri = new Uri(targetUrl.StartsWith("http") ? targetUrl : $"https://{targetUrl}");
             var host = uri.Host.ToLowerInvariant();
 
-            var registeredTargets = await _dbContext.SecurityTargets.AsNoTracking().Where(t => t.Enabled).ToListAsync(ct);
             var isAuthorized = registeredTargets.Any(t =>
                 t.BaseUrl.Contains(host, StringComparison.OrdinalIgnoreCase) ||
                 host.EndsWith(t.BaseUrl.Replace("https://", "").Replace("http://", "").TrimEnd('/'), StringComparison.OrdinalIgnoreCase));
 
-            if (!isAuthorized && registeredTargets.Any())
+            if (!isAuthorized)
             {
                 _logger.LogWarning("Scope authorization rejected for target URL '{TargetUrl}': host '{Host}' is not registered under authorized security targets.", targetUrl, host);
                 throw new InvalidOperationException($"Target URL '{targetUrl}' is out of scope. Scans are permitted only against authorized security targets.");

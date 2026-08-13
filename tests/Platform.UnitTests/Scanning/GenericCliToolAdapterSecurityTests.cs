@@ -5,9 +5,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using Platform.Application.Common;
+using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
 using Platform.Application.Services;
+using Platform.Domain.Contracts;
 using Platform.Domain.Entities;
 using Platform.Domain.Enums;
 using Platform.Infrastructure.Persistence;
@@ -18,12 +24,23 @@ namespace Platform.UnitTests.Scanning;
 
 public class GenericCliToolAdapterSecurityTests
 {
+    private class TestUserContext : ICurrentUserContext
+    {
+        public Guid? UserId { get; set; } = Guid.Parse("ade4b0fc-dd14-498d-af34-2d7151b8a142");
+        public string? SessionId { get; set; } = "session-123";
+        public bool IsAuthenticated { get; set; } = true;
+        public bool IsPlatformAdmin { get; set; } = true;
+        public string CorrelationId { get; set; } = "correlation-123";
+        public string IpAddress { get; set; } = "127.0.0.1";
+    }
+
     [Fact]
     public void Test1_ValidateScratchDirectoryPath_Rejects_PathTraversal()
     {
-        var invalidPath = Path.Combine(Path.GetTempPath(), "scans", "..", "..", "Windows", "System32");
+        var root = Path.Combine(Path.GetTempPath(), "apihunter_scans");
+        var invalidPath = Path.Combine(root, "..", "..", "Windows", "System32");
 
-        Action act = () => GenericCliToolAdapter.ValidateScratchDirectoryPath(invalidPath);
+        Action act = () => GenericCliToolAdapter.ValidateScratchDirectoryPath(invalidPath, root);
         act.Should().Throw<InvalidOperationException>()
            .WithMessage("*Path traversal attempt detected*");
     }
@@ -31,23 +48,24 @@ public class GenericCliToolAdapterSecurityTests
     [Fact]
     public void Test2_ValidateScratchDirectoryPath_Rejects_DisallowedDirectory()
     {
+        var root = Path.Combine(Path.GetTempPath(), "apihunter_scans");
         var disallowedPath = "C:\\RandomUnauthorizedFolder\\scans";
 
-        Action act = () => GenericCliToolAdapter.ValidateScratchDirectoryPath(disallowedPath);
+        Action act = () => GenericCliToolAdapter.ValidateScratchDirectoryPath(disallowedPath, root);
         act.Should().Throw<InvalidOperationException>()
-           .WithMessage("*Scratch directory*escapes allowed temp root*");
+           .WithMessage("*Scratch directory*escapes allowed scratch root*");
     }
 
     [Fact]
     public void Test3_ValidateScratchDirectoryPath_Rejects_SiblingPrefixAttack()
     {
-        // /tmp/scans-evil vs /tmp/scans
-        var baseTmpPath = Path.Combine(Path.GetTempPath(), "scans");
-        var siblingPrefixPath = baseTmpPath + "-evil";
+        // /tmp/apihunter_scans-evil vs /tmp/apihunter_scans
+        var root = Path.Combine(Path.GetTempPath(), "apihunter_scans");
+        var siblingPrefixPath = root + "-evil";
 
-        Action act = () => GenericCliToolAdapter.ValidateScratchDirectoryPath(siblingPrefixPath);
+        Action act = () => GenericCliToolAdapter.ValidateScratchDirectoryPath(siblingPrefixPath, root);
         act.Should().Throw<InvalidOperationException>()
-           .WithMessage("*Scratch directory*escapes allowed temp root*");
+           .WithMessage("*Scratch directory*escapes allowed scratch root*");
     }
 
     [Fact]
@@ -69,11 +87,11 @@ public class GenericCliToolAdapterSecurityTests
     [Fact]
     public async Task Test5_ExecuteAsync_Handles_MissingBinary()
     {
-        var adapter = new GenericCliToolAdapter("non_existent_binary_xyz_123", NullLogger<GenericCliToolAdapter>.Instance);
-        var scratch = Path.Combine(Path.GetTempPath(), "scans", Guid.NewGuid().ToString("N"));
+        var adapter = new GenericCliToolAdapter("subfinder", NullLogger<GenericCliToolAdapter>.Instance);
+        var scratch = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString("N"));
 
         var request = new ToolExecutionRequest(
-            ToolKey: "non_existent_binary_xyz_123",
+            ToolKey: "subfinder",
             Version: "v1.0.0",
             Arguments: new Dictionary<string, string>(),
             ScanJobId: Guid.NewGuid(),
@@ -91,7 +109,7 @@ public class GenericCliToolAdapterSecurityTests
     public async Task Test6_ExecuteAsync_Handles_Timeout()
     {
         var adapter = new GenericCliToolAdapter("powershell.exe", NullLogger<GenericCliToolAdapter>.Instance);
-        var scratch = Path.Combine(Path.GetTempPath(), "scans", Guid.NewGuid().ToString("N"));
+        var scratch = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString("N"));
 
         var request = new ToolExecutionRequest(
             ToolKey: "powershell.exe",
@@ -112,7 +130,7 @@ public class GenericCliToolAdapterSecurityTests
     public async Task Test7_ExecuteAsync_Handles_Cancellation()
     {
         var adapter = new GenericCliToolAdapter("powershell.exe", NullLogger<GenericCliToolAdapter>.Instance);
-        var scratch = Path.Combine(Path.GetTempPath(), "scans", Guid.NewGuid().ToString("N"));
+        var scratch = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString("N"));
 
         using var cts = new CancellationTokenSource();
         cts.CancelAfter(50);
@@ -137,7 +155,7 @@ public class GenericCliToolAdapterSecurityTests
     {
         // Command exiting natively with exit code 124 without cancellation token trigger
         var adapter = new GenericCliToolAdapter("cmd.exe", NullLogger<GenericCliToolAdapter>.Instance);
-        var scratch = Path.Combine(Path.GetTempPath(), "scans", Guid.NewGuid().ToString("N"));
+        var scratch = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString("N"));
 
         var request = new ToolExecutionRequest(
             ToolKey: "cmd.exe",
@@ -157,30 +175,148 @@ public class GenericCliToolAdapterSecurityTests
     }
 
     [Fact]
-    public async Task Test9_ToolReplacement_SwapsToolDefinition_WithoutChangingOrchestration()
+    public void Test9_ProviderSecretLease_Dispose_ZeroesSecretsContainer()
     {
-        var options = new DbContextOptionsBuilder<PlatformDbContext>()
+        var secretDict = new Dictionary<string, string>
+        {
+            ["GROQ_API_KEY"] = "gsk_super_secret_123"
+        };
+        var lease = new ProviderSecretLease("bughunter", secretDict, TimeSpan.FromMinutes(5));
+
+        lease.Secrets.Should().ContainKey("GROQ_API_KEY");
+        lease.Dispose();
+
+        lease.Secrets.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Test10_TargetScopeValidation_FailClosed_WhenZeroTargetsConfigured()
+    {
+        var dbOptions = new DbContextOptionsBuilder<PlatformDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
             .Options;
-        using var db = new PlatformDbContext(options);
+        using var db = new PlatformDbContext(dbOptions);
+
+        var service = new ScanJobService(
+            db,
+            new TestUserContext(),
+            new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance),
+            NullLogger<ScanJobService>.Instance
+        );
+
+        var request = new CreateScanJobRequest(null, null, "https://any-domain.com", SecurityScanProfileType.Recon, "bughunter");
+
+        Func<Task> act = async () => await service.CreateScanJobAsync(request);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+           .WithMessage("*No authorized security targets are currently configured*");
+    }
+
+    [Fact]
+    public async Task Test11_TargetScopeValidation_FailClosed_WhenTargetHostUnauthorized()
+    {
+        var dbOptions = new DbContextOptionsBuilder<PlatformDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        using var db = new PlatformDbContext(dbOptions);
+
+        db.SecurityTargets.Add(new SecurityTarget
+        {
+            Id = Guid.NewGuid(),
+            Name = "Authorized Internal Target",
+            BaseUrl = "https://authorized.example.com",
+            Enabled = true
+        });
+        await db.SaveChangesAsync();
+
+        var service = new ScanJobService(
+            db,
+            new TestUserContext(),
+            new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance),
+            NullLogger<ScanJobService>.Instance
+        );
+
+        var request = new CreateScanJobRequest(null, null, "https://malicious-target.com", SecurityScanProfileType.Recon, "bughunter");
+
+        Func<Task> act = async () => await service.CreateScanJobAsync(request);
+        await act.Should().ThrowAsync<InvalidOperationException>()
+           .WithMessage("*out of scope*");
+    }
+
+    [Fact]
+    public async Task Test12_ConfigurationSecretStore_Rejects_PlaintextSecrets_In_Production()
+    {
+        var inMemorySettings = new Dictionary<string, string?>
+        {
+            ["Scanning:Providers:bughunter:Secrets:GROQ_API_KEY"] = "plaintext_unprotected_key_123"
+        };
+        IConfiguration config = new ConfigurationBuilder().AddInMemoryCollection(inMemorySettings!).Build();
+
+        var envMock = new Mock<IHostEnvironment>();
+        envMock.Setup(e => e.EnvironmentName).Returns("Production");
+
+        var store = new ConfigurationScanProviderSecretStore(
+            config,
+            envMock.Object,
+            new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider().CreateProtector("test"),
+            NullLogger<ConfigurationScanProviderSecretStore>.Instance
+        );
+
+        Func<Task> act = async () => await store.AcquireLeaseAsync("bughunter");
+        await act.Should().ThrowAsync<InvalidOperationException>()
+           .WithMessage("*Plaintext secrets are strictly prohibited in production*");
+    }
+
+    [Fact]
+    public void Test13_UnregisteredBinaryExecution_Throws_SecurityViolation()
+    {
+        Action act = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("malicious_unregistered_tool");
+        act.Should().Throw<InvalidOperationException>()
+           .WithMessage("*Executable binary 'malicious_unregistered_tool' is not registered*");
+    }
+
+    [Fact]
+    public async Task Test14_ConcreteToolReplacement_Dispatches_SelectedTool_Without_Orchestration_Changes()
+    {
+        var dbOptions = new DbContextOptionsBuilder<PlatformDbContext>()
+            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .Options;
+        using var db = new PlatformDbContext(dbOptions);
 
         var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
+        await registry.RegisterToolAsync("amass", "Amass Replacement Scanner", "v4.0.0", true, new[] { ToolCapability.HttpProbing });
 
-        // Tool A: Original Subdomain Finder
-        await registry.RegisterToolAsync("subfinder", "Subfinder Original", "v2.14.0", true, new[] { ToolCapability.SubdomainEnumeration });
+        db.SecurityScanJobs.Add(new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            TargetUrl = "https://example.com",
+            ScanProfile = SecurityScanProfileType.Recon,
+            Status = SecurityScanJobStatus.Queued,
+            ProviderKey = "bughunter"
+        });
+        await db.SaveChangesAsync();
 
-        var toolsForReconBefore = await registry.GetToolsForCapabilitiesAsync(new[] { ToolCapability.SubdomainEnumeration });
-        toolsForReconBefore.Should().ContainSingle(t => t.ToolKey == "subfinder");
+        var executedTools = new List<string>();
+        Func<string, IGenericCliToolAdapter> factory = toolKey =>
+        {
+            executedTools.Add(toolKey);
+            var mockAdapter = new Mock<IGenericCliToolAdapter>();
+            mockAdapter.Setup(a => a.ToolKey).Returns(toolKey);
+            mockAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                       .ReturnsAsync(new ToolExecutionResult(toolKey, "v4.0.0", ToolExecutionStatus.Success, 0, null, null));
+            return mockAdapter.Object;
+        };
 
-        // Tool B: Swapped / Added New Tool (Amass) for same capability
-        await registry.RegisterToolAsync("amass", "Amass Replacement Scanner", "v4.0.0", true, new[] { ToolCapability.SubdomainEnumeration });
+        var worker = new GenericScanWorker(
+            db,
+            new InMemoryScanProviderSecretStore(),
+            registry,
+            factory,
+            NullLogger<GenericScanWorker>.Instance
+        );
 
-        var toolsForReconAfter = await registry.GetToolsForCapabilitiesAsync(new[] { ToolCapability.SubdomainEnumeration });
-        toolsForReconAfter.Should().HaveCount(2);
-        toolsForReconAfter.Should().Contain(t => t.ToolKey == "amass");
+        var result = await worker.ExecuteScanJobAsync(db.SecurityScanJobs.First().Id);
 
-        // Verification: The capability manifest resolves tool dynamically without any orchestration service code change!
-        var manifest = await registry.GetCapabilityManifestAsync();
-        manifest.Should().Contain(c => c.CapabilityKey == "SubdomainEnumeration" && c.AvailableTools.Contains("amass"));
+        result.Status.Should().Be(SecurityScanJobStatus.Completed);
+        executedTools.Should().Contain("amass");
     }
 }

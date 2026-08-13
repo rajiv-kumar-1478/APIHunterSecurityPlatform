@@ -70,20 +70,27 @@ public record ProviderSecretStatus(
 
 public sealed class ProviderSecretLease : IDisposable
 {
+    private readonly Dictionary<string, string> _secrets;
+    private bool _disposed;
+
     public string ProviderKey { get; }
-    public IReadOnlyDictionary<string, string> Secrets { get; }
+    public IReadOnlyDictionary<string, string> Secrets => _disposed ? new Dictionary<string, string>() : _secrets;
     public DateTime ExpiresAtUtc { get; }
 
-    public ProviderSecretLease(string providerKey, IReadOnlyDictionary<string, string> secrets, TimeSpan duration)
+    public ProviderSecretLease(string providerKey, IDictionary<string, string> secrets, TimeSpan duration)
     {
         ProviderKey = providerKey;
-        Secrets = secrets;
+        _secrets = new Dictionary<string, string>(secrets, StringComparer.OrdinalIgnoreCase);
         ExpiresAtUtc = DateTime.UtcNow.Add(duration);
     }
 
     public void Dispose()
     {
-        // Clear secrets from lease container upon disposal
+        if (!_disposed)
+        {
+            _secrets.Clear();
+            _disposed = true;
+        }
     }
 }
 

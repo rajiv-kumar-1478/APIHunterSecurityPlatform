@@ -1,33 +1,24 @@
 # Tool Extensibility & Generic CLI Adapter Architecture
 
-## Architectural Invariant
+## Architectural Invariants & Security Boundaries
 
-> **Adding or replacing a tool that conforms to the Generic CLI Tool Contract must require configuration/worker-image changes only, not modifications to core scan orchestration, domain models, API contracts, or dashboard code.**
+> **Invariant 1**: Adding or replacing a tool that conforms to the Generic CLI Tool Contract must require configuration/worker-image changes only, not modifications to core scan orchestration, domain models, API contracts, or dashboard code.
 
----
+> **Invariant 2**: Target scope authorization is **fail-closed**. If zero targets are registered or a target host is unauthorized, scan job creation is strictly rejected.
 
-## 1. Tool Registry & Capability Manifest
-
-The tool registry (`SecurityScanTool` entity & `ScanToolRegistryService`) maintains metadata for all available hosted scanner binaries.
-
-```text
-Tool Definition
-├── ToolKey (e.g., "httpx", "subfinder", "katana", "nuclei", "bughunter")
-├── DisplayName
-├── Version (pinned)
-├── ImageReference / BinaryPath
-├── ImageDigest
-├── Required vs Optional
-├── CapabilitiesJson (e.g., ["HttpProbing", "DnsResolution"])
-├── HealthStatus (Healthy, Degraded, Missing, Unreachable, Disabled)
-└── ResourceLimits (Timeout, MaxCpu, MaxMemoryMB)
-```
+> **Invariant 3**: Secrets are leased in-memory during worker process execution via `ProviderSecretLease`. `ProviderSecretLease.Dispose()` zero-clears secret entries. Secrets are strictly forbidden from database rows, DTOs, logs, and CLI argument strings.
 
 ---
 
-## 2. Generic CLI Adapter Contract
+## 1. Tool Registry & Whitelisted Binary Execution
 
-Tools invoking command-line interfaces implement or map through `GenericCliToolAdapter`:
+The tool registry (`SecurityScanTool` entity & `ScanToolRegistryService`) maintains metadata for all available scanner binaries.
+
+`GenericCliToolAdapter` validates all requested binary names against an explicit whitelist (`subfinder`, `httpx`, `katana`, `nuclei`, `bughunter`, `amass`, `nmap`, `ffuf`, `powershell.exe`, `cmd.exe`). Unregistered binary keys are rejected with `BINARY_NOT_REGISTERED` security violations.
+
+---
+
+## 2. Generic CLI Adapter Contract (`IGenericCliToolAdapter`)
 
 ```csharp
 public interface IGenericCliToolAdapter
@@ -37,52 +28,47 @@ public interface IGenericCliToolAdapter
     Task<ToolExecutionResult> ExecuteAsync(
         ToolExecutionRequest request, 
         ProviderSecretLease secretLease, 
+        string scratchDirectory, 
         CancellationToken ct = default);
 }
 ```
 
-### CLI Execution Parameters
+### Exit-Code Semantics & Disambiguation
 
-1. **Arguments Format**: Arguments are generated dynamically from configuration templates.
-2. **Environment Variables**: Sensitive provider keys (`GROQ_API_KEY`, `VIRUSTOTAL_API_KEY`) are passed via process environment variables leased from `IScanProviderSecretStore` and purged immediately upon process completion.
-3. **StdOut/StdErr Redirection**: Standard output and error streams are captured, parsed via JSON line parsers or regex matchers, and archived to object storage.
-4. **Exit-Code Protocol**:
-   - `0`: Success
-   - `1-127`: Tool-specific warning or partial execution
-   - `124/137`: Timed out or Killed by OS (Resource Limit)
+- `0` => `ToolExecutionStatus.Success`
+- `1-127` (without cancellation token trigger) => `ToolExecutionStatus.Failed` with `ExitCode = N` and `ErrorCode = "EXIT_CODE_N"`
+- Timeout / Cancellation => `ToolExecutionStatus.TimedOut` with `ErrorCode = "TIMED_OUT"` or `"CANCELLED"`, process tree terminated immediately via `KillProcessTreeSafely(entireProcessTree: true)`.
 
 ---
 
-## 3. Hosted-Mode Architecture & Resource Isolation
+## 3. Hosted Execution & Filesystem Isolation Guards
 
-The API, Web Server, and Next.js Dashboard **never** assume scanning tools exist on the web server host. Scans are executed exclusively inside hosted worker containers (`Platform.Worker`).
+Scratch directories are generated under an anchored root (`<WorkerScratchRoot>/scans/{JobId}`).
 
-### Resource Controls Enforced
-
-- **Execution Timeout**: Default 15 minutes per tool execution; configurable per profile.
-- **Memory Limit**: Enforced per tool execution container (default 1 GB RAM).
-- **CPU Quota**: Constrained to allocated worker thread affinity.
-- **Filesystem Isolation**: Tools execute inside temporary scratch volumes (`/tmp/scans/{job_id}`). Scratch space is wiped immediately upon completion.
-- **Network Isolation**: Outbound traffic permitted only to target scope URLs and authorized API endpoints.
+1. **Path Prefix Guard**: `ValidateScratchDirectoryPath` verifies canonical path prefix anchoring without substring exceptions.
+2. **Symlink/Junction Guard**: `VerifyNoReparsePointOrSymlink` rejects directory paths containing symlinks or reparse points.
+3. **Guaranteed Cleanup**: `GenericScanWorker` deletes scratch directories recursively inside a `finally` block.
 
 ---
 
-## 4. Configuration-Driven Tool Replacement & Runbook
+## 4. Production Secret Store Policy
 
-To swap an existing tool (e.g. replace `subfinder` with `amass`):
-
-1. **Update Container/Worker Image**: Install the new binary (`amass`) into the hosted worker container image.
-2. **Register Tool Definition**: Add `amass` definition to `security_scan_tools` table with capability `SubdomainEnumeration`.
-3. **Set Capability Priority**: Update `ScanToolRegistryService` configuration to prefer `amass` over `subfinder` for `SubdomainEnumeration`.
-4. **Deploy Worker Update**: Deploy updated worker container.
-5. **Zero Core Code Modifications**: Core scan orchestration (`ScanJobService`), API contracts (`SecurityScanController`), and Dashboard UI remain 100% untouched.
+`ConfigurationScanProviderSecretStore` enforces ASP.NET Core `IDataProtectionProvider` (`CfDJ8` prefix). Plaintext secret values in production configurations are rejected with a security exception. Plaintext fallback is permitted strictly in `Development` or `Testing` environments.
 
 ---
 
-## 5. Upgrade & Rollback Strategy
+## 5. Implementation Scope vs Future Container Hardening
 
-1. **Side-by-Side Registration**: Register the upgraded tool version under `vNew` while keeping `vCurrent` enabled.
-2. **Health Verification**: Startup health probe validates `vNew` binary binary presence and `--version` output.
-3. **Canary Dispatch**: Route 10% of scan jobs to `vNew`.
-4. **Promotion**: Promote `vNew` to default upon zero execution failures over 24 hours.
-5. **Instant Rollback**: If `vNew` fails, toggle `vCurrent` back to default via configuration without code changes.
+### Implemented in Phase 8 Step 1 (Local Process Worker Foundation)
+- Secret lease zero-clearing on disposal.
+- Whitelisted binary execution guard.
+- Canonical path prefix anchoring & symlink/reparse point checks.
+- Fail-closed target scope verification.
+- Output & exception log secret masking (`SanitizeOutput`).
+- Deterministic tool replacement via registry.
+
+### Future Infrastructure Hardening (Container Workers)
+- Container cgroup CPU & Memory quota limits.
+- Container image digest pinning (`ImageDigest`).
+- Non-root container UID execution.
+- NetworkPolicy egress restriction per target domain.
