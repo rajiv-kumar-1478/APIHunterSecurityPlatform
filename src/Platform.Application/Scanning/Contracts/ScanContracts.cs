@@ -50,7 +50,7 @@ public record ToolExecutionRequest(
     Guid ScanJobId,
     TimeSpan Timeout,
     string? Executable = null,
-    IReadOnlySet<string>? AuthorizedManifest = null
+    IReadOnlyDictionary<string, string>? AuthorizedManifest = null
 );
 
 public record ToolExecutionResult(

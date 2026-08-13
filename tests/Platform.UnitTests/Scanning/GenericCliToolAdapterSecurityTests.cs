@@ -447,7 +447,8 @@ public class GenericCliToolAdapterSecurityTests
     [Fact]
     public void Test18_ValidateToolExecutableWhitelist_Rejects_Unknown_Executable_NotInManifest()
     {
-        Action act = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("unregistered_tool", manifestWhitelist: new[] { "subfinder", "httpx" });
+        var manifestMap = new Dictionary<string, string> { ["subfinder"] = "subfinder", ["httpx"] = "httpx" };
+        Action act = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("unregistered_tool", "unregistered_tool", manifestMap);
         act.Should().Throw<InvalidOperationException>().WithMessage("*not registered in the authorized scanner tool manifest*");
     }
 

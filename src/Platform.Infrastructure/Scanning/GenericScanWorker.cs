@@ -62,7 +62,7 @@ public class GenericScanWorker : IScanWorker
             // Resolve required tool capabilities and authoritative scanner manifest
             var requiredCapabilities = ScanJobService.GetRequiredCapabilitiesForProfile(job.ScanProfile);
             var tools = await _toolRegistryService.GetToolsForCapabilitiesAsync(requiredCapabilities, ct);
-            var authorizedManifest = await _toolRegistryService.GetAuthorizedManifestExecutablesAsync(ct);
+            var authorizedManifestMap = await _toolRegistryService.GetAuthorizedManifestMapAsync(ct);
 
             var toolResults = new List<ToolExecutionResult>();
 
@@ -82,7 +82,7 @@ public class GenericScanWorker : IScanWorker
                     ScanJobId: job.Id,
                     Timeout: TimeSpan.FromMinutes(10),
                     Executable: tool.Executable,
-                    AuthorizedManifest: authorizedManifest
+                    AuthorizedManifest: authorizedManifestMap
                 );
 
                 var toolResult = await cliAdapter.ExecuteAsync(toolRequest, secretLease, scratchDirectory, ct);

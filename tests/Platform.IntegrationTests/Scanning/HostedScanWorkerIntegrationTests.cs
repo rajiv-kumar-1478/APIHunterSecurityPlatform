@@ -75,8 +75,8 @@ public class HostedScanWorkerIntegrationTests
     [Fact]
     public async Task HostedScanJob_RejectsUnregisteredExecutable()
     {
-        var manifest = new HashSet<string> { "subfinder", "httpx", "dotnet" };
-        Action act = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("unregistered_attacker_tool", manifest);
+        var manifestMap = new Dictionary<string, string> { ["subfinder"] = "subfinder", ["dotnet_tool"] = "dotnet" };
+        Action act = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("unregistered_attacker_tool", "unregistered_attacker_tool", manifestMap);
         act.Should().Throw<InvalidOperationException>()
            .WithMessage("*is not registered in the authorized scanner tool manifest*");
     }
@@ -97,7 +97,34 @@ public class HostedScanWorkerIntegrationTests
 
         using var lease = new ProviderSecretLease(new Dictionary<string, string>());
         Func<Task> act = async () => await adapter.ExecuteAsync(request, lease, Path.GetTempPath());
-        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*Authorized scanner tool manifest is missing or null*");
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*Authorized scanner tool manifest is missing or empty*");
+    }
+
+    [Fact]
+    public async Task Adversarial_ToolKeyMismatch_AttackerTool_With_DotnetExecutable_RejectedBeforeProcessStart()
+    {
+        var adapter = new GenericCliToolAdapter("attacker_tool", NullLogger<GenericCliToolAdapter>.Instance);
+        using var secretLease = new ProviderSecretLease(new Dictionary<string, string>());
+        var scratchDir = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString());
+
+        var manifestMap = new Dictionary<string, string>
+        {
+            ["dotnet_tool"] = "dotnet"
+        };
+
+        // ToolKey='attacker_tool', Executable='dotnet', Manifest Map contains 'dotnet_tool' -> 'dotnet'
+        var request = new ToolExecutionRequest(
+            ToolKey: "attacker_tool",
+            Version: "v1.0.0",
+            Arguments: new Dictionary<string, string>(),
+            ScanJobId: Guid.NewGuid(),
+            Timeout: TimeSpan.FromSeconds(10),
+            Executable: "dotnet",
+            AuthorizedManifest: manifestMap
+        );
+
+        Func<Task> act = async () => await adapter.ExecuteAsync(request, secretLease, scratchDir);
+        await act.Should().ThrowAsync<InvalidOperationException>().WithMessage("*ToolKey 'attacker_tool' is not registered in the authorized scanner tool manifest*");
     }
 
     [Fact]
@@ -114,7 +141,9 @@ public class HostedScanWorkerIntegrationTests
         using var secretLease = new ProviderSecretLease(new Dictionary<string, string>());
         var scratchDir = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString());
 
-        // 1. Authorized 'dotnet' in manifest -> succeeds
+        var manifestMap = await registry.GetAuthorizedManifestMapAsync();
+
+        // 1. Authorized ToolKey='dotnet_tool' with Executable='dotnet' in manifest -> succeeds
         var authorizedRequest = new ToolExecutionRequest(
             ToolKey: "dotnet_tool",
             Version: "v10.0.0",
@@ -122,27 +151,27 @@ public class HostedScanWorkerIntegrationTests
             ScanJobId: Guid.NewGuid(),
             Timeout: TimeSpan.FromSeconds(10),
             Executable: "dotnet",
-            AuthorizedManifest: new HashSet<string> { "dotnet" }
+            AuthorizedManifest: manifestMap
         );
         var authorizedResult = await adapter.ExecuteAsync(authorizedRequest, secretLease, scratchDir);
         authorizedResult.Status.Should().Be(ToolExecutionStatus.Success);
 
-        // 2. Unregistered 'attacker_tool' absent from manifest -> rejected BEFORE process launch
+        // 2. Unregistered ToolKey='attacker_tool' absent from manifest -> rejected BEFORE process launch
         var unauthorizedRequest = new ToolExecutionRequest(
             ToolKey: "attacker_tool",
             Version: "v1.0.0",
             Arguments: new Dictionary<string, string>(),
             ScanJobId: Guid.NewGuid(),
             Timeout: TimeSpan.FromSeconds(10),
-            Executable: "attacker_tool",
-            AuthorizedManifest: new HashSet<string> { "dotnet" }
+            Executable: "dotnet",
+            AuthorizedManifest: manifestMap
         );
         Func<Task> unauthorizedAct = async () => await adapter.ExecuteAsync(unauthorizedRequest, secretLease, scratchDir);
-        await unauthorizedAct.Should().ThrowAsync<InvalidOperationException>().WithMessage("*not registered in the authorized scanner tool manifest*");
+        await unauthorizedAct.Should().ThrowAsync<InvalidOperationException>().WithMessage("*ToolKey 'attacker_tool' is not registered in the authorized scanner tool manifest*");
     }
 
     [Fact]
-    public async Task ConfigurationOnly_AdditionOf_BrandNewExecutable_Dnsx_Executes_Without_CodeChanges()
+    public async Task ConfigurationOnly_AdditionOf_BrandNewExecutable_Dnsx_Authorization_Binding_Succeeds()
     {
         using var db = CreateInMemoryDbContext();
         db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "https://example.com", Enabled = true });
@@ -152,35 +181,44 @@ public class HostedScanWorkerIntegrationTests
         // Configuration-driven addition of brand-new tool 'dnsx' with executable 'dnsx'
         await registry.RegisterToolAsync("dnsx", "DNSX Fast Resolver", "v1.1.5", true, new[] { ToolCapability.DnsResolution }, executable: "dnsx");
 
-        var adapter = new GenericCliToolAdapter("dnsx", NullLogger<GenericCliToolAdapter>.Instance);
+        var authorizedManifestMap = await registry.GetAuthorizedManifestMapAsync();
+        authorizedManifestMap.Should().ContainKey("dnsx");
+        authorizedManifestMap["dnsx"].Should().Be("dnsx");
+
+        // Validate binding helper succeeds for new tool without adapter code edits
+        Action act = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("dnsx", "dnsx", authorizedManifestMap);
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public async Task RealProcess_ConfigurationOnly_AdditionOf_BrandNewExecutable_Succeeds()
+    {
+        using var db = CreateInMemoryDbContext();
+        db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "https://example.com", Enabled = true });
+        await db.SaveChangesAsync();
+
+        var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
+        // Register new tool key 'custom_dotnet' pointing to harmless executable 'dotnet'
+        await registry.RegisterToolAsync("custom_dotnet", "Custom Dotnet Runner", "v1.0.0", true, new[] { ToolCapability.HttpProbing }, executable: "dotnet");
+
+        var adapter = new GenericCliToolAdapter("custom_dotnet", NullLogger<GenericCliToolAdapter>.Instance);
         using var secretLease = new ProviderSecretLease(new Dictionary<string, string>());
         var scratchDir = Path.Combine(Path.GetTempPath(), "apihunter_scans", Guid.NewGuid().ToString());
 
-        var authorizedManifest = await registry.GetAuthorizedManifestExecutablesAsync();
-        authorizedManifest.Should().Contain("dnsx");
+        var authorizedManifestMap = await registry.GetAuthorizedManifestMapAsync();
 
         var request = new ToolExecutionRequest(
-            ToolKey: "dnsx",
-            Version: "v1.1.5",
+            ToolKey: "custom_dotnet",
+            Version: "v1.0.0",
             Arguments: new Dictionary<string, string> { ["version"] = "" },
             ScanJobId: Guid.NewGuid(),
             Timeout: TimeSpan.FromSeconds(10),
-            Executable: "dnsx",
-            AuthorizedManifest: authorizedManifest
+            Executable: "dotnet",
+            AuthorizedManifest: authorizedManifestMap
         );
 
-        // Dispatches without modifying any adapter or orchestration code
-        Func<Task> act = async () => await adapter.ExecuteAsync(request, secretLease, scratchDir);
-        // dnsx is validated against authorizedManifest without throwing security exception
-        // (if dnsx is not installed on test host, adapter handles process start error safely without security breach)
-        try
-        {
-            await act();
-        }
-        catch (InvalidOperationException ex)
-        {
-            ex.Message.Should().NotContain("not registered in the authorized scanner tool manifest");
-        }
+        var result = await adapter.ExecuteAsync(request, secretLease, scratchDir);
+        result.Status.Should().Be(ToolExecutionStatus.Success);
     }
 
     [Fact]

@@ -49,8 +49,8 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
 
         var binaryName = request.Executable;
 
-        // 1. Enforce Whitelisted Binary Execution Guard on resolved binaryName against AuthorizedManifest
-        ValidateToolExecutableWhitelist(binaryName, request.AuthorizedManifest);
+        // 1. Enforce Whitelisted Binary Execution Guard on (ToolKey, Executable) against AuthorizedManifest
+        ValidateToolExecutableWhitelist(request.ToolKey, binaryName, request.AuthorizedManifest);
 
         // 2. Path Traversal & Symlink/Junction Filesystem Guard
         ValidateScratchDirectoryPath(scratchDirectory, _scratchRoot);
@@ -196,21 +196,26 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         }
     }
 
-    public static void ValidateToolExecutableWhitelist(string binaryName, IEnumerable<string>? manifestWhitelist = null)
+    public static void ValidateToolExecutableWhitelist(string toolKey, string binaryName, IReadOnlyDictionary<string, string>? manifestMap = null)
     {
         // 1. Defense-in-depth trusted executable identifier rules (reject shell interpreters, path traversal, absolute paths)
         ScanToolRegistryService.ValidateExecutableName(binaryName);
 
-        // 2. Validate against explicit manifest whitelist (fail-closed if missing or not present)
-        if (manifestWhitelist == null)
+        // 2. Validate against explicit manifest map (fail-closed if missing, ToolKey not present, or executable mismatch)
+        if (manifestMap == null || manifestMap.Count == 0)
         {
-            throw new InvalidOperationException("Security Violation: Authorized scanner tool manifest is missing or null. Execution fail-closed.");
+            throw new InvalidOperationException("Security Violation: Authorized scanner tool manifest is missing or empty. Execution fail-closed.");
         }
 
-        var whitelistSet = new HashSet<string>(manifestWhitelist, StringComparer.OrdinalIgnoreCase);
-        if (!whitelistSet.Contains(binaryName.Trim()))
+        var normalizedKey = toolKey.Trim().ToLowerInvariant();
+        if (!manifestMap.TryGetValue(normalizedKey, out var authorizedExecutable) || string.IsNullOrWhiteSpace(authorizedExecutable))
         {
-            throw new InvalidOperationException($"Security Violation: Executable binary '{binaryName}' is not registered in the authorized scanner tool manifest.");
+            throw new InvalidOperationException($"Security Violation: ToolKey '{toolKey}' is not registered in the authorized scanner tool manifest.");
+        }
+
+        if (!string.Equals(authorizedExecutable.Trim(), binaryName.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Security Violation: ToolKey '{toolKey}' is bound to executable '{authorizedExecutable}', but requested executable was '{binaryName}'. Execution rejected.");
         }
     }
 
