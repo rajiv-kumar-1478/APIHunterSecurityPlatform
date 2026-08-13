@@ -79,6 +79,14 @@ public class ScanToolRegistryService
         return tools.Select(MapToDto).ToList();
     }
 
+    public async Task<IReadOnlySet<string>> GetAuthorizedManifestExecutablesAsync(CancellationToken ct = default)
+    {
+        var tools = await _dbContext.SecurityScanTools.AsNoTracking().Where(t => t.Enabled).ToListAsync(ct);
+        return tools.Select(t => string.IsNullOrWhiteSpace(t.Executable) ? t.ToolKey : t.Executable)
+                    .Where(exe => !string.IsNullOrWhiteSpace(exe))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
     public async Task<IReadOnlyList<ScanToolDto>> GetToolsForCapabilitiesAsync(IEnumerable<ToolCapability> requiredCapabilities, CancellationToken ct = default)
     {
         var requiredCapStrings = requiredCapabilities.Select(c => c.ToString()).ToHashSet();

@@ -34,12 +34,23 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         string scratchDirectory,
         CancellationToken ct = default)
     {
-        var binaryName = !string.IsNullOrWhiteSpace(request.Executable)
-            ? request.Executable
-            : GetBinaryFileName(request.ToolKey);
+        if (string.IsNullOrWhiteSpace(request.Executable))
+        {
+            _logger.LogError("Tool execution request for '{ToolKey}' has no Executable property configured.", request.ToolKey);
+            return new ToolExecutionResult(
+                ToolKey: request.ToolKey,
+                Version: request.Version,
+                Status: ToolExecutionStatus.Failed,
+                ExitCode: -1,
+                ArtifactReference: null,
+                ErrorCode: "TOOL_EXECUTABLE_NOT_CONFIGURED"
+            );
+        }
 
-        // 1. Enforce Whitelisted Binary Execution Guard on resolved binaryName
-        ValidateToolExecutableWhitelist(binaryName);
+        var binaryName = request.Executable;
+
+        // 1. Enforce Whitelisted Binary Execution Guard on resolved binaryName against AuthorizedManifest
+        ValidateToolExecutableWhitelist(binaryName, request.AuthorizedManifest);
 
         // 2. Path Traversal & Symlink/Junction Filesystem Guard
         ValidateScratchDirectoryPath(scratchDirectory, _scratchRoot);
@@ -187,17 +198,19 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
 
     public static void ValidateToolExecutableWhitelist(string binaryName, IEnumerable<string>? manifestWhitelist = null)
     {
-        // 1. Enforce trusted executable identifier rules (reject shell interpreters, path traversal, absolute paths)
+        // 1. Defense-in-depth trusted executable identifier rules (reject shell interpreters, path traversal, absolute paths)
         ScanToolRegistryService.ValidateExecutableName(binaryName);
 
-        // 2. Validate against explicit manifest whitelist if provided
-        if (manifestWhitelist != null)
+        // 2. Validate against explicit manifest whitelist (fail-closed if missing or not present)
+        if (manifestWhitelist == null)
         {
-            var whitelistSet = new HashSet<string>(manifestWhitelist, StringComparer.OrdinalIgnoreCase);
-            if (!whitelistSet.Contains(binaryName.Trim()))
-            {
-                throw new InvalidOperationException($"Security Violation: Executable binary '{binaryName}' is not present in the provided scanner manifest.");
-            }
+            throw new InvalidOperationException("Security Violation: Authorized scanner tool manifest is missing or null. Execution fail-closed.");
+        }
+
+        var whitelistSet = new HashSet<string>(manifestWhitelist, StringComparer.OrdinalIgnoreCase);
+        if (!whitelistSet.Contains(binaryName.Trim()))
+        {
+            throw new InvalidOperationException($"Security Violation: Executable binary '{binaryName}' is not registered in the authorized scanner tool manifest.");
         }
     }
 
@@ -252,16 +265,6 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
 
         return sanitized;
     }
-
-    private static string GetBinaryFileName(string toolKey) => toolKey.ToLowerInvariant() switch
-    {
-        "subfinder" => "subfinder",
-        "httpx" => "httpx",
-        "katana" => "katana",
-        "nuclei" => "nuclei",
-        "bughunter" => "bughunter",
-        _ => toolKey
-    };
 
     private static void KillProcessTreeSafely(Process process)
     {

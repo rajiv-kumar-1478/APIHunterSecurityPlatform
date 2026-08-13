@@ -95,7 +95,9 @@ public class GenericCliToolAdapterSecurityTests
             Version: "v1.0.0",
             Arguments: new Dictionary<string, string>(),
             ScanJobId: Guid.NewGuid(),
-            Timeout: TimeSpan.FromSeconds(5)
+            Timeout: TimeSpan.FromSeconds(5),
+            Executable: "subfinder",
+            AuthorizedManifest: new HashSet<string> { "subfinder" }
         );
 
         using var lease = new ProviderSecretLease("test", new Dictionary<string, string>(), TimeSpan.FromMinutes(1));
@@ -116,7 +118,9 @@ public class GenericCliToolAdapterSecurityTests
             Version: "v1.0.0",
             Arguments: new Dictionary<string, string> { ["d"] = "example.com" },
             ScanJobId: Guid.NewGuid(),
-            Timeout: TimeSpan.FromMilliseconds(1) // Trigger rapid timeout
+            Timeout: TimeSpan.FromMilliseconds(1), // Trigger rapid timeout
+            Executable: "subfinder",
+            AuthorizedManifest: new HashSet<string> { "subfinder" }
         );
 
         using var lease = new ProviderSecretLease("test", new Dictionary<string, string>(), TimeSpan.FromMinutes(1));
@@ -140,7 +144,9 @@ public class GenericCliToolAdapterSecurityTests
             Version: "v1.0.0",
             Arguments: new Dictionary<string, string> { ["d"] = "example.com" },
             ScanJobId: Guid.NewGuid(),
-            Timeout: TimeSpan.FromSeconds(10)
+            Timeout: TimeSpan.FromSeconds(10),
+            Executable: "subfinder",
+            AuthorizedManifest: new HashSet<string> { "subfinder" }
         );
 
         using var lease = new ProviderSecretLease("test", new Dictionary<string, string>(), TimeSpan.FromMinutes(1));
@@ -162,7 +168,9 @@ public class GenericCliToolAdapterSecurityTests
             Version: "v1.0.0",
             Arguments: new Dictionary<string, string>(),
             ScanJobId: Guid.NewGuid(),
-            Timeout: TimeSpan.FromSeconds(10)
+            Timeout: TimeSpan.FromSeconds(10),
+            Executable: "subfinder",
+            AuthorizedManifest: new HashSet<string> { "subfinder" }
         );
 
         using var lease = new ProviderSecretLease("test", new Dictionary<string, string>(), TimeSpan.FromMinutes(1));
@@ -440,7 +448,7 @@ public class GenericCliToolAdapterSecurityTests
     public void Test18_ValidateToolExecutableWhitelist_Rejects_Unknown_Executable_NotInManifest()
     {
         Action act = () => GenericCliToolAdapter.ValidateToolExecutableWhitelist("unregistered_tool", manifestWhitelist: new[] { "subfinder", "httpx" });
-        act.Should().Throw<InvalidOperationException>().WithMessage("*not present in the provided scanner manifest*");
+        act.Should().Throw<InvalidOperationException>().WithMessage("*not registered in the authorized scanner tool manifest*");
     }
 
     [Fact]

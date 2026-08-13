@@ -59,9 +59,10 @@ public class GenericScanWorker : IScanWorker
             job.StartedAtUtc = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
 
-            // Resolve required tool capabilities for scan profile
+            // Resolve required tool capabilities and authoritative scanner manifest
             var requiredCapabilities = ScanJobService.GetRequiredCapabilitiesForProfile(job.ScanProfile);
             var tools = await _toolRegistryService.GetToolsForCapabilitiesAsync(requiredCapabilities, ct);
+            var authorizedManifest = await _toolRegistryService.GetAuthorizedManifestExecutablesAsync(ct);
 
             var toolResults = new List<ToolExecutionResult>();
 
@@ -80,7 +81,8 @@ public class GenericScanWorker : IScanWorker
                     Arguments: new Dictionary<string, string> { ["target"] = job.TargetUrl },
                     ScanJobId: job.Id,
                     Timeout: TimeSpan.FromMinutes(10),
-                    Executable: tool.Executable
+                    Executable: tool.Executable,
+                    AuthorizedManifest: authorizedManifest
                 );
 
                 var toolResult = await cliAdapter.ExecuteAsync(toolRequest, secretLease, scratchDirectory, ct);
