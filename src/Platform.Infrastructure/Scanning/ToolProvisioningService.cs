@@ -15,6 +15,17 @@ using Platform.Domain.Entities;
 
 namespace Platform.Infrastructure.Scanning;
 
+/// <summary>
+/// Provisioning Service for Security Scan Tool Artifacts.
+/// 
+/// GitHub Redirect Provenance Model:
+/// Initial release URLs (e.g. https://github.com/owner/repository/releases/download/v1.0.0/asset.zip)
+/// enforce explicit owner/repository identity binding against tool.ArtifactRepository.
+/// When GitHub issues an HTTP 302/307 redirect to its release asset storage CDN
+/// (e.g. https://github-releases.githubusercontent.com/... or AWS S3), the approved CDN host domain in
+/// AllowedArtifactDomains becomes the validated egress trust boundary for the remaining stream retrieval,
+/// after passing IEgressPolicyEngine SSRF checks.
+/// </summary>
 public class ToolProvisioningService : IToolProvisioningService
 {
     private const int MaxRedirectHops = 5;
@@ -23,7 +34,7 @@ public class ToolProvisioningService : IToolProvisioningService
 
     private readonly string _toolsRoot;
     private readonly IEgressPolicyEngine _egressPolicyEngine;
-    private readonly Func<SecurityScanTool, CancellationToken, Task<Stream>>? _customArtifactDownloader;
+    private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? _testHttpResponseHandler;
     private readonly ILogger<ToolProvisioningService> _logger;
 
     private static readonly HashSet<string> AllowedSourceTypes = new(StringComparer.OrdinalIgnoreCase)
@@ -54,12 +65,12 @@ public class ToolProvisioningService : IToolProvisioningService
         ILogger<ToolProvisioningService> logger,
         IEgressPolicyEngine egressPolicyEngine,
         string? toolsRoot = null,
-        Func<SecurityScanTool, CancellationToken, Task<Stream>>? artifactDownloader = null)
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>? testHttpResponseHandler = null)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _egressPolicyEngine = egressPolicyEngine ?? throw new ArgumentNullException(nameof(egressPolicyEngine));
         _toolsRoot = toolsRoot ?? Path.Combine(Path.GetTempPath(), "apihunter_tools");
-        _customArtifactDownloader = artifactDownloader;
+        _testHttpResponseHandler = testHttpResponseHandler;
     }
 
     public async Task<ProvisioningResult> ProvisionToolAsync(SecurityScanTool tool, CancellationToken ct = default)
@@ -93,7 +104,7 @@ public class ToolProvisioningService : IToolProvisioningService
             return new ProvisioningResult(toolKey, version, false, string.Empty, "MISSING_ARTIFACT_SHA256", "Mandatory ArtifactSha256 digest is missing.");
         }
 
-        // 4. Validate ArtifactUrl Host, Repository Identity Binding, & Egress Policy SSRF Protection
+        // 4. Validate Initial ArtifactUrl Host, Repository Identity Binding, & Egress Policy SSRF Protection
         if (!string.IsNullOrWhiteSpace(tool.ArtifactUrl))
         {
             if (!Uri.TryCreate(tool.ArtifactUrl, UriKind.Absolute, out var artifactUri))
@@ -167,14 +178,12 @@ public class ToolProvisioningService : IToolProvisioningService
             File.Delete(executablePath);
         }
 
-        // 7. Download Artifact Stream & Validate Redirects
+        // 7. Download Artifact Stream via Mandatory Redirect Validation Boundary
         var tempFile = Path.Combine(toolDir, $"{toolKey}_{version}_{Guid.NewGuid():N}.tmp");
         try
         {
             _logger.LogInformation("Downloading artifact stream for '{ToolKey}'...", toolKey);
-            await using (var artifactStream = _customArtifactDownloader != null
-                ? await _customArtifactDownloader(tool, ct)
-                : await DownloadArtifactStreamWithRedirectValidationAsync(tool, ct))
+            await using (var artifactStream = await DownloadArtifactStreamWithRedirectValidationAsync(tool, ct))
             {
                 if (artifactStream == null)
                 {
@@ -327,7 +336,16 @@ public class ToolProvisioningService : IToolProvisioningService
         for (var hop = 0; hop < MaxRedirectHops; hop++)
         {
             var request = new HttpRequestMessage(HttpMethod.Get, currentUrl);
-            var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            HttpResponseMessage response;
+
+            if (_testHttpResponseHandler != null)
+            {
+                response = await _testHttpResponseHandler(request, ct);
+            }
+            else
+            {
+                response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            }
 
             if ((int)response.StatusCode >= 300 && (int)response.StatusCode <= 399)
             {
