@@ -67,7 +67,7 @@ public class HostedScanWorkerIntegrationTests
             return mockAdapter.Object;
         };
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, NullLogger<GenericScanWorker>.Instance);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance), NullLogger<GenericScanWorker>.Instance);
         var result = await worker.ExecuteScanJobAsync(job.Id);
 
         result.Status.Should().Be(SecurityScanJobStatus.Completed);
@@ -314,7 +314,7 @@ public class HostedScanWorkerIntegrationTests
             return mockAdapter.Object;
         };
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, NullLogger<GenericScanWorker>.Instance);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance), NullLogger<GenericScanWorker>.Instance);
         var result = await worker.ExecuteScanJobAsync(jobId);
 
         result.Status.Should().Be(SecurityScanJobStatus.Completed);
@@ -350,7 +350,11 @@ public class HostedScanWorkerIntegrationTests
             return cancellationAdapter;
         };
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, NullLogger<GenericScanWorker>.Instance);
+        var mockEgressEngine = new Mock<IEgressPolicyEngine>();
+        mockEgressEngine.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
+                         .ReturnsAsync(new EgressTarget("127.0.0.1", "127.0.0.1", 80, "http", new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Loopback }, DateTime.UtcNow, DateTime.UtcNow.AddMinutes(10), "v1.0"));
+
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, mockEgressEngine.Object, NullLogger<GenericScanWorker>.Instance);
 
         var workerTask = worker.ExecuteScanJobAsync(jobId, cts.Token);
 
@@ -415,7 +419,11 @@ public class HostedScanWorkerIntegrationTests
             return recordingAdapter;
         };
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, NullLogger<GenericScanWorker>.Instance);
+        var mockFullChainEgress = new Mock<IEgressPolicyEngine>();
+        mockFullChainEgress.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
+                            .ReturnsAsync(new EgressTarget("version", "version", 80, "http", new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Loopback }, DateTime.UtcNow, DateTime.UtcNow.AddMinutes(10), "v1.0"));
+
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, mockFullChainEgress.Object, NullLogger<GenericScanWorker>.Instance);
         var result = await worker.ExecuteScanJobAsync(jobId);
 
         result.Status.Should().Be(SecurityScanJobStatus.Completed);
@@ -512,14 +520,57 @@ public class HostedScanWorkerIntegrationTests
         };
 
         var egressEngine = new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance);
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, NullLogger<GenericScanWorker>.Instance, egressEngine);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, egressEngine, NullLogger<GenericScanWorker>.Instance);
 
-        Func<Task> act = async () => await worker.ExecuteScanJobAsync(job.Id);
+        var result = await worker.ExecuteScanJobAsync(job.Id);
 
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*prohibited*");
+        result.Status.Should().Be(SecurityScanJobStatus.Failed);
+        result.FailureReason.Should().Contain("EGRESS_POLICY_UNAVAILABLE");
 
         adapterCalled.Should().BeFalse("Tool adapter must never be invoked for prohibited SSRF targets");
+    }
+
+    [Fact]
+    [Trait("Category", "Integration")]
+    public async Task Step2_Worker_FailsClosed_When_EgressPolicyEngine_Fails()
+    {
+        using var db = CreateInMemoryDbContext();
+        var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
+        await registry.RegisterToolAsync("subfinder", "Subfinder", "v2.6.6", true, new[] { ToolCapability.SubdomainEnumeration }, executable: "subfinder");
+
+        var job = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            TargetUrl = "https://prohibited-target.local",
+            ScanProfile = SecurityScanProfileType.Recon,
+            Status = SecurityScanJobStatus.Queued,
+            ProviderKey = "bughunter"
+        };
+        db.SecurityScanJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var adapterCalled = false;
+        Func<string, IGenericCliToolAdapter> factory = toolKey =>
+        {
+            var mockAdapter = new Mock<IGenericCliToolAdapter>();
+            mockAdapter.Setup(a => a.ToolKey).Returns(toolKey);
+            mockAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                       .Callback(() => adapterCalled = true)
+                       .ReturnsAsync(new ToolExecutionResult(toolKey, "v2.6.6", ToolExecutionStatus.Success, 0, null, null));
+            return mockAdapter.Object;
+        };
+
+        var mockEgressEngine = new Mock<IEgressPolicyEngine>();
+        mockEgressEngine.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
+                         .ThrowsAsync(new InvalidOperationException("Prohibited target destination."));
+
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, mockEgressEngine.Object, NullLogger<GenericScanWorker>.Instance);
+
+        var result = await worker.ExecuteScanJobAsync(job.Id);
+
+        result.Status.Should().Be(SecurityScanJobStatus.Failed);
+        result.FailureReason.Should().Contain("EGRESS_POLICY_UNAVAILABLE");
+        adapterCalled.Should().BeFalse("Tool adapter must NEVER be launched if egress policy evaluation fails");
     }
 
     private static PlatformDbContext CreateInMemoryDbContext()

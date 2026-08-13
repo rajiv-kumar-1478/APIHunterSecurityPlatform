@@ -18,7 +18,7 @@ public class GenericScanWorker : IScanWorker
     private readonly IScanProviderSecretStore _secretStore;
     private readonly ScanToolRegistryService _toolRegistryService;
     private readonly Func<string, IGenericCliToolAdapter> _cliAdapterFactory;
-    private readonly IEgressPolicyEngine? _egressPolicyEngine;
+    private readonly IEgressPolicyEngine _egressPolicyEngine;
     private readonly ILogger<GenericScanWorker> _logger;
 
     public GenericScanWorker(
@@ -26,15 +26,15 @@ public class GenericScanWorker : IScanWorker
         IScanProviderSecretStore secretStore,
         ScanToolRegistryService toolRegistryService,
         Func<string, IGenericCliToolAdapter> cliAdapterFactory,
-        ILogger<GenericScanWorker> logger,
-        IEgressPolicyEngine? egressPolicyEngine = null)
+        IEgressPolicyEngine egressPolicyEngine,
+        ILogger<GenericScanWorker> logger)
     {
-        _dbContext = dbContext;
-        _secretStore = secretStore;
-        _toolRegistryService = toolRegistryService;
-        _cliAdapterFactory = cliAdapterFactory;
-        _logger = logger;
-        _egressPolicyEngine = egressPolicyEngine;
+        _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+        _secretStore = secretStore ?? throw new ArgumentNullException(nameof(secretStore));
+        _toolRegistryService = toolRegistryService ?? throw new ArgumentNullException(nameof(toolRegistryService));
+        _cliAdapterFactory = cliAdapterFactory ?? throw new ArgumentNullException(nameof(cliAdapterFactory));
+        _egressPolicyEngine = egressPolicyEngine ?? throw new ArgumentNullException(nameof(egressPolicyEngine));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task<ScanExecutionResult> ExecuteScanJobAsync(Guid scanJobId, CancellationToken ct = default)
@@ -45,12 +45,23 @@ public class GenericScanWorker : IScanWorker
             throw new KeyNotFoundException($"Scan job '{scanJobId}' not found.");
         }
 
-        // Validate target URL against Egress Policy Sandbox if available
-        if (_egressPolicyEngine != null)
+        // 1. Mandatory Fail-Closed Egress Policy Evaluation
+        EgressTarget egressTarget;
+        try
         {
-            var egressTarget = await _egressPolicyEngine.EvaluateAndBuildTargetAsync(job.TargetUrl, TimeSpan.FromMinutes(10), ct);
+            egressTarget = await _egressPolicyEngine.EvaluateAndBuildTargetAsync(job.TargetUrl, TimeSpan.FromMinutes(10), ct);
             _logger.LogInformation("Worker validated target '{TargetUrl}' to canonical host '{CanonicalHost}' with {Count} approved IP(s).",
                 job.TargetUrl, egressTarget.CanonicalHost, egressTarget.ApprovedIpAddresses.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Fail-closed egress policy evaluation failed for target '{TargetUrl}' (Job: {ScanJobId}).", job.TargetUrl, scanJobId);
+            job.Status = SecurityScanJobStatus.Failed;
+            job.FailureReason = $"EGRESS_POLICY_UNAVAILABLE: {ex.Message}";
+            job.CompletedAtUtc = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+
+            return new ScanExecutionResult(job.Id, job.Status, null, null, job.FailureReason, DateTime.UtcNow);
         }
 
         var scratchRoot = Path.Combine(Path.GetTempPath(), "apihunter_scans");

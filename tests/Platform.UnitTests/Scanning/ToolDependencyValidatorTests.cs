@@ -73,11 +73,43 @@ public class ToolDependencyValidatorTests
     }
 
     [Fact]
+    public async Task ValidateDependencyGraphAsync_RejectsVersionMismatch()
+    {
+        using var db = CreateDbContext();
+        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "bughunter", Executable = "bughunter", Version = "1.0.0", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
+        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "subfinder", Executable = "subfinder", Version = "2.5.0", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
+        db.ToolDependencies.Add(new ToolDependency { ParentToolKey = "bughunter", DependencyToolKey = "subfinder", RequiredVersion = "2.6.6", RequiredSha256 = "abc" });
+        await db.SaveChangesAsync();
+
+        var validator = new ToolDependencyValidator(db, NullLogger<ToolDependencyValidator>.Instance);
+
+        Func<Task> act = async () => await validator.ValidateDependencyGraphAsync("bughunter");
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*requires 'subfinder' v2.6.6, but found v2.5.0*");
+    }
+
+    [Fact]
+    public async Task ValidateDependencyGraphAsync_RejectsSha256Mismatch()
+    {
+        using var db = CreateDbContext();
+        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "bughunter", Executable = "bughunter", Version = "1.0.0", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
+        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "subfinder", Executable = "subfinder", Version = "2.6.6", ArtifactSha256 = "actual_sha256", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
+        db.ToolDependencies.Add(new ToolDependency { ParentToolKey = "bughunter", DependencyToolKey = "subfinder", RequiredVersion = "2.6.6", RequiredSha256 = "expected_sha256" });
+        await db.SaveChangesAsync();
+
+        var validator = new ToolDependencyValidator(db, NullLogger<ToolDependencyValidator>.Instance);
+
+        Func<Task> act = async () => await validator.ValidateDependencyGraphAsync("bughunter");
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*requires 'subfinder' SHA-256 'expected_sha256', but found 'actual_sha256'*");
+    }
+
+    [Fact]
     public async Task ValidateDependencyGraphAsync_SucceedsForValidDag()
     {
         using var db = CreateDbContext();
         db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "bughunter", Executable = "bughunter", Version = "1.0.0", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
-        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "subfinder", Executable = "subfinder", Version = "2.6.6", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
+        db.SecurityScanTools.Add(new SecurityScanTool { ToolKey = "subfinder", Executable = "subfinder", Version = "2.6.6", ArtifactSha256 = "abc", HealthStatus = ToolHealthStatus.Healthy, Enabled = true });
         db.ToolDependencies.Add(new ToolDependency { ParentToolKey = "bughunter", DependencyToolKey = "subfinder", RequiredVersion = "2.6.6", RequiredSha256 = "abc" });
         await db.SaveChangesAsync();
 

@@ -23,6 +23,8 @@ public class SecurityScanTool
 
     public string ArtifactRepository { get; set; } = string.Empty;
 
+    public string ArtifactUrl { get; set; } = string.Empty;
+
     public string ArtifactSha256 { get; set; } = string.Empty;
 
     public string? ArtifactSignature { get; set; }

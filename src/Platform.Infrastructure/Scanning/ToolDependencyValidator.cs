@@ -75,6 +75,14 @@ public class ToolDependencyValidator : IToolDependencyValidator
             {
                 throw new InvalidOperationException($"Dependency Validation Error: Tool '{parent}' requires '{child}' v{dep.RequiredVersion}, but found v{childTool.Version}.");
             }
+
+            // Verify SHA-256 digest constraint if specified
+            if (!string.IsNullOrWhiteSpace(dep.RequiredSha256) &&
+                !string.IsNullOrWhiteSpace(childTool.ArtifactSha256) &&
+                !string.Equals(childTool.ArtifactSha256.Trim(), dep.RequiredSha256.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"Dependency Validation Error: Tool '{parent}' requires '{child}' SHA-256 '{dep.RequiredSha256}', but found '{childTool.ArtifactSha256}'.");
+            }
         }
 
         // Detect cycles using DFS (Depth-First Search) with recursion stack tracking

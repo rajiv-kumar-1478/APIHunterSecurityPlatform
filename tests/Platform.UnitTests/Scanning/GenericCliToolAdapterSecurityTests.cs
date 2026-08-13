@@ -319,6 +319,7 @@ public class GenericCliToolAdapterSecurityTests
             new InMemoryScanProviderSecretStore(),
             registry,
             factory,
+            new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance),
             NullLogger<GenericScanWorker>.Instance
         );
 
