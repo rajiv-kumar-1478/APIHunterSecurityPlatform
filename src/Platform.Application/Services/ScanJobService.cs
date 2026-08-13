@@ -184,12 +184,25 @@ public class ScanJobService
                 throw new InvalidOperationException($"Target URL '{targetUrl}' is out of scope. No authorized security targets are currently configured in the platform.");
             }
 
-            var uri = new Uri(targetUrl.StartsWith("http") ? targetUrl : $"https://{targetUrl}");
+            var uri = new Uri(targetUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? targetUrl : $"https://{targetUrl}");
             var host = uri.Host.ToLowerInvariant();
 
             var isAuthorized = registeredTargets.Any(t =>
-                t.BaseUrl.Contains(host, StringComparison.OrdinalIgnoreCase) ||
-                host.EndsWith(t.BaseUrl.Replace("https://", "").Replace("http://", "").TrimEnd('/'), StringComparison.OrdinalIgnoreCase));
+            {
+                if (string.IsNullOrWhiteSpace(t.BaseUrl)) return false;
+                try
+                {
+                    var targetUri = new Uri(t.BaseUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? t.BaseUrl : $"https://{t.BaseUrl}");
+                    var targetHost = targetUri.Host.ToLowerInvariant();
+
+                    return host.Equals(targetHost, StringComparison.OrdinalIgnoreCase) ||
+                           host.EndsWith("." + targetHost, StringComparison.OrdinalIgnoreCase);
+                }
+                catch
+                {
+                    return false;
+                }
+            });
 
             if (!isAuthorized)
             {

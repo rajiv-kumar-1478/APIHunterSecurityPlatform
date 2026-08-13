@@ -18,7 +18,7 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
 {
     private static readonly HashSet<string> WhitelistedBinaries = new(StringComparer.OrdinalIgnoreCase)
     {
-        "subfinder", "httpx", "katana", "nuclei", "bughunter", "amass", "nmap", "ffuf", "powershell.exe", "cmd.exe"
+        "subfinder", "httpx", "katana", "nuclei", "bughunter", "amass", "nmap", "ffuf"
     };
 
     private readonly ILogger<GenericCliToolAdapter> _logger;
@@ -188,9 +188,13 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         }
     }
 
-    public static void ValidateToolExecutableWhitelist(string toolKey)
+    public static void ValidateToolExecutableWhitelist(string toolKey, IEnumerable<string>? manifestWhitelist = null)
     {
-        if (string.IsNullOrWhiteSpace(toolKey) || !WhitelistedBinaries.Contains(toolKey.Trim()))
+        var effectiveWhitelist = manifestWhitelist != null
+            ? new HashSet<string>(manifestWhitelist, StringComparer.OrdinalIgnoreCase)
+            : WhitelistedBinaries;
+
+        if (string.IsNullOrWhiteSpace(toolKey) || !effectiveWhitelist.Contains(toolKey.Trim()))
         {
             throw new InvalidOperationException($"Security Violation: Executable binary '{toolKey}' is not registered in the authorized scanner tool manifest.");
         }
@@ -203,16 +207,11 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
             throw new ArgumentException("Scratch directory path cannot be empty.", nameof(path));
         }
 
-        if (path.Contains(".."))
-        {
-            throw new InvalidOperationException($"Security Violation: Path traversal attempt detected in scratch directory path '{path}'.");
-        }
-
         var root = scratchRoot ?? Path.Combine(Path.GetTempPath(), "apihunter_scans");
         var canonicalScratch = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var canonicalRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
-        // Strict prefix anchoring without substring bypass
+        // Strict canonical path component anchoring check
         var isAnchored = canonicalScratch.Equals(canonicalRoot, StringComparison.OrdinalIgnoreCase) ||
                          canonicalScratch.StartsWith(canonicalRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
