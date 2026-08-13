@@ -282,7 +282,7 @@ public class GenericCliToolAdapterSecurityTests
         using var db = new PlatformDbContext(dbOptions);
 
         var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        await registry.RegisterToolAsync("amass", "Amass Replacement Scanner", "v4.0.0", true, new[] { ToolCapability.HttpProbing });
+        await registry.RegisterToolAsync("amass", "Amass Replacement Scanner", "v4.0.0", true, new[] { ToolCapability.HttpProbing }, executable: "amass");
 
         db.SecurityScanJobs.Add(new SecurityScanJob
         {
@@ -294,13 +294,13 @@ public class GenericCliToolAdapterSecurityTests
         });
         await db.SaveChangesAsync();
 
-        var executedTools = new List<string>();
+        var executedExecutables = new List<string>();
         Func<string, IGenericCliToolAdapter> factory = toolKey =>
         {
-            executedTools.Add(toolKey);
             var mockAdapter = new Mock<IGenericCliToolAdapter>();
             mockAdapter.Setup(a => a.ToolKey).Returns(toolKey);
             mockAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                       .Callback<ToolExecutionRequest, ProviderSecretLease, string, CancellationToken>((req, _, _, _) => executedExecutables.Add(req.Executable ?? req.ToolKey))
                        .ReturnsAsync(new ToolExecutionResult(toolKey, "v4.0.0", ToolExecutionStatus.Success, 0, null, null));
             return mockAdapter.Object;
         };
@@ -316,7 +316,7 @@ public class GenericCliToolAdapterSecurityTests
         var result = await worker.ExecuteScanJobAsync(db.SecurityScanJobs.First().Id);
 
         result.Status.Should().Be(SecurityScanJobStatus.Completed);
-        executedTools.Should().Contain("amass");
+        executedExecutables.Should().Contain("amass");
     }
 
     [Fact]

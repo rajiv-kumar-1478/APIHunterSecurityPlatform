@@ -59,6 +59,7 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     ToolKey = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
                     DisplayName = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
                     Version = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
+                    Executable = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false, defaultValue: ""),
                     ImageReference = table.Column<string>(type: "text", nullable: false),
                     ImageDigest = table.Column<string>(type: "text", nullable: false),
                     Enabled = table.Column<bool>(type: "boolean", nullable: false),

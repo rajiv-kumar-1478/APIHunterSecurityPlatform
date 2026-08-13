@@ -30,6 +30,7 @@ public class ScanToolRegistryService
         string version,
         bool required,
         IReadOnlyList<ToolCapability> capabilities,
+        string? executable = null,
         CancellationToken ct = default)
     {
         toolKey = toolKey.Trim().ToLowerInvariant();
@@ -47,6 +48,7 @@ public class ScanToolRegistryService
             ToolKey = toolKey,
             DisplayName = displayName,
             Version = version,
+            Executable = !string.IsNullOrWhiteSpace(executable) ? executable.Trim() : toolKey,
             Required = required,
             Enabled = true,
             CapabilitiesJson = JsonSerializer.Serialize(capabilities.Select(c => c.ToString())),
@@ -59,7 +61,7 @@ public class ScanToolRegistryService
         _dbContext.SecurityScanTools.Add(tool);
         await _dbContext.SaveChangesAsync(ct);
 
-        _logger.LogInformation("Tool '{ToolKey}' ({DisplayName}, v{Version}) successfully registered.", toolKey, displayName, version);
+        _logger.LogInformation("Tool '{ToolKey}' ({DisplayName}, v{Version}, exe: '{Executable}') successfully registered.", toolKey, displayName, version, tool.Executable);
         return tool;
     }
 
@@ -112,6 +114,7 @@ public class ScanToolRegistryService
         ToolKey: tool.ToolKey,
         DisplayName: tool.DisplayName,
         Version: tool.Version,
+        Executable: string.IsNullOrWhiteSpace(tool.Executable) ? tool.ToolKey : tool.Executable,
         Enabled: tool.Enabled,
         Required: tool.Required,
         Capabilities: ParseCapabilities(tool.CapabilitiesJson),

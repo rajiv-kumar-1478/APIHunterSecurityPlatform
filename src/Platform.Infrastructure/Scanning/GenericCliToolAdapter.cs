@@ -87,7 +87,7 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
 
                 if (!string.IsNullOrWhiteSpace(kvp.Value))
                 {
-                    startInfo.ArgumentList.Add(SanitizeArgumentValue(kvp.Value));
+                    startInfo.ArgumentList.Add(kvp.Value);
                 }
             }
         }
@@ -263,8 +263,6 @@ public class GenericCliToolAdapter : IGenericCliToolAdapter
         "bughunter" => "bughunter",
         _ => toolKey
     };
-
-    private static string SanitizeArgumentValue(string value) => value.Replace(";", "").Replace("&", "").Replace("|", "").Replace("`", "");
 
     private static void KillProcessTreeSafely(Process process)
     {

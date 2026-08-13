@@ -13,6 +13,8 @@ public class SecurityScanTool
 
     public string Version { get; set; } = "unverified";
 
+    public string Executable { get; set; } = string.Empty;
+
     public string ImageReference { get; set; } = string.Empty;
 
     public string ImageDigest { get; set; } = string.Empty;

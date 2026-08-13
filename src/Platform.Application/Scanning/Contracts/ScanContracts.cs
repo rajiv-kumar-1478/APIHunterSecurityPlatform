@@ -114,6 +114,7 @@ public record ScanToolDto(
     string ToolKey,
     string DisplayName,
     string Version,
+    string Executable,
     bool Enabled,
     bool Required,
     IReadOnlyList<string> Capabilities,

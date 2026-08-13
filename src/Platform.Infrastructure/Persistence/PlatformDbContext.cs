@@ -760,6 +760,7 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.Property(st => st.ToolKey).HasMaxLength(100).IsRequired();
             e.Property(st => st.DisplayName).HasMaxLength(200).IsRequired();
             e.Property(st => st.Version).HasMaxLength(100).IsRequired();
+            e.Property(st => st.Executable).HasMaxLength(200).IsRequired();
             e.Property(st => st.CapabilitiesJson).HasColumnType("jsonb");
             e.Property(st => st.HealthStatus).HasConversion<string>().HasMaxLength(50);
         });
