@@ -333,10 +333,37 @@ Legend:
   - [x] Compiler gate: `dotnet build -warnaserror` (0 warnings, 0 errors) & Frontend Next.js production build (`npm run build` with 0 errors).
   - [x] Automated test suite: **517 / 517 Tests Passed (100%)**.
 
-- [ ] Step 4 — Scan Execution Profiles, Tool Capability Matrix & Provider Workflow:
-  - [ ] Multi-tool orchestration for `Recon`, `Standard`, and `Deep` profiles.
-  - [ ] Parsing, normalization, and deduplication of tool outputs into structured security findings.
-  - [ ] Ingestion into Phase 6 finding inventory and risk scoring pipeline.
+- [x] Step 4.1 — Scan Profile Capability Matrix & Tool Selection (VERIFIED & LOCKED):
+  - [x] Implemented `ScanProfileMatrix` defining `Discovery`, `Probing`, and `Assessment` phases for `Recon`, `Standard`, and `Deep` profiles.
+  - [x] Dynamic tool resolution matching profile capability requirements against registered security tools.
+
+- [x] Step 4.2 — Multi-Tool Scan Execution Orchestrator (VERIFIED & LOCKED):
+  - [x] Implemented `ScanExecutionOrchestrator` coordinating sequential tool runs, fail-closed isolation, scratch directory isolation, and bounded execution timeouts.
+
+- [x] Step 4.3 — Output Parsers & Data Normalization (VERIFIED & LOCKED):
+  - [x] Implemented `IToolOutputParserProvider` and parsers for Nuclei, Katana, FFuF, and Nmap/Naabu.
+  - [x] Standardized tool outputs into normalized `FindingCandidate` records.
+
+- [x] Step 4.4 — Finding Ingestion & Risk Scoring Pipeline (VERIFIED & LOCKED):
+  - [x] Implemented `ScanFindingIngestionEngine` with candidate validation, URL/evidence sanitization, deduplication against Phase 6 finding inventory, and deterministic risk score computation.
+
+- [x] Step 4.5 — Provenance & Immutable Execution Receipts (VERIFIED & LOCKED - Commit `6f55ffb`):
+  - [x] Added `ScanExecutionReceipt` and `ToolExecutionReceipt` records with immutable SHA-256 container digests and execution timelines.
+  - [x] Fatal sandbox failure propagation and downstream tool skipping.
+
+- [x] Step 4.6 — Tenant Authorization, Cancellation & Concurrency (VERIFIED & LOCKED - Commit `26fbb7a`):
+  - [x] Enforced strict tenant isolation (HTTP 403 Forbidden for cross-tenant access/mutation).
+  - [x] Cooperative cancellation tokens propagated to running sandbox containers.
+  - [x] Concurrency retry recovery and target re-authorization on retry.
+
+- [x] Step 4.7 — Result Lifecycle, Scan Diff & Multi-Format Reporting (VERIFIED & LOCKED - Commit `5bf6a18`):
+  - [x] Step 4.7 Part 1: Implemented `ScanFindingObservation` with `UNIQUE(FindingId, ScanJobId)`, `ScanPostExecutionProcessor`, capability-aware `DetermineFullCoverage`, 2-consecutive-scan absence resolution rule, baseline comparison (`ScanDiff`), and `Proposed` Phase 7 remediation hand-off.
+  - [x] Step 4.7 Part 2: Implemented `CanonicalSecurityReport` authoritative model, pure projection formatters (`Json`, `Sarif` 2.1.0, `Markdown`, `Html`), checked-in official OASIS SARIF 2.1.0 schema fixture, deterministic provenance signature over immutable scan metadata, and enforced 20 MiB output ceiling (`HTTP 413 Payload Too Large`).
+
+- [ ] Step 4.8 — End-to-End Production Acceptance Pass (IN PROGRESS):
+  - [ ] Full pipeline acceptance test: Target creation $\rightarrow$ Scan launch $\rightarrow$ Multi-tool orchestration $\rightarrow$ Findings ingestion $\rightarrow$ Lifecycle observation $\rightarrow$ Post-scan diff $\rightarrow$ Canonical report compilation $\rightarrow$ 4-format projections (JSON, SARIF 2.1.0, Markdown, HTML) $\rightarrow$ Tenant isolation $\rightarrow$ Resource limit boundaries.
+  - [ ] Complete test suite, warning-free build, and dashboard verification.
+
 
 
 

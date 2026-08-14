@@ -186,12 +186,6 @@ public class ScanReportGenerationTests : IDisposable
             OutputFormat = Json.Schema.OutputFormat.List
         });
 
-        if (!evaluation.IsValid)
-        {
-            var errors = string.Join("; ", evaluation.Details.SelectMany(d => d.Errors ?? new Dictionary<string, string>()).Select(kv => $"{kv.Key}: {kv.Value}"));
-            throw new Exception($"SARIF Schema Evaluation Failed: {errors}\n\nGenerated SARIF:\n{sarifResult.Content}");
-        }
-
         evaluation.IsValid.Should().BeTrue();
     }
 
