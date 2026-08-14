@@ -99,6 +99,26 @@ public class ScannerRuntimeSandboxTests
     }
 
     [Fact]
+    public async Task DockerScannerRuntime_FailsClosed_WhenDockerModeSelected_AndDockerUnavailable()
+    {
+        var options = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.Docker,
+            RequireDockerSandbox = true
+        };
+
+        Mock<IGenericCliToolAdapter> mockAdapter = new();
+        var runtime = new DockerScannerRuntime(options, toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<DockerScannerRuntime>.Instance);
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10));
+        var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, Path.GetTempPath());
+
+        result.Status.Should().Be(ToolExecutionStatus.Failed);
+        result.ErrorCode.Should().Be("DOCKER_RUNTIME_UNAVAILABLE");
+    }
+
+    [Fact]
     public async Task HostedScannerRuntime_RejectsMissingServiceAuthenticationKey()
     {
         Mock<IGenericCliToolAdapter> mockAdapter = new();
@@ -133,6 +153,43 @@ public class ScannerRuntimeSandboxTests
         result.Status.Should().Be(ToolExecutionStatus.Success);
         result.ToolKey.Should().Be("subfinder");
         result.ExitCode.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task HostedScannerRuntime_RejectsEmptyOrMalformedJsonResponse()
+    {
+        var messageHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{ \"invalid_json\": true }")
+        });
+
+        using var httpClient = new HttpClient(messageHandler) { BaseAddress = new Uri("https://scanner.internal") };
+        Mock<IGenericCliToolAdapter> mockAdapter = new();
+        var runtime = new HostedScannerRuntime(httpClient, serviceKey: "SECRET_KEY_123", toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<HostedScannerRuntime>.Instance);
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10));
+        var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, Path.GetTempPath());
+
+        result.Status.Should().Be(ToolExecutionStatus.Failed);
+        result.ErrorCode.Should().Be("HOSTED_INVALID_EXECUTION_RECEIPT");
+    }
+
+    [Fact]
+    public async Task HostedScannerRuntime_RejectsHttp500ServerError()
+    {
+        var messageHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+
+        using var httpClient = new HttpClient(messageHandler) { BaseAddress = new Uri("https://scanner.internal") };
+        Mock<IGenericCliToolAdapter> mockAdapter = new();
+        var runtime = new HostedScannerRuntime(httpClient, serviceKey: "SECRET_KEY_123", toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<HostedScannerRuntime>.Instance);
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10));
+        var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, Path.GetTempPath());
+
+        result.Status.Should().Be(ToolExecutionStatus.Failed);
+        result.ErrorCode.Should().Be("HOSTED_SERVICE_HTTP_ERROR");
     }
 
     [Fact]

@@ -184,6 +184,13 @@ public enum ToolExecutionStatus
     Skipped
 }
 
+public enum ScannerRuntimeMode
+{
+    Docker,
+    Hosted,
+    UnsafeLocalProcessFallback
+}
+
 public enum RemediationVerificationStatus
 {
     Pending,

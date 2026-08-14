@@ -16,7 +16,7 @@ namespace Platform.Infrastructure.Scanning;
 /// <summary>
 /// Containerized OCI/Docker Scanner Runtime Sandbox.
 /// Enforces strong container isolation (CPU, Memory, PIDs, read-only root, dropped capabilities, no-new-privileges, scratch volume mount).
-/// Falls back to local process adapter in development/CI environments where Docker daemon is absent, logging reduced isolation status.
+/// Fails closed with DOCKER_RUNTIME_UNAVAILABLE when RuntimeMode is Docker or RequireDockerSandbox is true and Docker daemon is absent.
 /// </summary>
 public class DockerScannerRuntime : IScannerRuntimeSandbox
 {
@@ -67,10 +67,23 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         // 3. Build Docker Container Isolation Arguments deterministically from ScannerRuntimeOptions
         var dockerArgs = BuildDockerIsolationArguments(request, egressTarget, scratchDirectory);
 
-        _logger.LogInformation("DockerScannerRuntime launching containerized execution for tool '{ToolKey}' (v{Version}) with limits [CPU: {Cpu}, Memory: {Mem}B, PIDs: {Pids}].",
+        // 4. Verify Docker Executable Availability when Docker RuntimeMode or RequireDockerSandbox is Enforced
+        var isDockerAvailable = IsDockerCliAvailable();
+        if ((_options.RuntimeMode == ScannerRuntimeMode.Docker || _options.RequireDockerSandbox) && !isDockerAvailable)
+        {
+            _logger.LogError("DockerScannerRuntime execution rejected: Docker runtime is required (RuntimeMode: {Mode}) but Docker daemon is unavailable.", _options.RuntimeMode);
+            return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "DOCKER_RUNTIME_UNAVAILABLE");
+        }
+
+        _logger.LogInformation("DockerScannerRuntime launching execution for tool '{ToolKey}' (v{Version}) with limits [CPU: {Cpu}, Memory: {Mem}B, PIDs: {Pids}].",
             request.ToolKey, request.Version, _options.MaxCpuCores, _options.MaxMemoryBytes, _options.MaxPids);
 
-        // 4. Delegate to CliToolAdapter (processes tool execution within sandbox context)
+        if (!isDockerAvailable)
+        {
+            _logger.LogWarning("DEVELOPMENT_MODE_REDUCED_ISOLATION: Docker daemon is unavailable on host. Running local process execution fallback.");
+        }
+
+        // 5. Delegate execution to CLI adapter context
         var cliAdapter = _cliAdapterFactory(request.ToolKey);
         return await cliAdapter.ExecuteAsync(request, secretLease, scratchDirectory, cancellationToken);
     }
@@ -107,5 +120,31 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         args.Add($"--env=APIHUNTER_SCAN_JOB_ID={request.ScanJobId:N}");
 
         return args.AsReadOnly();
+    }
+
+    private static bool IsDockerCliAvailable()
+    {
+        try
+        {
+            using var proc = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "docker",
+                    Arguments = "--version",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            proc.Start();
+            return proc.WaitForExit(2000) && proc.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

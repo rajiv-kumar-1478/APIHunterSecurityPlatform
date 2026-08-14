@@ -1,9 +1,12 @@
 using System;
+using Platform.Domain.Enums;
 
 namespace Platform.Domain.Entities;
 
 public sealed record ScannerRuntimeOptions
 {
+    public ScannerRuntimeMode RuntimeMode { get; init; } = ScannerRuntimeMode.Docker;
+
     public double MaxCpuCores { get; init; } = 2.0;
 
     public long MaxMemoryBytes { get; init; } = 1_073_741_824; // 1 GiB

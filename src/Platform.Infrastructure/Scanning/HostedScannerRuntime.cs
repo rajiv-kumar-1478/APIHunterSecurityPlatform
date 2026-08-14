@@ -17,6 +17,7 @@ namespace Platform.Infrastructure.Scanning;
 /// Hosted Scanner Runtime Sandbox for Render Private Services / Railway Internal Mesh.
 /// Communicates with dedicated scanner services over internal private networks using X-Scanner-Service-Key authentication.
 /// Deserializes actual ToolExecutionResult receipts returned by remote scanner endpoints.
+/// Fails closed with HOSTED_INVALID_EXECUTION_RECEIPT on empty, malformed, or missing receipt payloads.
 /// </summary>
 public class HostedScannerRuntime : IScannerRuntimeSandbox
 {
@@ -101,15 +102,30 @@ public class HostedScannerRuntime : IScannerRuntimeSandbox
                 }
 
                 var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
-                var remoteResult = JsonSerializer.Deserialize<ToolExecutionResult>(responseJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (remoteResult != null)
+                if (string.IsNullOrWhiteSpace(responseJson))
                 {
-                    _logger.LogInformation("HostedScannerRuntime received remote execution receipt for tool '{ToolKey}' (Status: {Status}, ExitCode: {Code}).",
-                        remoteResult.ToolKey, remoteResult.Status, remoteResult.ExitCode);
-                    return remoteResult;
+                    _logger.LogError("Hosted scanner service returned empty response payload.");
+                    return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "HOSTED_INVALID_EXECUTION_RECEIPT");
                 }
 
-                return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Success, 0, scratchDirectory, null);
+                try
+                {
+                    var remoteResult = JsonSerializer.Deserialize<ToolExecutionResult>(responseJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (remoteResult != null && !string.IsNullOrWhiteSpace(remoteResult.ToolKey))
+                    {
+                        _logger.LogInformation("HostedScannerRuntime received remote execution receipt for tool '{ToolKey}' (Status: {Status}, ExitCode: {Code}).",
+                            remoteResult.ToolKey, remoteResult.Status, remoteResult.ExitCode);
+                        return remoteResult;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to deserialize remote scanner service response receipt.");
+                    return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "HOSTED_INVALID_EXECUTION_RECEIPT");
+                }
+
+                _logger.LogError("Hosted scanner service response payload lacked required execution receipt fields.");
+                return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "HOSTED_INVALID_EXECUTION_RECEIPT");
             }
             catch (Exception ex)
             {
