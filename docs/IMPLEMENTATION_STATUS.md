@@ -301,7 +301,7 @@ Legend:
 
 ---
 
-## Phase 8 — Hosted Security Scanning & Scan Foundation (IN PROGRESS)
+## Phase 8 — Hosted Security Scanning & Scan Foundation (VERIFIED & LOCKED)
 
 - [x] Step 1 — Scan Tool Registry & Security Target Governance (VERIFIED & LOCKED):
   - [x] Created `SecurityScanTool`, `SecurityTarget`, `SecurityScanJob`, and `ScanProviderAccount` entities with DB mappings and migrations.
