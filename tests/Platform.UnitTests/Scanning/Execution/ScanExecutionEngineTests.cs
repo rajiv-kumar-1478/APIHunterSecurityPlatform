@@ -1112,6 +1112,66 @@ public class ScanExecutionEngineTests
         Assert.Contains(githubIp, capturedEgress.ApprovedIpAddresses);
         Assert.DoesNotContain(undeclaredRogueIp, capturedEgress.ApprovedIpAddresses);
     }
+
+    [Fact]
+    public async Task ExecutePlan_AuthorizedManifestMap_BindsToolKeyToContainerDigest()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        ToolExecutionRequest? capturedRequest = null;
+
+        var sandbox = new MockScannerRuntimeSandbox((req, egress, secret, scratch, ct) =>
+        {
+            capturedRequest = req;
+            return Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(
+                ToolKey: req.ToolKey,
+                Version: req.Version,
+                Status: Platform.Domain.Enums.ToolExecutionStatus.Success,
+                ExitCode: 0,
+                ArtifactReference: "{}",
+                ErrorCode: null
+            ));
+        });
+
+        var engine = new ScanExecutionEngine(
+            _toolRegistry,
+            _dbContext,
+            NullLogger<ScanExecutionEngine>.Instance,
+            sandbox,
+            ingestionEngine: null,
+            _defaultEgressPolicy,
+            _defaultProvenanceVerifier
+        );
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("trufflehog", "3.96.0", ScannerExecutionPhase.StaticAnalysis, new[] { "secret.scan" }, Array.Empty<string>(), "Secret scan")
+        };
+
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.SourceRepository,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "trufflehog" },
+            RuleSetVersions: new Dictionary<string, string> { ["trufflehog"] = "3.96.0" },
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_manifest_digest_binding",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://example.com"
+        );
+
+        var result = await engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Completed, result.OverallStatus);
+        Assert.NotNull(capturedRequest);
+        Assert.NotNull(capturedRequest.AuthorizedManifest);
+        Assert.True(capturedRequest.AuthorizedManifest.ContainsKey("trufflehog"));
+        Assert.Equal("sha256:b8acd9f7306d832b1f16e06003dac2283a737817954554111683ab7a56e9e539", capturedRequest.AuthorizedManifest["trufflehog"]);
+        Assert.Equal(capturedRequest.AuthorizedManifest["trufflehog"], capturedRequest.ContainerImageDigest);
+    }
 }
 
 public class MockScanToolAdapter : IScanToolAdapter

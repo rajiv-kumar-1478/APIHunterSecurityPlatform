@@ -311,6 +311,15 @@ public class RealSandboxEgressAllowlistIntegrationTests
         // Verify session strictly enforces empty NO_PROXY
         session.ContainerEnvironmentVariables["NO_PROXY"].Should().BeEmpty("NO_PROXY must be empty to prevent proxy bypass");
 
+        // Start a real live local test listener
+        using var localListener = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        localListener.Start();
+        var localPort = ((IPEndPoint)localListener.LocalEndpoint).Port;
+
+        // Start proxy server backed by the real gateway session
+        await using var proxyServer = new EnforcedEgressProxyServer(session, host => Task.FromResult(new[] { IPAddress.Loopback }), NullLogger.Instance);
+        proxyServer.Start();
+
         var realCliAdapter = new GenericCliToolAdapter("curl", NullLogger<GenericCliToolAdapter>.Instance);
         var authorizedManifest = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -319,7 +328,13 @@ public class RealSandboxEgressAllowlistIntegrationTests
 
         var secretLease = new ProviderSecretLease(
             providerKey: "curl",
-            secrets: new Dictionary<string, string>(),
+            secrets: new Dictionary<string, string>
+            {
+                ["HTTP_PROXY"] = proxyServer.ProxyEndpoint,
+                ["HTTPS_PROXY"] = proxyServer.ProxyEndpoint,
+                ["ALL_PROXY"] = proxyServer.ProxyEndpoint,
+                ["NO_PROXY"] = ""
+            },
             duration: TimeSpan.FromMinutes(10)
         );
 
@@ -328,19 +343,19 @@ public class RealSandboxEgressAllowlistIntegrationTests
 
         try
         {
-            // Attempt direct connection to unapproved destination with very short connect timeout
+            // Attempt request to the active local loopback listener
             var req = new ToolExecutionRequest(
                 ToolKey: "curl",
                 Version: "1.0.0",
                 Arguments: new Dictionary<string, string>
                 {
                     ["-s"] = "",
-                    ["--connect-timeout"] = "1",
-                    ["--noproxy"] = "*",
-                    ["--url"] = "http://198.51.100.99:59999/bypass"
+                    ["-o"] = "NUL",
+                    ["-f"] = "", // --fail causes curl to exit non-zero on HTTP 403 Forbidden
+                    ["--url"] = $"http://127.0.0.1:{localPort}/bypass-test"
                 },
                 ScanJobId: scanJobId,
-                Timeout: TimeSpan.FromSeconds(5),
+                Timeout: TimeSpan.FromSeconds(10),
                 Executable: "curl.exe",
                 ContainerImageRepository: "curl",
                 ContainerImageDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
@@ -349,12 +364,13 @@ public class RealSandboxEgressAllowlistIntegrationTests
 
             var result = await realCliAdapter.ExecuteAsync(req, secretLease, scratch);
 
-            // Direct connection to undeclared destination fails and is rejected
+            // Proxy must intercept and block connection to 127.0.0.1 (prohibited loopback), returning 403 and causing curl to fail
             result.Status.Should().Be(ToolExecutionStatus.Failed);
             result.ExitCode.Should().NotBe(0);
         }
         finally
         {
+            localListener.Stop();
             if (Directory.Exists(scratch)) Directory.Delete(scratch, true);
         }
     }

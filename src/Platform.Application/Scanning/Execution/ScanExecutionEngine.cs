@@ -310,7 +310,7 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
 
                 // 4. Build Validated Authorized Manifest Map
                 var authorizedManifestMap = _toolRegistry.GetAllAdapters()
-                    .ToDictionary(a => a.Manifest.ToolKey, a => a.Manifest.ToolKey, StringComparer.OrdinalIgnoreCase);
+                    .ToDictionary(a => a.Manifest.ToolKey, a => a.Manifest.ContainerImageDigest, StringComparer.OrdinalIgnoreCase);
 
                 var toolRequest = new ToolExecutionRequest(
                     ToolKey: adapter.Manifest.ToolKey,
