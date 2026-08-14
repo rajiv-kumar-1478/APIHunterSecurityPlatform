@@ -343,6 +343,7 @@ try
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolRegistry, Platform.Application.Scanning.Adapters.ScanToolRegistry>();
     builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsDiscoveryEngine, Platform.Application.Scanning.JavaScript.JsDiscoveryEngine>();
     builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsAstAnalyzer, Platform.Application.Scanning.JavaScript.JsAstAnalyzer>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsSecretAnalyzer, Platform.Application.Scanning.JavaScript.JsSecretAnalyzer>();
 
 
 
