@@ -336,14 +336,17 @@ try
     builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.NucleiOutputParser>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.SubfinderOutputParser>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.JsMinerOutputParser>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.BugHunterOutputParser>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.HttpxAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.NucleiAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.SubfinderAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.JsMinerAdapter>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.BugHunterAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolRegistry, Platform.Application.Scanning.Adapters.ScanToolRegistry>();
     builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsDiscoveryEngine, Platform.Application.Scanning.JavaScript.JsDiscoveryEngine>();
     builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsAstAnalyzer, Platform.Application.Scanning.JavaScript.JsAstAnalyzer>();
     builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsSecretAnalyzer, Platform.Application.Scanning.JavaScript.JsSecretAnalyzer>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Verification.IVerificationPlanner, Platform.Application.Scanning.Verification.VerificationPlanner>();
 
 
 
