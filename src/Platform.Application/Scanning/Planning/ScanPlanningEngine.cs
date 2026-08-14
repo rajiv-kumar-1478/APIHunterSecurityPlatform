@@ -137,7 +137,8 @@ public sealed class ScanPlanningEngine : IScanPlanningEngine
             SelectionReasons: selectionReasons,
             PlannerVersion: CurrentPlannerVersion,
             PlanHash: planHash,
-            PlannedAtUtc: DateTime.UtcNow
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: request.TargetUrl
         );
     }
 

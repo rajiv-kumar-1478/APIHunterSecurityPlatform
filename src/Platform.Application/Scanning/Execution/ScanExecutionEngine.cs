@@ -99,93 +99,114 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                 continue;
             }
 
+            // 1. Fail Closed if IScannerRuntimeSandbox is missing
+            if (_runtimeSandbox == null)
+            {
+                invStopwatch.Stop();
+                invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                invocationRecord.ErrorMessage = "RUNTIME_SANDBOX_UNAVAILABLE: Active IScannerRuntimeSandbox is required for security execution (Fail-Closed).";
+                invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                await _dbContext.SaveChangesAsync(ct);
+
+                toolsFailed++;
+                invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                continue;
+            }
+
             using var toolCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             toolCts.CancelAfter(DefaultPerToolTimeout);
 
             try
             {
+                var effectiveTargetUrl = !string.IsNullOrWhiteSpace(plan.TargetUrl)
+                    ? plan.TargetUrl
+                    : $"https://target-{plan.TenantId:N}.internal";
+
                 var execContext = new ScanExecutionContext(
                     ScanJobId: plan.ScanJobId,
-                    TargetUrl: plan.TargetKind.ToString(),
+                    TargetUrl: effectiveTargetUrl,
                     Profile: plan.Profile,
                     TenantId: plan.TenantId
                 );
 
-                // 1. Prepare execution in sandbox contract
+                // 2. Prepare execution in sandbox contract
                 var planResult = adapter.PrepareExecution(execContext);
 
-                // 2. Execute within real IScannerRuntimeSandbox & capture output
+                // 3. Resolve Target URL and Egress Details
+                Uri targetUri;
+                try
+                {
+                    targetUri = new Uri(effectiveTargetUrl);
+                }
+                catch
+                {
+                    targetUri = new Uri("https://" + effectiveTargetUrl.TrimStart('/'));
+                }
+
+                var targetHost = targetUri.Host;
+                var targetPort = targetUri.Port > 0 ? targetUri.Port : (targetUri.Scheme == "http" ? 80 : 443);
+                var targetScheme = targetUri.Scheme;
+
+                var egressTarget = new EgressTarget(
+                    RawTargetUrl: effectiveTargetUrl,
+                    CanonicalHost: targetHost,
+                    Port: targetPort,
+                    Scheme: targetScheme,
+                    ApprovedIpAddresses: new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Loopback },
+                    ResolvedAtUtc: DateTime.UtcNow,
+                    ExpiresAtUtc: DateTime.UtcNow.AddMinutes(30),
+                    PolicyVersion: "v1.0-strict"
+                );
+
+                var secretLease = new ProviderSecretLease(
+                    providerKey: adapter.Manifest.ToolKey,
+                    secrets: new Dictionary<string, string>(),
+                    duration: TimeSpan.FromMinutes(30)
+                );
+
+                var toolArgs = new Dictionary<string, string>();
+                for (int i = 0; i < planResult.CommandLineArguments.Count; i++)
+                {
+                    toolArgs[$"arg_{i}"] = planResult.CommandLineArguments[i];
+                }
+
+                // 4. Build Validated Authorized Manifest Map
+                var authorizedManifestMap = _toolRegistry.GetAllAdapters()
+                    .ToDictionary(a => a.Manifest.ToolKey, a => a.Manifest.ContainerImageDigest, StringComparer.OrdinalIgnoreCase);
+
+                var toolRequest = new ToolExecutionRequest(
+                    ToolKey: adapter.Manifest.ToolKey,
+                    Version: adapter.Manifest.Version,
+                    Arguments: toolArgs,
+                    ScanJobId: plan.ScanJobId,
+                    Timeout: DefaultPerToolTimeout,
+                    Executable: adapter.Manifest.ToolKey,
+                    ContainerImageRepository: adapter.Manifest.ToolKey,
+                    ContainerImageDigest: adapter.Manifest.ContainerImageDigest,
+                    AuthorizedManifest: authorizedManifestMap
+                );
+
+                // 5. Execute within real IScannerRuntimeSandbox & capture output
                 ToolExecutionRawOutput rawOutput;
                 var scratchDir = Path.Combine(Path.GetTempPath(), "apihunter-sandbox-" + Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(scratchDir);
 
                 try
                 {
-                    if (_runtimeSandbox != null)
-                    {
-                        var targetUrl = !string.IsNullOrWhiteSpace(plan.TargetKind.ToString()) ? "https://example.com" : "https://example.com";
-                        var host = "example.com";
-                        var egressTarget = new EgressTarget(
-                            RawTargetUrl: targetUrl,
-                            CanonicalHost: host,
-                            Port: 443,
-                            Scheme: "https",
-                            ApprovedIpAddresses: new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Parse("93.184.216.34") },
-                            ResolvedAtUtc: DateTime.UtcNow,
-                            ExpiresAtUtc: DateTime.UtcNow.AddMinutes(30),
-                            PolicyVersion: "v1.0-strict"
-                        );
+                    var sandboxResult = await _runtimeSandbox.ExecuteInSandboxAsync(toolRequest, egressTarget, secretLease, scratchDir, toolCts.Token);
+                    var resolvedOutput = ResolveToolOutput(sandboxResult, scratchDir);
 
-                        var secretLease = new ProviderSecretLease(
-                            providerKey: adapter.Manifest.ToolKey,
-                            secrets: new Dictionary<string, string>(),
-                            duration: TimeSpan.FromMinutes(30)
-                        );
-
-                        var toolArgs = new Dictionary<string, string>();
-                        for (int i = 0; i < planResult.CommandLineArguments.Count; i++)
-                        {
-                            toolArgs[$"arg_{i}"] = planResult.CommandLineArguments[i];
-                        }
-
-                        var toolRequest = new ToolExecutionRequest(
-                            ToolKey: adapter.Manifest.ToolKey,
-                            Version: adapter.Manifest.Version,
-                            Arguments: toolArgs,
-                            ScanJobId: plan.ScanJobId,
-                            Timeout: DefaultPerToolTimeout,
-                            Executable: adapter.Manifest.ToolKey,
-                            ContainerImageRepository: adapter.Manifest.ToolKey,
-                            ContainerImageDigest: adapter.Manifest.ContainerImageDigest,
-                            AuthorizedManifest: null
-                        );
-
-                        var sandboxResult = await _runtimeSandbox.ExecuteInSandboxAsync(toolRequest, egressTarget, secretLease, scratchDir, toolCts.Token);
-                        var resolvedOutput = ResolveToolOutput(sandboxResult, scratchDir);
-
-                        rawOutput = new ToolExecutionRawOutput(
-                            ToolKey: adapter.Manifest.ToolKey,
-                            Version: adapter.Manifest.Version,
-                            ExitCode: sandboxResult.ExitCode,
-                            StandardOutput: resolvedOutput ?? "{}",
-                            StandardError: string.Empty,
-                            OutputSizeBytes: (long)(resolvedOutput?.Length ?? 0),
-                            DurationMs: invStopwatch.ElapsedMilliseconds,
-                            ArtifactReference: sandboxResult.ArtifactReference
-                        );
-                    }
-                    else
-                    {
-                        rawOutput = new ToolExecutionRawOutput(
-                            ToolKey: adapter.Manifest.ToolKey,
-                            Version: adapter.Manifest.Version,
-                            ExitCode: 0,
-                            StandardOutput: "{}",
-                            StandardError: string.Empty,
-                            OutputSizeBytes: 2,
-                            DurationMs: 50
-                        );
-                    }
+                    rawOutput = new ToolExecutionRawOutput(
+                        ToolKey: adapter.Manifest.ToolKey,
+                        Version: adapter.Manifest.Version,
+                        ExitCode: sandboxResult.ExitCode,
+                        StandardOutput: resolvedOutput ?? "{}",
+                        StandardError: string.Empty,
+                        OutputSizeBytes: (long)(resolvedOutput?.Length ?? 0),
+                        DurationMs: invStopwatch.ElapsedMilliseconds,
+                        ArtifactReference: sandboxResult.ArtifactReference
+                    );
                 }
                 finally
                 {
@@ -198,7 +219,7 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                     }
                     catch
                     {
-                        // Suppress scratch cleanup error
+                        // Suppress temporary scratch directory cleanup error
                     }
                 }
 

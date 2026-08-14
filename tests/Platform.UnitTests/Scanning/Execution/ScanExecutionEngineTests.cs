@@ -42,8 +42,20 @@ public class ScanExecutionEngineTests
             new SemgrepAdapter(semgrepParser)
         };
 
+        var defaultSandbox = new MockScannerRuntimeSandbox((req, egress, secret, scratch, ct) =>
+        {
+            return Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(
+                ToolKey: req.ToolKey,
+                Version: req.Version,
+                Status: Platform.Domain.Enums.ToolExecutionStatus.Success,
+                ExitCode: 0,
+                ArtifactReference: "{}",
+                ErrorCode: null
+            ));
+        });
+
         _toolRegistry = new ScanToolRegistry(adapters);
-        _engine = new ScanExecutionEngine(_toolRegistry, _dbContext, NullLogger<ScanExecutionEngine>.Instance);
+        _engine = new ScanExecutionEngine(_toolRegistry, _dbContext, NullLogger<ScanExecutionEngine>.Instance, defaultSandbox);
     }
 
     [Fact]
@@ -248,6 +260,104 @@ public class ScanExecutionEngineTests
         Assert.Single(result.Invocations);
         Assert.Equal(ToolInvocationStatus.Completed, result.Invocations[0].Status);
         Assert.Equal("semgrep", result.Invocations[0].ToolKey);
+    }
+
+    [Fact]
+    public async Task ExecutePlan_MissingSandbox_FailsClosed()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+
+        // Engine with NULL runtime sandbox
+        var engineWithoutSandbox = new ScanExecutionEngine(_toolRegistry, _dbContext, NullLogger<ScanExecutionEngine>.Instance, runtimeSandbox: null);
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("httpx", "1.6.8", ScannerExecutionPhase.Discovery, new[] { "http.probe" }, Array.Empty<string>(), "Discovery")
+        };
+
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.WebEndpoint,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "httpx" },
+            RuleSetVersions: new Dictionary<string, string>(),
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_fail_closed",
+            PlannedAtUtc: DateTime.UtcNow
+        );
+
+        var result = await engineWithoutSandbox.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Failed, result.OverallStatus);
+        Assert.Single(result.Invocations);
+        Assert.Equal(ToolInvocationStatus.Failed, result.Invocations[0].Status);
+        Assert.Contains("RUNTIME_SANDBOX_UNAVAILABLE", result.Invocations[0].ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ExecutePlan_PassesAuthorizedTargetAndValidatedManifestToSandbox()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        var authorizedTargetUrl = "https://staging-api.example.corp/v2";
+
+        Platform.Application.Scanning.Contracts.ToolExecutionRequest? capturedRequest = null;
+        Platform.Application.Scanning.Contracts.EgressTarget? capturedEgress = null;
+
+        var mockSandbox = new MockScannerRuntimeSandbox((req, egress, secret, scratch, ct) =>
+        {
+            capturedRequest = req;
+            capturedEgress = egress;
+            return Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(
+                ToolKey: req.ToolKey,
+                Version: req.Version,
+                Status: Platform.Domain.Enums.ToolExecutionStatus.Success,
+                ExitCode: 0,
+                ArtifactReference: "{}",
+                ErrorCode: null
+            ));
+        });
+
+        var engine = new ScanExecutionEngine(_toolRegistry, _dbContext, NullLogger<ScanExecutionEngine>.Instance, mockSandbox);
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("httpx", "1.6.8", ScannerExecutionPhase.Discovery, new[] { "http.probe" }, Array.Empty<string>(), "Discovery")
+        };
+
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.WebEndpoint,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "httpx" },
+            RuleSetVersions: new Dictionary<string, string>(),
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_target_binding",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: authorizedTargetUrl
+        );
+
+        var result = await engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Completed, result.OverallStatus);
+        Assert.NotNull(capturedRequest);
+        Assert.NotNull(capturedEgress);
+
+        // Verify target binding
+        Assert.Equal(authorizedTargetUrl, capturedEgress.RawTargetUrl);
+        Assert.Equal("staging-api.example.corp", capturedEgress.CanonicalHost);
+
+        // Verify validated manifest map is passed
+        Assert.NotNull(capturedRequest.AuthorizedManifest);
+        Assert.True(capturedRequest.AuthorizedManifest.ContainsKey("httpx"));
+        Assert.True(capturedRequest.AuthorizedManifest.ContainsKey("semgrep"));
     }
 }
 

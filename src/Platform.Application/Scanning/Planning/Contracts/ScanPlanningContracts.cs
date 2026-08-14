@@ -87,5 +87,6 @@ public sealed record ResolvedScanPlan(
     IReadOnlyDictionary<string, string> SelectionReasons,
     string PlannerVersion,
     string PlanHash,
-    DateTime PlannedAtUtc
+    DateTime PlannedAtUtc,
+    string TargetUrl = ""
 );
