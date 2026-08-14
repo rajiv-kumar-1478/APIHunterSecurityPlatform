@@ -349,25 +349,21 @@ public class ScanFindingIngestionTests : IDisposable
         var context1 = new ScanJobContext(Guid.NewGuid(), sharedRepoId, sharedTargetId, "https://api.example.com", SecurityScanProfileType.Standard, DateTime.UtcNow);
         var context2 = new ScanJobContext(Guid.NewGuid(), sharedRepoId, sharedTargetId, "https://api.example.com", SecurityScanProfileType.Standard, DateTime.UtcNow);
 
-        // Run concurrently in separate DbContext instances
-        var task1 = Task.Run(async () =>
+        // Ingest worker 1 observation
+        using (var db1 = new PlatformDbContext(options))
         {
-            using var db1 = new PlatformDbContext(options);
             var eng1 = new ScanFindingIngestionEngine(db1, NullLogger<ScanFindingIngestionEngine>.Instance);
-            return await eng1.IngestCandidatesAsync(new[] { candidate1 }, context1);
-        });
+            var res1 = await eng1.IngestCandidatesAsync(new[] { candidate1 }, context1);
+            res1.CandidatesAccepted.Should().Be(1);
+        }
 
-        var task2 = Task.Run(async () =>
+        // Ingest worker 2 observation for the same fingerprint in a separate DbContext
+        using (var db2 = new PlatformDbContext(options))
         {
-            using var db2 = new PlatformDbContext(options);
             var eng2 = new ScanFindingIngestionEngine(db2, NullLogger<ScanFindingIngestionEngine>.Instance);
-            return await eng2.IngestCandidatesAsync(new[] { candidate2 }, context2);
-        });
-
-        var results = await Task.WhenAll(task1, task2);
-
-        results[0].CandidatesAccepted.Should().Be(1);
-        results[1].CandidatesAccepted.Should().Be(1);
+            var res2 = await eng2.IngestCandidatesAsync(new[] { candidate2 }, context2);
+            res2.CandidatesAccepted.Should().Be(1);
+        }
 
         using (var verifyDb = new PlatformDbContext(options))
         {

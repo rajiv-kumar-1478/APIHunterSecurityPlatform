@@ -176,15 +176,18 @@ public class SecurityScanController : ControllerBase
     {
         try
         {
-            var formatter = _formatterRegistry.GetFormatter(format);
             var canonicalReport = await _reportBuilder.BuildCanonicalReportAsync(id, baselineJobId, ct);
-            var result = formatter.FormatReport(canonicalReport);
+            var result = _formatterRegistry.FormatReport(format, canonicalReport);
 
             return Content(result.Content, result.ContentType, Encoding.UTF8);
         }
         catch (ArgumentException ex)
         {
             return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return StatusCode(StatusCodes.Status413PayloadTooLarge, new { message = ex.Message });
         }
         catch (KeyNotFoundException ex)
         {

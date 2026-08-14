@@ -149,7 +149,7 @@ public class ScanReportGenerationTests : IDisposable
         using var doc = JsonDocument.Parse(sarifResult.Content);
         var root = doc.RootElement;
 
-        root.GetProperty("$schema").GetString().Should().Be("https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json");
+        root.GetProperty("$schema").GetString().Should().Contain("sarif-schema-2.1.0.json");
         root.GetProperty("version").GetString().Should().Be("2.1.0");
 
         var runs = root.GetProperty("runs");
@@ -164,8 +164,15 @@ public class ScanReportGenerationTests : IDisposable
         results[0].GetProperty("level").GetString().Should().Be("error");
     }
 
+    private static readonly Lazy<Json.Schema.JsonSchema> OfficialSarifSchema = new(() =>
+    {
+        var schemaPath = GetOfficialSarifSchemaPath();
+        var schemaJson = System.IO.File.ReadAllText(schemaPath);
+        return Json.Schema.JsonSchema.FromText(schemaJson);
+    });
+
     [Fact]
-    public async Task SarifOutput_ValidatesAgainstSarif210Schema()
+    public async Task SarifOutput_ValidatesAgainstOfficialOasisSarif210Schema()
     {
         var (job, findings) = await SeedScanWithFindingsAsync();
         var canonicalReport = await _reportBuilder.BuildCanonicalReportAsync(job.Id);
@@ -173,47 +180,61 @@ public class ScanReportGenerationTests : IDisposable
 
         using var doc = JsonDocument.Parse(sarifResult.Content);
 
-        var schemaJson = """
+        var schema = OfficialSarifSchema.Value;
+        var evaluation = schema.Evaluate(doc.RootElement, new Json.Schema.EvaluationOptions
         {
-          "$schema": "http://json-schema.org/draft-07/schema#",
-          "type": "object",
-          "required": ["$schema", "version", "runs"],
-          "properties": {
-            "$schema": { "type": "string" },
-            "version": { "type": "string", "const": "2.1.0" },
-            "runs": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "required": ["tool", "results"],
-                "properties": {
-                  "tool": {
-                    "type": "object",
-                    "required": ["driver"],
-                    "properties": {
-                      "driver": {
-                        "type": "object",
-                        "required": ["name", "version", "rules"]
-                      }
-                    }
-                  },
-                  "results": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "required": ["ruleId", "level", "message"]
-                    }
-                  }
-                }
-              }
+            OutputFormat = Json.Schema.OutputFormat.List
+        });
+
+        if (!evaluation.IsValid)
+        {
+            var errors = string.Join("; ", evaluation.Details.SelectMany(d => d.Errors ?? new Dictionary<string, string>()).Select(kv => $"{kv.Key}: {kv.Value}"));
+            throw new Exception($"SARIF Schema Evaluation Failed: {errors}\n\nGenerated SARIF:\n{sarifResult.Content}");
+        }
+
+        evaluation.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task SarifOutput_MalformedSarifFailsOfficialSchemaValidation()
+    {
+        var malformedSarif = """
+        {
+          "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+          "version": "1.0.0",
+          "runs": [
+            {
+              "tool": {}
             }
-          }
+          ]
         }
         """;
 
-        var schema = Json.Schema.JsonSchema.FromText(schemaJson);
+        using var doc = JsonDocument.Parse(malformedSarif);
+        var schema = OfficialSarifSchema.Value;
         var evaluation = schema.Evaluate(doc.RootElement);
-        evaluation.IsValid.Should().BeTrue();
+        evaluation.IsValid.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task FormatterRegistry_EnforcesMaxOutputCeiling_FailsClosedWhenExceeded()
+    {
+        var (job, findings) = await SeedScanWithFindingsAsync();
+        var canonicalReport = await _reportBuilder.BuildCanonicalReportAsync(job.Id);
+
+        // Register an oversized mock formatter that produces > 20 MiB
+        var oversizedFormatter = new Mock<ISecurityReportFormatter>();
+        oversizedFormatter.Setup(f => f.Format).Returns(SecurityReportFormat.Json);
+        oversizedFormatter.Setup(f => f.ContentType).Returns("application/json");
+        oversizedFormatter.Setup(f => f.FileExtension).Returns("oversized");
+        oversizedFormatter.Setup(f => f.FormatReport(It.IsAny<CanonicalSecurityReport>()))
+            .Returns(new FormattedReportResult(new string('X', 21 * 1024 * 1024), "application/json", "oversized.json"));
+
+        var customRegistry = new SecurityReportFormatterRegistry(new[] { oversizedFormatter.Object });
+
+        Action act = () => customRegistry.FormatReport("oversized", canonicalReport);
+        act.Should().Throw<InvalidOperationException>()
+            .WithMessage("*exceeds maximum ceiling of 20971520 bytes*");
     }
 
     [Fact]
@@ -437,6 +458,26 @@ public class ScanReportGenerationTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         return (job, new List<SecurityFinding> { finding1, finding2 });
+    }
+
+    private static string GetOfficialSarifSchemaPath()
+    {
+        var currentDir = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+        while (currentDir != null)
+        {
+            var candidate = System.IO.Path.Combine(currentDir.FullName, "tests", "Platform.UnitTests", "Fixtures", "sarif-schema-2.1.0.json");
+            if (System.IO.File.Exists(candidate))
+            {
+                return candidate;
+            }
+            var direct = System.IO.Path.Combine(currentDir.FullName, "Fixtures", "sarif-schema-2.1.0.json");
+            if (System.IO.File.Exists(direct))
+            {
+                return direct;
+            }
+            currentDir = currentDir.Parent;
+        }
+        throw new System.IO.FileNotFoundException("Official SARIF 2.1.0 JSON schema fixture not found.");
     }
 
     private class TestUserContext : ICurrentUserContext

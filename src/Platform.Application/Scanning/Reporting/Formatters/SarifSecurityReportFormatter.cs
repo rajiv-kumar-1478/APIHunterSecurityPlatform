@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Platform.Application.Scanning.Contracts;
 using Platform.Domain.Enums;
 
@@ -20,7 +21,8 @@ public class SarifSecurityReportFormatter : ISecurityReportFormatter
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         WriteIndented = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 
     public FormattedReportResult FormatReport(CanonicalSecurityReport report)
@@ -90,9 +92,12 @@ public class SarifSecurityReportFormatter : ISecurityReportFormatter
             });
         }
 
+        var startTime = (report.Metadata.StartedAtUtc ?? report.Metadata.GeneratedAtUtc).ToString("O");
+        var endTime = (report.Metadata.CompletedAtUtc ?? report.Metadata.GeneratedAtUtc).ToString("O");
+
         var sarifDoc = new
         {
-            schema = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            schema = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
             version = "2.1.0",
             runs = new[]
             {
@@ -114,8 +119,8 @@ public class SarifSecurityReportFormatter : ISecurityReportFormatter
                         new
                         {
                             executionSuccessful = report.Metadata.JobStatus == SecurityScanJobStatus.Completed || report.Metadata.JobStatus == SecurityScanJobStatus.CompletedWithWarnings,
-                            startTimeUtc = report.Metadata.StartedAtUtc?.ToString("O"),
-                            endTimeUtc = report.Metadata.CompletedAtUtc?.ToString("O")
+                            startTimeUtc = startTime,
+                            endTimeUtc = endTime
                         }
                     }
                 }

@@ -59,4 +59,28 @@ public class SecurityReportFormatterRegistry
     {
         return GetFormatter(format.ToString());
     }
+
+    /// <summary>
+    /// Formats the canonical report using the specified format, enforcing hard resource limits on final output size.
+    /// Invariant: Outputs exceeding MaxReportOutputBytes fail closed.
+    /// </summary>
+    public FormattedReportResult FormatReport(string formatKey, CanonicalSecurityReport report)
+    {
+        if (report == null) throw new ArgumentNullException(nameof(report));
+
+        var formatter = GetFormatter(formatKey);
+        var result = formatter.FormatReport(report);
+
+        var outputByteCount = System.Text.Encoding.UTF8.GetByteCount(result.Content);
+        if (outputByteCount > ReportResourceBounds.MaxReportOutputBytes)
+        {
+            throw new InvalidOperationException(
+                $"Formatted report output size ({outputByteCount} bytes) exceeds maximum ceiling of {ReportResourceBounds.MaxReportOutputBytes} bytes.");
+        }
+
+        return result;
+    }
+
+    public FormattedReportResult FormatReport(SecurityReportFormat format, CanonicalSecurityReport report)
+        => FormatReport(format.ToString(), report);
 }
