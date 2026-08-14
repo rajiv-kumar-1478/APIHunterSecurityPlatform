@@ -57,6 +57,19 @@ public static class ScanToolManifestValidator
         {
             errors.Add($"ContainerImageDigest '{manifest.ContainerImageDigest}' must be a valid sha256:64-hex string.");
         }
+        else
+        {
+            var rawHex = manifest.ContainerImageDigest.Substring(7).ToLowerInvariant();
+            // Disallow known trivial/empty-string or placeholder hashes
+            if (rawHex == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+            {
+                errors.Add("ContainerImageDigest cannot be the SHA-256 hash of an empty string.");
+            }
+            else if (rawHex.Trim('0').Length == 0 || rawHex.Trim('f').Length == 0)
+            {
+                errors.Add($"ContainerImageDigest '{manifest.ContainerImageDigest}' is a forbidden trivial placeholder hash.");
+            }
+        }
 
         // 4. Image Repository Validation
         if (string.IsNullOrWhiteSpace(manifest.ContainerImageRepository))
