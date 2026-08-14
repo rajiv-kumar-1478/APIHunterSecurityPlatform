@@ -30,6 +30,7 @@ public record FindingCandidate(
     string RawSeverity,
     string TargetUrl,
     string? CveId = null,
+    string? CWEId = null,
     string? CweId = null,
     string? TemplateId = null,
     string? EndpointPath = null,
@@ -37,23 +38,26 @@ public record FindingCandidate(
     int? HttpResponseStatusCode = null,
     string? ExtractedData = null,
     IReadOnlyDictionary<string, string>? Attributes = null,
-    DateTime? ObservedAtUtc = null
+    DateTime? ObservedAtUtc = null,
+    string? ContainerImageRepository = null,
+    string? ContainerImageDigest = null,
+    string? Executable = null
 );
 
 /// <summary>
-/// Scan job execution context provided to output parsers.
+/// Contextual metadata for a running scan job used during candidate ingestion.
 /// </summary>
 public record ScanJobContext(
     Guid JobId,
     Guid RepositoryId,
-    Guid? TargetId,
+    Guid TargetId,
     string TargetUrl,
     SecurityScanProfileType ScanProfile,
     DateTime JobStartedAtUtc
 );
 
 /// <summary>
-/// Result summary of finding ingestion.
+/// Outcome metrics and diagnostics returned from candidate ingestion.
 /// </summary>
 public record FindingIngestionResult(
     int TotalCandidatesReceived,
@@ -67,11 +71,15 @@ public record FindingIngestionResult(
 
 /// <summary>
 /// Contract for pure, format-specific tool output parsers.
-/// Parsers must be deterministic and never interact directly with storage or security authorization layers.
+/// Parsers map raw tool output into candidate records under strict resource bounds.
 /// </summary>
 public interface IToolOutputParser
 {
     string ToolKey { get; }
     ToolOutputFormat SupportedFormat { get; }
-    IReadOnlyList<FindingCandidate> Parse(string rawOutput, ScanJobContext context, ParserResourceBounds? bounds = null);
+
+    IReadOnlyList<FindingCandidate> Parse(
+        string rawOutput,
+        ScanJobContext context,
+        ParserResourceBounds? bounds = null);
 }

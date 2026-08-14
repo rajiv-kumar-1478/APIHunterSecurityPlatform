@@ -235,6 +235,104 @@ public class ScanExecutionOrchestratorTests : IDisposable
         receipt.ToolReceipts.Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task Orchestrator_PreservesImmutableProvenance_InReceiptsAndEvidence()
+    {
+        var tool = await _toolRegistry.RegisterToolAsync(
+            toolKey: "nuclei",
+            displayName: "Nuclei Scanner",
+            version: "v3.1.0",
+            required: true,
+            capabilities: new[] { ToolCapability.HttpProbing, ToolCapability.UrlCrawling, ToolCapability.VulnerabilityScanning },
+            executable: "nuclei"
+        );
+
+        var toolEntity = await _dbContext.SecurityScanTools.FirstAsync(t => t.ToolKey == "nuclei");
+        toolEntity.ContainerImageRepository = "ghcr.io/projectdiscovery/nuclei";
+        toolEntity.ContainerImageDigest = "sha256:7b1e8e24c52084c86d8a2a8db4";
+        await _dbContext.SaveChangesAsync();
+
+        var job = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            RepositoryId = _repoId,
+            TargetId = _targetId,
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Standard,
+            Status = SecurityScanJobStatus.Running,
+            ProviderKey = "test-provider",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        var mockSandbox = new MockScannerRuntimeSandbox();
+        mockSandbox.RegisterToolOutput("nuclei", "{\"template-id\":\"cve-2021-41773\",\"info\":{\"name\":\"Apache Path Traversal RCE\",\"severity\":\"critical\"},\"matched-at\":\"https://api.example.com/icons/.%2e/passwd\"}\n");
+
+        var receipt = await _orchestrator.ExecutePipelineAsync(job, _egressTarget, _secretLease, "C:\\scratch", mockSandbox);
+
+        var toolReceipt = receipt.ToolReceipts.First(r => r.ToolKey == "nuclei");
+        toolReceipt.Executable.Should().Be("nuclei");
+        toolReceipt.ContainerImageRepository.Should().Be("ghcr.io/projectdiscovery/nuclei");
+        toolReceipt.ContainerImageDigest.Should().Be("sha256:7b1e8e24c52084c86d8a2a8db4");
+        toolReceipt.StartedAtUtc.Should().BeBefore(DateTime.UtcNow.AddSeconds(1));
+        toolReceipt.CompletedAtUtc.Should().BeOnOrAfter(toolReceipt.StartedAtUtc);
+
+        var finding = await _dbContext.SecurityFindings.Include(f => f.Evidences).FirstAsync();
+        var evidence = finding.Evidences.First();
+        evidence.SafeEvidenceJson.Should().Contain("ghcr.io/projectdiscovery/nuclei");
+        evidence.SafeEvidenceJson.Should().Contain("sha256:7b1e8e24c52084c86d8a2a8db4");
+        evidence.SafeEvidenceJson.Should().Contain("nuclei");
+    }
+
+    [Fact]
+    public async Task Orchestrator_FailsFast_OnSandboxFatalSecurityCrash()
+    {
+        await _toolRegistry.RegisterToolAsync(
+            toolKey: "httpx",
+            displayName: "HTTPX Prober",
+            version: "v1.4.0",
+            required: false,
+            capabilities: new[] { ToolCapability.HttpProbing, ToolCapability.UrlCrawling, ToolCapability.VulnerabilityScanning },
+            executable: "httpx"
+        );
+
+        await _toolRegistry.RegisterToolAsync(
+            toolKey: "nuclei",
+            displayName: "Nuclei Scanner",
+            version: "v3.1.0",
+            required: false,
+            capabilities: new[] { ToolCapability.HttpProbing, ToolCapability.UrlCrawling, ToolCapability.VulnerabilityScanning },
+            executable: "nuclei"
+        );
+
+        var job = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            RepositoryId = _repoId,
+            TargetId = _targetId,
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Standard,
+            Status = SecurityScanJobStatus.Running,
+            ProviderKey = "test-provider",
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        var mockSandbox = new MockScannerRuntimeSandbox();
+        // httpx fatal sandbox crash
+        mockSandbox.RegisterToolFailure("httpx", ToolExecutionStatus.Failed, "SANDBOX_CONTAINER_ESCAPED_OR_DIED");
+
+        var receipt = await _orchestrator.ExecutePipelineAsync(job, _egressTarget, _secretLease, "C:\\scratch", mockSandbox);
+
+        receipt.FinalJobStatus.Should().Be(SecurityScanJobStatus.Failed);
+        receipt.ToolReceipts.Should().HaveCount(2);
+
+        var httpxReceipt = receipt.ToolReceipts.First(r => r.ToolKey == "httpx");
+        httpxReceipt.Status.Should().Be(ToolExecutionStatus.Failed);
+
+        var nucleiReceipt = receipt.ToolReceipts.First(r => r.ToolKey == "nuclei");
+        nucleiReceipt.Status.Should().Be(ToolExecutionStatus.Skipped, "Downstream tools must be skipped on fatal sandbox/security crash");
+        nucleiReceipt.FailureReason.Should().Contain("FATAL_SECURITY_BOUNDARY_FAILURE");
+    }
+
     private class MockScannerRuntimeSandbox : IScannerRuntimeSandbox
     {
         private readonly Dictionary<string, (ToolExecutionStatus Status, string? Output, string? ErrorCode)> _configured = new(StringComparer.OrdinalIgnoreCase);

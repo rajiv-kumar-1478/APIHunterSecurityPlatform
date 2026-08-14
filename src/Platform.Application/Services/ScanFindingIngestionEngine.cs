@@ -177,11 +177,14 @@ public class ScanFindingIngestionEngine
                 newFindingsCount++;
             }
 
-            // 10. Construct Sanitized Evidence Record
+            // 10. Construct Sanitized Evidence Record with Immutable Provenance
             var evidenceData = new
             {
                 toolKey = candidate.ToolKey,
                 toolVersion = candidate.ToolVersion,
+                containerImageRepository = candidate.ContainerImageRepository,
+                containerImageDigest = candidate.ContainerImageDigest,
+                executable = candidate.Executable,
                 rawSeverity = candidate.RawSeverity,
                 cveId = candidate.CveId,
                 cweId = candidate.CweId,
@@ -319,6 +322,9 @@ public class ScanFindingIngestionEngine
                 {
                     toolKey = candidate.ToolKey,
                     toolVersion = candidate.ToolVersion,
+                    containerImageRepository = candidate.ContainerImageRepository,
+                    containerImageDigest = candidate.ContainerImageDigest,
+                    executable = candidate.Executable,
                     rawSeverity = candidate.RawSeverity,
                     cveId = candidate.CveId,
                     cweId = candidate.CweId,

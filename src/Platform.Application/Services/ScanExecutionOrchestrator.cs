@@ -129,15 +129,42 @@ public class ScanExecutionOrchestrator
 
         var successfulToolsCount = 0;
         var failedToolsCount = 0;
+        var fatalSecurityBoundaryFailure = false;
 
         // 5. Sequential Phase Execution
         foreach (var (tool, phase) in orderedPlan)
         {
             ct.ThrowIfCancellationRequested();
 
+            if (fatalSecurityBoundaryFailure)
+            {
+                _logger.LogWarning("Skipping remaining tool '{ToolKey}' due to prior fatal sandbox/security boundary failure.", tool.ToolKey);
+                toolReceipts.Add(new ToolExecutionReceipt(
+                    ToolKey: tool.ToolKey,
+                    Version: tool.Version,
+                    Executable: tool.Executable,
+                    ContainerImageRepository: tool.ContainerImageRepository,
+                    ContainerImageDigest: tool.ContainerImageDigest,
+                    Profile: canonicalProfile,
+                    Phase: phase,
+                    Status: ToolExecutionStatus.Skipped,
+                    StartedAtUtc: DateTime.UtcNow,
+                    CompletedAtUtc: DateTime.UtcNow,
+                    DurationMs: 0,
+                    OutputSizeBytes: 0,
+                    CandidatesParsed: 0,
+                    FindingsCreated: 0,
+                    FindingsUpdated: 0,
+                    FailureReason: "SKIPPED_DUE_TO_FATAL_SECURITY_BOUNDARY_FAILURE"
+                ));
+                continue;
+            }
+
             _logger.LogInformation("Orchestrator executing Phase {Phase} tool '{ToolKey}' ({DisplayName}) for job '{JobId}'.", phase, tool.ToolKey, tool.DisplayName, job.Id);
 
+            var toolStartedAtUtc = DateTime.UtcNow;
             var sw = Stopwatch.StartNew();
+
             var toolArgs = new Dictionary<string, string>();
             if (job.TargetUrl.StartsWith("-"))
             {
@@ -172,6 +199,7 @@ public class ScanExecutionOrchestrator
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Unexpected sandbox execution crash for tool '{ToolKey}' in job '{JobId}'.", tool.ToolKey, job.Id);
+                fatalSecurityBoundaryFailure = true;
                 toolResult = new ToolExecutionResult(
                     ToolKey: tool.ToolKey,
                     Version: tool.Version,
@@ -182,6 +210,7 @@ public class ScanExecutionOrchestrator
                 );
             }
             sw.Stop();
+            var toolCompletedAtUtc = DateTime.UtcNow;
 
             var rawOutput = ResolveToolOutput(toolResult, scratchDirectory);
             var outputBytes = (long)(rawOutput?.Length ?? 0);
@@ -194,7 +223,7 @@ public class ScanExecutionOrchestrator
             {
                 successfulToolsCount++;
 
-                // 6. Tool Output Parsing & Finding Ingestion
+                // 6. Tool Output Parsing & Finding Ingestion with Immutable Provenance
                 if (!string.IsNullOrWhiteSpace(rawOutput))
                 {
                     if (_parserProvider.TryGetParser(tool.ToolKey, out var parser))
@@ -204,7 +233,14 @@ public class ScanExecutionOrchestrator
 
                         if (candidatesParsed > 0)
                         {
-                            var ingestionResult = await _ingestionEngine.IngestCandidatesAsync(candidates, jobContext, null, ct);
+                            var candidatesWithProvenance = candidates.Select(c => c with
+                            {
+                                ContainerImageRepository = tool.ContainerImageRepository,
+                                ContainerImageDigest = tool.ContainerImageDigest,
+                                Executable = tool.Executable
+                            }).ToList();
+
+                            var ingestionResult = await _ingestionEngine.IngestCandidatesAsync(candidatesWithProvenance, jobContext, null, ct);
                             toolFindingsCreated = ingestionResult.NewFindingsCreated;
                             toolFindingsUpdated = ingestionResult.ExistingFindingsUpdated;
                             totalFindingsCreated += toolFindingsCreated;
@@ -225,14 +261,24 @@ public class ScanExecutionOrchestrator
                 failedToolsCount++;
                 failureReason = toolResult.ErrorCode ?? "TOOL_EXECUTION_FAILED";
                 _logger.LogWarning("Tool '{ToolKey}' execution failed ({Status}): {Reason}", tool.ToolKey, toolResult.Status, failureReason);
+
+                if (failureReason.StartsWith("SANDBOX_") || failureReason.StartsWith("SECURITY_"))
+                {
+                    fatalSecurityBoundaryFailure = true;
+                }
             }
 
             var receipt = new ToolExecutionReceipt(
                 ToolKey: tool.ToolKey,
                 Version: tool.Version,
+                Executable: tool.Executable,
+                ContainerImageRepository: tool.ContainerImageRepository,
+                ContainerImageDigest: tool.ContainerImageDigest,
                 Profile: canonicalProfile,
                 Phase: phase,
                 Status: toolResult.Status,
+                StartedAtUtc: toolStartedAtUtc,
+                CompletedAtUtc: toolCompletedAtUtc,
                 DurationMs: sw.ElapsedMilliseconds,
                 OutputSizeBytes: outputBytes,
                 CandidatesParsed: candidatesParsed,

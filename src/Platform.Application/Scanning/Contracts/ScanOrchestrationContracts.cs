@@ -17,14 +17,19 @@ public enum ScanExecutionPhase
 }
 
 /// <summary>
-/// Per-tool execution receipt recording runtime metrics, output stats, and finding ingestion results.
+/// Per-tool execution receipt recording immutable provenance, runtime metrics, output stats, and finding ingestion results.
 /// </summary>
 public record ToolExecutionReceipt(
     string ToolKey,
     string Version,
+    string? Executable,
+    string? ContainerImageRepository,
+    string? ContainerImageDigest,
     SecurityScanProfileType Profile,
     ScanExecutionPhase Phase,
     ToolExecutionStatus Status,
+    DateTime StartedAtUtc,
+    DateTime CompletedAtUtc,
     long DurationMs,
     long OutputSizeBytes,
     int CandidatesParsed,
