@@ -165,6 +165,58 @@ public class ScanReportGenerationTests : IDisposable
     }
 
     [Fact]
+    public async Task SarifOutput_ValidatesAgainstSarif210Schema()
+    {
+        var (job, findings) = await SeedScanWithFindingsAsync();
+        var canonicalReport = await _reportBuilder.BuildCanonicalReportAsync(job.Id);
+        var sarifResult = _registry.GetFormatter("sarif").FormatReport(canonicalReport);
+
+        using var doc = JsonDocument.Parse(sarifResult.Content);
+
+        var schemaJson = """
+        {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "type": "object",
+          "required": ["$schema", "version", "runs"],
+          "properties": {
+            "$schema": { "type": "string" },
+            "version": { "type": "string", "const": "2.1.0" },
+            "runs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["tool", "results"],
+                "properties": {
+                  "tool": {
+                    "type": "object",
+                    "required": ["driver"],
+                    "properties": {
+                      "driver": {
+                        "type": "object",
+                        "required": ["name", "version", "rules"]
+                      }
+                    }
+                  },
+                  "results": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["ruleId", "level", "message"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """;
+
+        var schema = Json.Schema.JsonSchema.FromText(schemaJson);
+        var evaluation = schema.Evaluate(doc.RootElement);
+        evaluation.IsValid.Should().BeTrue();
+    }
+
+    [Fact]
     public async Task HtmlOutput_StrictlyEscapesUserControlledContent_PreventingXSS()
     {
         var xssTitle = "<script>alert('XSS_ATTACK')</script>";
@@ -203,6 +255,9 @@ public class ScanReportGenerationTests : IDisposable
         report1.Metadata.ProvenanceSignature.Should().NotBeNullOrWhiteSpace();
         report1.Metadata.ProvenanceSignature.Length.Should().Be(64); // SHA-256 hex string
 
+        // Deterministic check: Multiple report generations for the same scan job produce identical ProvenanceSignature
+        report1.Metadata.ProvenanceSignature.Should().Be(report2.Metadata.ProvenanceSignature);
+
         // Create a different job
         var otherJob = new SecurityScanJob
         {
@@ -220,6 +275,45 @@ public class ScanReportGenerationTests : IDisposable
 
         var otherReport = await _reportBuilder.BuildCanonicalReportAsync(otherJob.Id);
         otherReport.Metadata.ProvenanceSignature.Should().NotBe(report1.Metadata.ProvenanceSignature);
+    }
+
+    [Fact]
+    public async Task BoundedReport_CapsFindingsAtResourceCeiling()
+    {
+        var (job, _) = await SeedScanWithFindingsAsync();
+
+        var extraFindings = new List<SecurityFinding>();
+        var extraObs = new List<ScanFindingObservation>();
+        for (int i = 0; i < 1100; i++)
+        {
+            var f = new SecurityFinding
+            {
+                Id = Guid.NewGuid(),
+                RepositoryId = _repoId,
+                FindingFingerprint = $"extra_fp_{i}",
+                FindingType = FindingType.ProductionServiceExposed,
+                Severity = RiskSeverity.Low,
+                RiskScore = 20,
+                Title = $"Extra finding {i}",
+                Status = FindingStatus.Open,
+                CreatedAtUtc = DateTime.UtcNow
+            };
+            extraFindings.Add(f);
+            extraObs.Add(new ScanFindingObservation
+            {
+                FindingId = f.Id,
+                ScanJobId = job.Id,
+                WasObserved = true,
+                FullCoverageConfirmed = true,
+                ToolCoverageHash = "coverage_abc"
+            });
+        }
+        _dbContext.SecurityFindings.AddRange(extraFindings);
+        _dbContext.ScanFindingObservations.AddRange(extraObs);
+        await _dbContext.SaveChangesAsync();
+
+        var report = await _reportBuilder.BuildCanonicalReportAsync(job.Id);
+        report.Findings.Count.Should().BeLessThanOrEqualTo(ReportResourceBounds.MaxReportFindings);
     }
 
     [Fact]

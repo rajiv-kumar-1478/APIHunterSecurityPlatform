@@ -80,9 +80,11 @@ public class ScanReportBuilderService
         }
 
         // Observed findings for this job
+        // Bounded observations loading
         var observations = await _dbContext.ScanFindingObservations.AsNoTracking()
             .Include(o => o.Finding)
             .Where(o => o.ScanJobId == scanJobId && o.WasObserved)
+            .Take(ReportResourceBounds.MaxReportFindings)
             .ToListAsync(ct);
 
         var findingIds = observations.Select(o => o.FindingId).ToList();
@@ -106,6 +108,7 @@ public class ScanReportBuilderService
         var reportFindings = new List<ReportFindingItem>();
         var owaspDistribution = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var cweDistribution = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        long totalEvidenceBytesAccumulated = 0;
 
         foreach (var obs in observations)
         {
@@ -115,14 +118,33 @@ public class ScanReportBuilderService
             evidencesByFinding.TryGetValue(finding.Id, out var findingEvidences);
             remediationByFinding.TryGetValue(finding.Id, out var remediation);
 
-            var sanitizedEvidences = (findingEvidences ?? Enumerable.Empty<SecurityFindingEvidence>())
-                .Select(e => new SanitizedEvidenceItem(
-                    EvidenceFingerprint: e.EvidenceFingerprint,
-                    EvidenceReference: EvidenceSanitizer.SanitizeUrl(e.EvidenceReference ?? string.Empty),
-                    SafeEvidenceJson: EvidenceSanitizer.SanitizeEvidence(e.SafeEvidenceJson ?? "{}"),
-                    CreatedAtUtc: e.CreatedAtUtc
-                ))
-                .ToList();
+            var boundedEvidences = (findingEvidences ?? Enumerable.Empty<SecurityFindingEvidence>())
+                .Take(ReportResourceBounds.MaxEvidenceItemsPerFinding);
+
+            var sanitizedEvidences = new List<SanitizedEvidenceItem>();
+            foreach (var e in boundedEvidences)
+            {
+                var safeRef = EvidenceSanitizer.SanitizeUrl(e.EvidenceReference ?? string.Empty);
+                var safeJson = EvidenceSanitizer.SanitizeEvidence(e.SafeEvidenceJson ?? "{}");
+
+                int itemBytes = Encoding.UTF8.GetByteCount(safeRef) + Encoding.UTF8.GetByteCount(safeJson);
+                if (totalEvidenceBytesAccumulated + itemBytes <= ReportResourceBounds.MaxTotalEvidencePayloadBytes)
+                {
+                    sanitizedEvidences.Add(new SanitizedEvidenceItem(
+                        EvidenceFingerprint: e.EvidenceFingerprint,
+                        EvidenceReference: safeRef,
+                        SafeEvidenceJson: safeJson,
+                        CreatedAtUtc: e.CreatedAtUtc
+                    ));
+                    totalEvidenceBytesAccumulated += itemBytes;
+                }
+                else
+                {
+                    _logger.LogWarning("Report generation for job '{JobId}' exceeded total evidence byte ceiling of {Limit} bytes. Remaining evidence omitted.",
+                        scanJobId, ReportResourceBounds.MaxTotalEvidencePayloadBytes);
+                    break;
+                }
+            }
 
             // Extract CVEs and CWEs from evidence JSON safely
             var cveList = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -223,9 +245,10 @@ public class ScanReportBuilderService
 
         var generatedAtUtc = DateTime.UtcNow;
         var toolCoverageHash = observations.FirstOrDefault()?.ToolCoverageHash ?? "EMPTY_COVERAGE";
+        var completedAtStr = (job.CompletedAtUtc ?? job.CreatedAtUtc).ToString("O");
 
-        // Canonical deterministic provenance signature
-        var signaturePayload = $"ReportSignatureVersion=v1\nScanJobId={job.Id:D}\nTenantId={job.RequestedByUserId:D}\nTargetId={job.TargetId:D}\nCoverageHash={toolCoverageHash}\nGeneratedAtUtc={generatedAtUtc:O}";
+        // Canonical deterministic provenance signature based strictly on immutable scan metadata
+        var signaturePayload = $"ReportSignatureVersion=v1\nScanJobId={job.Id:D}\nTenantId={job.RequestedByUserId:D}\nTargetId={job.TargetId:D}\nCoverageHash={toolCoverageHash}\nScanCompletedAtUtc={completedAtStr}";
         var provenanceSignature = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signaturePayload))).ToLowerInvariant();
 
         var metadata = new ReportMetadata(

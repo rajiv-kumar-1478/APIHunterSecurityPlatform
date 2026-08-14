@@ -13,6 +13,14 @@ public enum SecurityReportFormat
     Html
 }
 
+public static class ReportResourceBounds
+{
+    public const int MaxReportFindings = 1000;
+    public const int MaxEvidenceItemsPerFinding = 20;
+    public const int MaxTotalEvidencePayloadBytes = 10 * 1024 * 1024; // 10 MiB
+    public const int MaxReportOutputBytes = 20 * 1024 * 1024; // 20 MiB
+}
+
 public sealed record ReportMetadata(
     Guid ReportId,
     string SignatureVersion,
