@@ -8,30 +8,34 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Platform.Application.Configuration;
 using Platform.Application.Persistence;
+using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
 using Platform.Domain.Entities;
 using Platform.Domain.Enums;
-using Platform.Application.Scanning;
 
 namespace Platform.Application.Services;
 
 /// <summary>
 /// Authoritative ingestion engine processing untrusted scanner outputs into trusted Phase 6 SecurityFinding records.
 /// Enforces canonical target scope authorization, deterministic deduplication fingerprints, evidence sanitization,
-/// timestamp bounds, and lifecycle state initialization.
+/// timestamp bounds, lifecycle state initialization, and authoritative Phase 6 Risk Engine scoring.
 /// </summary>
 public class ScanFindingIngestionEngine
 {
     private readonly IPlatformDbContext _dbContext;
+    private readonly RiskEngine _riskEngine;
     private readonly ILogger<ScanFindingIngestionEngine> _logger;
 
     public ScanFindingIngestionEngine(
         IPlatformDbContext dbContext,
-        ILogger<ScanFindingIngestionEngine> logger)
+        ILogger<ScanFindingIngestionEngine> logger,
+        RiskEngine? riskEngine = null)
     {
-        _dbContext = dbContext;
-        _logger = logger;
+        _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _riskEngine = riskEngine ?? new RiskEngine(new RiskPolicyOptions());
     }
 
     /// <summary>
@@ -58,7 +62,7 @@ public class ScanFindingIngestionEngine
         var newFindingsCount = 0;
         var updatedFindingsCount = 0;
 
-        // 1. Resolve Authorized Job Target Host
+        // 1. Resolve Authorized Job Target Host & Scheme
         if (!Uri.TryCreate(context.TargetUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? context.TargetUrl : $"https://{context.TargetUrl}", UriKind.Absolute, out var jobTargetUri))
         {
             _logger.LogError("Scan job '{JobId}' has invalid TargetUrl '{TargetUrl}'. Ingestion aborted.", context.JobId, context.TargetUrl);
@@ -74,6 +78,8 @@ public class ScanFindingIngestionEngine
             _logger.LogWarning("Job '{JobId}': candidate count {Count} truncated to bound {Limit}.", context.JobId, candidates.Count, bounds.MaxCandidateCount);
         }
 
+        var affectedFindings = new List<SecurityFinding>();
+
         foreach (var candidate in cappedCandidates)
         {
             // 3. Validate Candidate Structure
@@ -84,7 +90,7 @@ public class ScanFindingIngestionEngine
                 continue;
             }
 
-            // 4. Strict Canonical Scope Validation
+            // 4. Strict Canonical Scope Validation (Scheme, Host, Port)
             if (!Uri.TryCreate(candidate.TargetUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? candidate.TargetUrl : $"https://{candidate.TargetUrl}", UriKind.Absolute, out var candUri))
             {
                 outOfScopeCount++;
@@ -135,14 +141,15 @@ public class ScanFindingIngestionEngine
 
             // 9. Query Existing Finding for Idempotent Deduplication
             var existingFinding = await _dbContext.SecurityFindings
+                .Include(f => f.Evidences)
                 .FirstOrDefaultAsync(f => f.FindingFingerprint == fingerprint, ct);
 
-            Guid findingId;
+            SecurityFinding activeFinding;
 
             if (existingFinding != null)
             {
                 existingFinding.LastObservedAtUtc = observedAtUtc;
-                findingId = existingFinding.Id;
+                activeFinding = existingFinding;
                 updatedFindingsCount++;
             }
             else
@@ -158,7 +165,7 @@ public class ScanFindingIngestionEngine
                     Status = FindingStatus.Open, // Lifecycle state strictly locked to Open on ingestion
                     Title = safeTitle,
                     Description = safeDescription,
-                    RiskScore = 0, // Authoritative Risk Engine calculates risk score
+                    RiskScore = 0,
                     LifecycleVersion = 1,
                     FirstObservedAtUtc = observedAtUtc,
                     LastObservedAtUtc = observedAtUtc,
@@ -166,7 +173,7 @@ public class ScanFindingIngestionEngine
                 };
 
                 _dbContext.SecurityFindings.Add(newFinding);
-                findingId = newFinding.Id;
+                activeFinding = newFinding;
                 newFindingsCount++;
             }
 
@@ -188,13 +195,14 @@ public class ScanFindingIngestionEngine
             };
 
             var safeEvidenceJson = JsonSerializer.Serialize(evidenceData);
-            var evidenceFingerprintPayload = $"{findingId}:{candidate.ToolKey}:{candidate.EndpointPath}:{DateTime.UtcNow.Ticks}";
+            var evidenceFingerprintPayload = $"{activeFinding.Id}:{candidate.ToolKey}:{candidate.EndpointPath}:{DateTime.UtcNow.Ticks}";
             var evidenceFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(evidenceFingerprintPayload))).ToLowerInvariant();
 
             var evidence = new SecurityFindingEvidence
             {
                 Id = Guid.NewGuid(),
-                FindingId = findingId,
+                FindingId = activeFinding.Id,
+                Finding = activeFinding,
                 EvidenceType = FindingEvidenceType.DeterministicOccurrence,
                 DiscoverySource = DiscoveryType.DeterministicDetector,
                 EvidenceFingerprint = evidenceFingerprint,
@@ -204,13 +212,47 @@ public class ScanFindingIngestionEngine
             };
 
             _dbContext.SecurityFindingEvidences.Add(evidence);
+
+            // 11. Authoritative Risk Engine Calculation
+            var allEvidences = (activeFinding.Evidences ?? Enumerable.Empty<SecurityFindingEvidence>()).Concat(new[] { evidence }).ToList();
+            var riskResult = _riskEngine.CalculateFindingRisk(activeFinding, allEvidences);
+            activeFinding.RiskScore = riskResult.Score;
+            activeFinding.Severity = riskResult.Severity;
+            activeFinding.RiskFactorBreakdownJson = riskResult.ToJson();
+
+            if (!affectedFindings.Contains(activeFinding))
+            {
+                affectedFindings.Add(activeFinding);
+            }
+
             accepted++;
         }
 
-        if (newFindingsCount > 0 || updatedFindingsCount > 0)
+        // 12. Record Audit Event for Batch Ingestion
+        _dbContext.AuditEvents.Add(new AuditEvent
         {
-            await _dbContext.SaveChangesAsync(ct);
-        }
+            Id = Guid.NewGuid(),
+            EventCode = AuditEventCode.ScanFindingsIngested,
+            CorrelationId = context.JobId.ToString("N"),
+            ResourceType = "SecurityScanJob",
+            ResourceId = context.JobId.ToString(),
+            CreatedAtUtc = DateTime.UtcNow,
+            Metadata = JsonSerializer.Serialize(new
+            {
+                jobId = context.JobId,
+                repositoryId = context.RepositoryId,
+                targetId = context.TargetId,
+                totalReceived,
+                accepted,
+                newFindingsCreated = newFindingsCount,
+                existingFindingsUpdated = updatedFindingsCount,
+                outOfScopeDiscarded = outOfScopeCount,
+                invalidDiscarded = invalidCount
+            })
+        });
+
+        // 13. Atomic Commit
+        await _dbContext.SaveChangesAsync(ct);
 
         _logger.LogInformation("Scan finding ingestion complete for job '{JobId}': {Accepted}/{Total} accepted ({New} new, {Updated} updated, {OutOfScope} out-of-scope, {Invalid} invalid).",
             context.JobId, accepted, totalReceived, newFindingsCount, updatedFindingsCount, outOfScopeCount, invalidCount);

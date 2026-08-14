@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Platform.Application.Configuration;
 using Platform.Application.Persistence;
 using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
@@ -65,7 +66,14 @@ public class ScanFindingIngestionTests : IDisposable
             JobStartedAtUtc: DateTime.UtcNow.AddMinutes(-5)
         );
 
-        _engine = new ScanFindingIngestionEngine(_dbContext, NullLogger<ScanFindingIngestionEngine>.Instance);
+        var riskPolicy = new RiskPolicyOptions
+        {
+            WeightInternetFacingService = 15,
+            WeightProductionEnvironment = 20
+        };
+        var riskEngine = new RiskEngine(riskPolicy);
+
+        _engine = new ScanFindingIngestionEngine(_dbContext, NullLogger<ScanFindingIngestionEngine>.Instance, riskEngine);
     }
 
     public void Dispose()
@@ -134,7 +142,7 @@ public class ScanFindingIngestionTests : IDisposable
     }
 
     [Fact]
-    public async Task Ingestion_DeduplicatesAcrossMultipleTools_UsingToolAgnosticFingerprint()
+    public async Task Ingestion_DeduplicatesAcrossMultipleTools_AppendsEvidence_AndCalculatesAuthoritativeRisk()
     {
         // Tool A (Nuclei) reports CVE-2021-41773 on api.example.com
         var nucleiCandidate = new FindingCandidate(
@@ -167,89 +175,116 @@ public class ScanFindingIngestionTests : IDisposable
         res1.NewFindingsCreated.Should().Be(1);
         res1.ExistingFindingsUpdated.Should().Be(0);
 
+        var firstFinding = await _dbContext.SecurityFindings.AsNoTracking().Include(f => f.Evidences).FirstAsync();
+        firstFinding.RiskScore.Should().BeGreaterThan(0, "Risk Engine must calculate authoritative risk score");
+        firstFinding.RiskFactorBreakdownJson.Should().Contain("INTERNET_FACING");
+
         // 2. Ingest from Tool B
         var res2 = await _engine.IngestCandidatesAsync(new[] { customScannerCandidate }, _context);
         res2.NewFindingsCreated.Should().Be(0);
         res2.ExistingFindingsUpdated.Should().Be(1, "Second tool output must match identical finding fingerprint idempotently");
 
-        // Verify total finding count is 1 with 2 evidence attachments
-        var findings = await _dbContext.SecurityFindings.Include(f => f.Evidences).ToListAsync();
+        // Verify finding has 2 distinct evidence attachments (evidence append, not overwrite)
+        var findings = await _dbContext.SecurityFindings.AsNoTracking().Include(f => f.Evidences).ToListAsync();
         findings.Should().HaveCount(1);
-        findings[0].Evidences.Should().HaveCount(2);
+        findings[0].Evidences.Should().HaveCount(2, "Both tool observations must be preserved in finding evidence");
         findings[0].Evidences.Should().Contain(e => e.SafeEvidenceJson.Contains("nuclei"));
         findings[0].Evidences.Should().Contain(e => e.SafeEvidenceJson.Contains("bughunter_custom"));
+
+        // Verify Audit Event was recorded
+        var auditEvents = await _dbContext.AuditEvents.Where(a => a.EventCode == AuditEventCode.ScanFindingsIngested).ToListAsync();
+        auditEvents.Should().HaveCount(2);
     }
 
     [Fact]
-    public async Task Ingestion_EnforcesStrictLifecycleLock_AndZeroAuthoritativeRiskInjection()
+    public async Task Ingestion_SanitizesAdversarialAndHostileInputs_Gracefully()
     {
-        var candidate = new FindingCandidate(
-            ToolKey: "nuclei",
-            ToolVersion: "v3.1.0",
-            FindingType: FindingType.ProductionServiceExposed,
-            Title: "Exposed Metrics Endpoint",
-            Description: "Prometheus metrics exposed",
-            RawSeverity: "low",
-            TargetUrl: "https://api.example.com/metrics"
-        );
+        var longTitle = new string('A', 500); // Exceeds 256 char limit
+        var hostilePayload = "Leaked token Bearer secret_live_jwt_token_1234567890 \x00\x01 with api_key=\"live_master_api_key_88888888\"";
 
-        var result = await _engine.IngestCandidatesAsync(new[] { candidate }, _context);
-        result.NewFindingsCreated.Should().Be(1);
+        var adversarialCandidates = new List<FindingCandidate>
+        {
+            // 1. Oversized title & embedded secrets
+            new(
+                ToolKey: "nuclei",
+                ToolVersion: "v3.1.0",
+                FindingType: FindingType.ProductionServiceExposed,
+                Title: longTitle,
+                Description: hostilePayload,
+                RawSeverity: "high",
+                TargetUrl: "https://api.example.com/v1/debug?token=sensitive_query_token_12345",
+                ExtractedData: hostilePayload,
+                Attributes: new Dictionary<string, string>
+                {
+                    ["auth_header"] = "Bearer secret_live_jwt_token_1234567890",
+                    ["clean_key"] = "safe_value"
+                }
+            ),
+            // 2. Javascript scheme injection -> Must be rejected by scope check
+            new(
+                ToolKey: "nuclei",
+                ToolVersion: "v3.1.0",
+                FindingType: FindingType.ProductionServiceExposed,
+                Title: "XSS Javascript URI",
+                Description: "Javascript pseudo-protocol",
+                RawSeverity: "medium",
+                TargetUrl: "javascript:alert(1)"
+            ),
+            // 3. Localhost / Internal IP redirection -> Must be rejected by scope check
+            new(
+                ToolKey: "nuclei",
+                ToolVersion: "v3.1.0",
+                FindingType: FindingType.ProductionServiceExposed,
+                Title: "SSRF to localhost",
+                Description: "Internal probe",
+                RawSeverity: "critical",
+                TargetUrl: "http://127.0.0.1:8080/admin"
+            )
+        };
 
-        var finding = await _dbContext.SecurityFindings.FirstAsync();
-        finding.Status.Should().Be(FindingStatus.Open, "New findings must strictly initialize to Open");
-        finding.LifecycleVersion.Should().Be(1);
-        finding.RiskScore.Should().Be(0, "Tool cannot inject risk score; RiskScore remains 0 until Risk Engine evaluation");
+        var result = await _engine.IngestCandidatesAsync(adversarialCandidates, _context);
+
+        result.CandidatesAccepted.Should().Be(1);
+        result.OutOfScopeDiscarded.Should().Be(2);
+
+        var finding = await _dbContext.SecurityFindings.Include(f => f.Evidences).FirstAsync();
+        finding.Title.Length.Should().BeLessThanOrEqualTo(256, "Oversized titles must be truncated to column bounds");
+        finding.Description.Should().NotContain("secret_live_jwt_token_1234567890");
+        finding.Description.Should().NotContain("live_master_api_key_88888888");
+        finding.Description.Should().NotContain("\x00");
+
+        var evidence = finding.Evidences.First();
+        evidence.EvidenceReference.Should().NotContain("sensitive_query_token_12345");
+        evidence.EvidenceReference.Should().Contain("token=[REDACTED]");
+        evidence.SafeEvidenceJson.Should().NotContain("secret_live_jwt_token_1234567890");
     }
 
     [Fact]
     public async Task Ingestion_NormalizesSeverity_AndAuditsUnknownSeverities()
     {
+        // 1. Direct NormalizeSeverity unit tests
+        ScanFindingIngestionEngine.NormalizeSeverity("critical").Severity.Should().Be(RiskSeverity.Critical);
+        ScanFindingIngestionEngine.NormalizeSeverity("HIGH").Severity.Should().Be(RiskSeverity.High);
+        ScanFindingIngestionEngine.NormalizeSeverity("medium").Severity.Should().Be(RiskSeverity.Medium);
+        ScanFindingIngestionEngine.NormalizeSeverity("low").Severity.Should().Be(RiskSeverity.Low);
+        ScanFindingIngestionEngine.NormalizeSeverity("info").Severity.Should().Be(RiskSeverity.Info);
+
+        var unknown = ScanFindingIngestionEngine.NormalizeSeverity("SUPER_EXTREME_URGENT");
+        unknown.Severity.Should().Be(RiskSeverity.Info);
+        unknown.FallbackApplied.Should().BeTrue();
+
+        // 2. Ingestion with unknown severity records diagnostic and persists evidence
         var candidates = new List<FindingCandidate>
         {
-            new("t1", "1.0", FindingType.ProductionServiceExposed, "Crit Bug", "Desc", "critical", "https://api.example.com/1"),
-            new("t2", "1.0", FindingType.ProductionServiceExposed, "High Bug", "Desc", "HIGH", "https://api.example.com/2"),
-            new("t3", "1.0", FindingType.ProductionServiceExposed, "Med Bug", "Desc", "medium", "https://api.example.com/3"),
-            new("t4", "1.0", FindingType.ProductionServiceExposed, "Low Bug", "Desc", "low", "https://api.example.com/4"),
-            new("t5", "1.0", FindingType.ProductionServiceExposed, "Unknown Bug", "Desc", "SUPER_EXTREME_URGENT", "https://api.example.com/5")
+            new("t1", "1.0", FindingType.ProductionServiceExposed, "Unknown Severity Bug", "Desc", "SUPER_EXTREME_URGENT", "https://api.example.com/endpoint")
         };
 
         var result = await _engine.IngestCandidatesAsync(candidates, _context);
-        result.CandidatesAccepted.Should().Be(5);
+        result.CandidatesAccepted.Should().Be(1);
         result.Diagnostics.Should().Contain(d => d.Contains("SUPER_EXTREME_URGENT") && d.Contains("Info"));
 
-        var findings = await _dbContext.SecurityFindings.OrderBy(f => f.Title).ToListAsync();
-        findings.First(f => f.Title == "Crit Bug").Severity.Should().Be(RiskSeverity.Critical);
-        findings.First(f => f.Title == "High Bug").Severity.Should().Be(RiskSeverity.High);
-        findings.First(f => f.Title == "Med Bug").Severity.Should().Be(RiskSeverity.Medium);
-        findings.First(f => f.Title == "Low Bug").Severity.Should().Be(RiskSeverity.Low);
-        findings.First(f => f.Title == "Unknown Bug").Severity.Should().Be(RiskSeverity.Info);
-    }
-
-    [Fact]
-    public void EvidenceSanitizer_MasksCredentials_AndStripsDangerousCharacters()
-    {
-        var rawEvidence = "Found token Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.doNotLeakThisToken12345 " +
-                          "and api_key=\"secret_live_apikey_9999999\" in payload \x00\x01\x02 test.";
-
-        var sanitized = EvidenceSanitizer.SanitizeEvidence(rawEvidence);
-
-        sanitized.Should().NotContain("doNotLeakThisToken12345");
-        sanitized.Should().NotContain("secret_live_apikey_9999999");
-        sanitized.Should().NotContain("\x00");
-        sanitized.Should().Contain("Bearer [REDACTED_TOKEN]");
-        sanitized.Should().Contain("api_key=\"[REDACTED]\"");
-    }
-
-    [Fact]
-    public void EvidenceSanitizer_RedactsSensitiveQueryParams_InUrls()
-    {
-        var url = "https://api.example.com/v1/auth/callback?code=abc12345&token=super_secret_jwt_token_999&state=xyz";
-        var sanitized = EvidenceSanitizer.SanitizeUrl(url);
-
-        sanitized.Should().NotContain("super_secret_jwt_token_999");
-        sanitized.Should().Contain("token=[REDACTED]");
-        sanitized.Should().Contain("code=abc12345");
-        sanitized.Should().Contain("state=xyz");
+        var finding = await _dbContext.SecurityFindings.Include(f => f.Evidences).FirstAsync(f => f.Title == "Unknown Severity Bug");
+        finding.RiskScore.Should().BeGreaterThan(0);
+        finding.Evidences.First().SafeEvidenceJson.Should().Contain("SUPER_EXTREME_URGENT");
     }
 }

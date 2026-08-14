@@ -128,7 +128,8 @@ public enum AuditEventCode
     ScanJobCancelled,
     ScanToolRegistered,
     ScanToolStatusChanged,
-    ScanProviderConfigured
+    ScanProviderConfigured,
+    ScanFindingsIngested
 }
 
 public enum SecurityScanJobStatus

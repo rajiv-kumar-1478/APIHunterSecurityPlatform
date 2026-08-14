@@ -176,9 +176,11 @@ public class ToolOutputParserTests
 
         var savedFinding = await dbContext.SecurityFindings.Include(f => f.Evidences).FirstAsync();
         savedFinding.Title.Should().Be("Apache Path Traversal RCE");
-        savedFinding.Severity.Should().Be(RiskSeverity.Critical);
+        savedFinding.RiskScore.Should().BeGreaterThan(0, "Platform Risk Engine must calculate authoritative score");
+        savedFinding.RiskFactorBreakdownJson.Should().Contain("INTERNET_FACING");
         savedFinding.Status.Should().Be(FindingStatus.Open);
         savedFinding.Evidences.Should().HaveCount(1);
         savedFinding.Evidences.First().SafeEvidenceJson.Should().Contain("cve-2021-41773");
+        savedFinding.Evidences.First().SafeEvidenceJson.Should().Contain("critical");
     }
 }
