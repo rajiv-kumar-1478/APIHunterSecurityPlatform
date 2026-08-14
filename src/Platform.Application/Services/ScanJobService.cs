@@ -74,7 +74,7 @@ public class ScanJobService
             ProviderKey = request.ProviderKey ?? "bughunter",
             CorrelationId = Guid.NewGuid().ToString("N"),
             CreatedAtUtc = DateTime.UtcNow,
-            Version = 1
+            JobVersion = 1
         };
 
         _dbContext.SecurityScanJobs.Add(scanJob);
@@ -209,9 +209,9 @@ public class ScanJobService
 
         EnsureUserAuthorizedForJob(job);
 
-        if (job.Version != expectedVersion)
+        if (job.JobVersion != expectedVersion)
         {
-            throw new DbUpdateConcurrencyException($"Concurrency conflict: scan job version is {job.Version}, expected {expectedVersion}.");
+            throw new DbUpdateConcurrencyException($"Concurrency conflict: scan job version is {job.JobVersion}, expected {expectedVersion}.");
         }
 
         if (job.Status is SecurityScanJobStatus.Completed or SecurityScanJobStatus.CompletedWithWarnings or SecurityScanJobStatus.Failed or SecurityScanJobStatus.Cancelled)
@@ -223,7 +223,7 @@ public class ScanJobService
         job.CancelledAtUtc = DateTime.UtcNow;
         job.FailureReason = $"Cancelled by user: {reason}";
         job.CurrentPhase = "Cancelled";
-        job.Version++;
+        job.JobVersion++;
 
         _dbContext.AuditEvents.Add(new AuditEvent
         {
@@ -285,7 +285,7 @@ public class ScanJobService
             CorrelationId = originalJob.CorrelationId,
             RetryOfJobId = originalJob.Id,
             CreatedAtUtc = DateTime.UtcNow,
-            Version = 1
+            JobVersion = 1
         };
 
         _dbContext.SecurityScanJobs.Add(retriedJob);
@@ -356,7 +356,7 @@ public class ScanJobService
             CancelledAtUtc: job.CancelledAtUtc,
             FailureReason: job.FailureReason,
             RetryOfJobId: job.RetryOfJobId,
-            Version: job.Version,
+            Version: job.JobVersion,
             ExecutionReceipt: receipt
         );
     }

@@ -324,9 +324,21 @@ try
         builder.Services.AddSingleton<IScanProviderSecretStore, ConfigurationScanProviderSecretStore>();
     }
 
-    // Phase 9 — Continuous Security Scan Campaigns
+    // Phase 9 — Continuous Security Scan Campaigns & Observability
+    builder.Services.Configure<CampaignSchedulerOptions>(builder.Configuration.GetSection(CampaignSchedulerOptions.SectionName));
     builder.Services.AddSingleton<ICampaignScheduleCalculator, CampaignScheduleCalculator>();
     builder.Services.AddScoped<IScanCampaignService, ScanCampaignService>();
+    builder.Services.AddScoped<ICampaignObservabilityService, CampaignObservabilityService>();
+
+    // SPEC-008 — Pluggable Scanner Tool Adapters & Registry
+    builder.Services.AddSingleton<Platform.Application.Scanning.Services.IFindingFingerprintService, Platform.Application.Scanning.Services.FindingFingerprintService>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.HttpxOutputParser>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.NucleiOutputParser>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.SubfinderOutputParser>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.HttpxAdapter>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.NucleiAdapter>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.SubfinderAdapter>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolRegistry, Platform.Application.Scanning.Adapters.ScanToolRegistry>();
 
 
 

@@ -41,7 +41,11 @@ public record FindingCandidate(
     DateTime? ObservedAtUtc = null,
     string? ContainerImageRepository = null,
     string? ContainerImageDigest = null,
-    string? Executable = null
+    string? Executable = null,
+    string? ParameterName = null,
+    string? VulnerableLocation = null,
+    string? RuleOrTemplateId = null,
+    string? RawEvidenceJson = null
 );
 
 /// <summary>

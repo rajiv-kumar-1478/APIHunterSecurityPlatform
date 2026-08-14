@@ -18,14 +18,71 @@ namespace Platform.Api.Controllers;
 public class ScanCampaignsController : ControllerBase
 {
     private readonly IScanCampaignService _campaignService;
+    private readonly ICampaignObservabilityService _observabilityService;
     private readonly ICurrentUserContext _currentUser;
 
     public ScanCampaignsController(
         IScanCampaignService campaignService,
+        ICampaignObservabilityService observabilityService,
         ICurrentUserContext currentUser)
     {
         _campaignService = campaignService ?? throw new ArgumentNullException(nameof(campaignService));
+        _observabilityService = observabilityService ?? throw new ArgumentNullException(nameof(observabilityService));
         _currentUser = currentUser ?? throw new ArgumentNullException(nameof(currentUser));
+    }
+
+    [HttpGet("health")]
+    public async Task<ActionResult<CampaignOperationalHealthDto>> GetHealth(CancellationToken ct)
+    {
+        var tenantId = ResolveTenantId();
+        var health = await _observabilityService.GetTenantHealthAsync(tenantId, ct);
+        return Ok(health);
+    }
+
+    [HttpGet("metrics")]
+    public async Task<ActionResult<CampaignWindowMetricsDto>> GetMetrics(
+        [FromQuery] string window = "24h",
+        CancellationToken ct = default)
+    {
+        var tenantId = ResolveTenantId();
+        var timeSpan = window.ToLowerInvariant() switch
+        {
+            "7d" => TimeSpan.FromDays(7),
+            "30d" => TimeSpan.FromDays(30),
+            _ => TimeSpan.FromHours(24)
+        };
+
+        var metrics = await _observabilityService.GetTenantWindowMetricsAsync(tenantId, timeSpan, ct);
+        return Ok(metrics);
+    }
+
+    [HttpGet("{id:guid}/history")]
+    public async Task<ActionResult<IReadOnlyList<CampaignExecutionHistoryEntryDto>>> GetExecutionHistory(
+        Guid id,
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        [FromQuery] DateTime? sinceUtc = null,
+        [FromQuery] SchedulerDecision? decision = null,
+        CancellationToken ct = default)
+    {
+        var tenantId = ResolveTenantId();
+        var history = await _observabilityService.GetCampaignExecutionHistoryAsync(
+            tenantId, id, page, pageSize, sinceUtc, decision, ct);
+        return Ok(history);
+    }
+
+    [HttpGet("{id:guid}/diagnostics")]
+    public async Task<ActionResult<CampaignDiagnosticsDto>> GetDiagnostics(Guid id, CancellationToken ct)
+    {
+        var tenantId = ResolveTenantId();
+        var diagnostics = await _observabilityService.GetCampaignDiagnosticsAsync(tenantId, id, ct);
+
+        if (diagnostics == null)
+        {
+            return NotFound(new { message = $"ScanCampaign '{id}' was not found for current tenant." });
+        }
+
+        return Ok(diagnostics);
     }
 
     [HttpPost]
@@ -203,7 +260,10 @@ public class ScanCampaignsController : ControllerBase
 
     private Guid ResolveTenantId()
     {
-        if (Request.Headers.TryGetValue("X-Tenant-ID", out var tenantHeader) &&
+        // Authenticated context is the authoritative tenant source.
+        // Only Platform Admins may impersonate another tenant via the X-Tenant-ID header.
+        if (_currentUser.IsPlatformAdmin &&
+            Request.Headers.TryGetValue("X-Tenant-ID", out var tenantHeader) &&
             Guid.TryParse(tenantHeader.ToString(), out var headerTenantId))
         {
             return headerTenantId;

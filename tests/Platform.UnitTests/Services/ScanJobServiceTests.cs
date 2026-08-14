@@ -90,7 +90,7 @@ public class ScanJobServiceTests
         job.Should().NotBeNull();
         job.TargetUrl.Should().Be("https://example.com");
         job.Status.Should().Be(SecurityScanJobStatus.Queued);
-        job.Version.Should().Be(1);
+        job.JobVersion.Should().Be(1);
     }
 
     [Fact]
@@ -133,7 +133,7 @@ public class ScanJobServiceTests
             TargetUrl = "https://example.com",
             Status = SecurityScanJobStatus.Queued,
             RequestedByUserId = Guid.Parse("ade4b0fc-dd14-498d-af34-2d7151b8a142"),
-            Version = 1
+            JobVersion = 1
         });
         await db.SaveChangesAsync();
 
@@ -144,7 +144,7 @@ public class ScanJobServiceTests
         var job = await service.CancelScanJobAsync(jobId, "User requested cancellation", 1);
 
         job.Status.Should().Be(SecurityScanJobStatus.Cancelled);
-        job.Version.Should().Be(2);
+        job.JobVersion.Should().Be(2);
         job.CancelledAtUtc.Should().NotBeNull();
     }
 
@@ -159,7 +159,7 @@ public class ScanJobServiceTests
             TargetUrl = "https://example.com",
             Status = SecurityScanJobStatus.Queued,
             RequestedByUserId = Guid.Parse("ade4b0fc-dd14-498d-af34-2d7151b8a142"),
-            Version = 2
+            JobVersion = 2
         });
         await db.SaveChangesAsync();
 

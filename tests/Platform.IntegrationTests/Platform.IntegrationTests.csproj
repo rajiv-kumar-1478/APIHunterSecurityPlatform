@@ -17,6 +17,17 @@
     <PackageReference Include="Moq" Version="4.20.72" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+
+    <!--
+      Phase 9.2 HARD GATE: PostgreSQL distributed concurrency proof.
+      These packages enable Testcontainers to spin up a real PostgreSQL instance,
+      providing the authoritative proof that two scheduler instances cannot dispatch
+      the same campaign occurrence. The EF Core In-Memory provider cannot provide
+      this proof (Microsoft explicitly warns it lacks real transaction/concurrency semantics).
+    -->
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.4.0" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,6 +36,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Platform.Api\Platform.Api.csproj" />
+    <ProjectReference Include="..\..\src\Platform.Infrastructure\Platform.Infrastructure.csproj" />
   </ItemGroup>
 
 </Project>

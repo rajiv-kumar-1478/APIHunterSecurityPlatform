@@ -217,7 +217,7 @@ public class SecurityScanControllerTests : IDisposable
             ScanProfile = SecurityScanProfileType.Recon,
             Status = SecurityScanJobStatus.Running,
             RequestedByUserId = _adminUserId,
-            Version = 1
+            JobVersion = 1
         };
 
         _dbContext.SecurityScanJobs.Add(runningJob);
@@ -255,7 +255,7 @@ public class SecurityScanControllerTests : IDisposable
             ScanProfile = SecurityScanProfileType.Standard,
             Status = SecurityScanJobStatus.Running,
             RequestedByUserId = tenantAUserId,
-            Version = 1
+            JobVersion = 1
         };
 
         _dbContext.SecurityScanJobs.Add(job);

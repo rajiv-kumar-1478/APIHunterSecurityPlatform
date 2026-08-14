@@ -9,6 +9,7 @@ using Platform.Infrastructure.Adapters.Detection;
 using Platform.Infrastructure.Adapters.GitHub;
 using Platform.Infrastructure.Adapters.ObjectStore;
 using Platform.Infrastructure.Persistence;
+using Platform.Infrastructure.Workers;
 using Platform.Worker.Workers;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -32,8 +33,10 @@ builder.Services.AddScoped<IPlatformDbContext>(sp => sp.GetRequiredService<Platf
 builder.Services.AddDataProtection();
 
 // Null audit service for worker context if no active user session
+builder.Services.AddScoped<WorkerUserContext>();
+builder.Services.AddScoped<ICurrentUserContext>(sp => sp.GetRequiredService<WorkerUserContext>());
+builder.Services.AddScoped<ICurrentUserContextProvider>(sp => sp.GetRequiredService<WorkerUserContext>());
 builder.Services.AddScoped<IAuditService, AuditService>();
-builder.Services.AddScoped<ICurrentUserContext, WorkerUserContext>();
 
 // Infrastructure Adapters
 builder.Services.AddHttpClient();
@@ -73,6 +76,21 @@ builder.Services.AddSingleton(riskPolicy);
 builder.Services.AddSingleton<RiskEngine>();
 builder.Services.AddScoped<SecurityFindingService>();
 
+// Phase 9 — Campaign Scheduler
+builder.Services.Configure<CampaignSchedulerOptions>(builder.Configuration.GetSection(CampaignSchedulerOptions.SectionName));
+builder.Services.AddScoped<ICampaignScheduleCalculator, CampaignScheduleCalculator>();
+builder.Services.AddScoped<ICampaignDispatchService, CampaignDispatchService>();
+
+// SPEC-008 — Pluggable Scanner Tool Adapters & Registry
+builder.Services.AddSingleton<Platform.Application.Scanning.Services.IFindingFingerprintService, Platform.Application.Scanning.Services.FindingFingerprintService>();
+builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.HttpxOutputParser>();
+builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.NucleiOutputParser>();
+builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.SubfinderOutputParser>();
+builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.HttpxAdapter>();
+builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.NucleiAdapter>();
+builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.SubfinderAdapter>();
+builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolRegistry, Platform.Application.Scanning.Adapters.ScanToolRegistry>();
+
 
 
 // Hosted Workers
@@ -82,13 +100,16 @@ builder.Services.AddHostedService<StaleJobSweepWorker>();
 builder.Services.AddHostedService<Platform.Infrastructure.Workers.AiInvestigationWorker>();
 builder.Services.AddHostedService<CredentialValidationWorker>();
 
+// Phase 9 — Campaign Scheduler + Recovery Worker
+builder.Services.AddHostedService<CampaignSchedulerWorker>();
+
 
 
 var host = builder.Build();
 host.Run();
 
 // Worker identity context stub for automated background jobs
-public class WorkerUserContext : ICurrentUserContext
+public class WorkerUserContext : ICurrentUserContext, ICurrentUserContextProvider
 {
     public Guid? UserId => null;
     public string? SessionId => null;

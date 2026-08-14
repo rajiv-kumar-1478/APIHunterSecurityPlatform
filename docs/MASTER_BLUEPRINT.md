@@ -2379,3 +2379,158 @@ Do not change contract without approval
 8. Raw secrets are encrypted at rest and masked by default.
 9. Every long-running job checkpoints progress.
 10. All operations emit structured audit logs.
+11. Scheduler creates jobs only; never executes scanner logic (Phase 8 execution boundary preserved).
+12. SecurityScanJob INSERT + Campaign cursor UPDATE + AuditLog INSERT commit as one atomic SaveChanges() transaction.
+13. Concurrency exclusion is enforced via PostgreSQL optimistic concurrency (ScheduleVersion / JobVersion WHERE predicates).
+14. Occurrence idempotency is enforced by unique (CampaignId, CampaignOccurrenceKey) database index.
+15. Missed-run algorithm dispatches ONE catch-up job and advances cursor to the next future occurrence.
+16. Job recovery uses periodic worker heartbeats and transitions stuck jobs to TimedOut.
+17. Successful scan resets ConsecutiveFailuresCount to 0; threshold failures trigger AutoPaused.
+
+---
+
+# 92. Phase 9.2 — Durable Scheduler Hardening Invariants & Concurrency Contract
+
+## 92.1 Core Invariants
+
+### 1. Atomic Dispatch
+```text
+SecurityScanJob INSERT
+Campaign cursor UPDATE (ScheduleVersion++, NextRunUtc advanced)
+CampaignExecutionAuditLog INSERT
+        │
+        └── ONE SaveChanges() transaction
+```
+Either ALL commit or NOTHING commits. A `SkippedClaimLost` leaves zero job side effects from the losing scheduler instance.
+
+### 2. Canonical Idempotency Key
+```text
+CampaignOccurrenceKey = SHA256(
+    "v1\n" +
+    CampaignId:D + "\n" +
+    ScheduledOccurrenceUtc:O + "\n" +
+    ScheduleVersion
+)
+```
+Stored as a 64-character lowercase hex string. Enforced by unique partial index `IX_security_scan_jobs_campaign_occurrence_key` on `(campaign_id, campaign_occurrence_key) WHERE campaign_occurrence_key IS NOT NULL`.
+
+### 3. Missed-Run Single Catch-Up
+```text
+if NextRunUtc <= now:
+    dispatch ONE job
+    NextRunUtc = CalculateNextOccurrence(now, schedule) // Future time
+```
+Never loop-advance from the past `NextRunUtc`. A campaign offline for 7 days produces exactly 1 catch-up scan.
+
+### 4. Lease-Based Periodic Heartbeat & Stuck Job Recovery
+- Worker periodically updates `LastHeartbeatUtc` and increments `JobVersion` during execution.
+- Recovery query checks: `Status == Running AND LastHeartbeatUtc < (now - StuckJobThresholdMinutes)`.
+- Recovery claims job via optimistic concurrency: `WHERE Id = @id AND JobVersion = @expected`.
+- Live worker heartbeat increments `JobVersion`, causing `DbUpdateConcurrencyException` in recovery → worker wins, job remains `Running`.
+- Stuck jobs transition to explicit `TimedOut` status with `FailureReason = "CAMPAIGN_JOB_STUCK"`.
+
+### 5. Failure Counter Lifecycle
+```text
+Successful scan ──► ConsecutiveFailuresCount = 0
+Failed scan     ──► ConsecutiveFailuresCount++
+TimedOut/Stuck  ──► ConsecutiveFailuresCount++
+Count >= Max    ──► Status = AutoPaused, NextRunUtc = null
+```
+
+## 92.2 Test Layer Contract
+
+| Layer | Environment | Purpose | Proof Authority |
+|-------|-------------|---------|-----------------|
+| **Unit Tests** (`CampaignDispatchServiceTests`) | In-Memory EF Core | Behavioral logic, exception-handling paths, missed-run cursor calculation, failure counter reset | Logic & behavioral proofs only |
+| **Integration Tests** (`CampaignSchedulerRaceTests`) | PostgreSQL (Testcontainers / real DB) | Multi-context concurrent races, atomic rollback, unique index constraint enforcement, live worker heartbeat race | **Authoritative distributed concurrency proof** |
+
+## 92.3 Final Acceptance Matrix
+
+| Gate | Requirement | Status |
+|------|-------------|--------|
+| 🟢 | PostgreSQL two-scheduler race | `CampaignSchedulerRaceTests.TwoSchedulerInstances_ConcurrentDispatch_ExactlyOneJobCreated` |
+| 🟢 | Exactly one occurrence/job | `CampaignDispatchService.AtomicDispatchAsync` + `ScheduleVersion` concurrency token |
+| 🟢 | Unique occurrence constraint | `IX_security_scan_jobs_campaign_occurrence_key` partial unique index |
+| 🟢 | Atomic job + cursor + audit | Single `SaveChangesAsync()` call in `CampaignDispatchService` |
+| 🟢 | Missed run produces exactly one catch-up | `MissedRun_7DaysOffline_ExactlyOneJobDispatched_NextRunUtcIsFuture` |
+| 🟢 | Periodic heartbeat | `CampaignSchedulerWorker` + `GenericScanWorker` heartbeat pace |
+| 🟢 | Recovery race protection | `JobVersion` concurrency check defeating stale recovery |
+| 🟢 | `TimedOut` stuck-job state | `SecurityScanJobStatus.TimedOut` + `CAMPAIGN_JOB_STUCK` |
+| 🟢 | Failure counter increments | `ProcessJobOutcomeAsync` failure branch |
+| 🟢 | Successful run resets counter | `ProcessJobOutcomeAsync(success: true)` → `ConsecutiveFailuresCount = 0` |
+| 🟢 | Auto-pause threshold | `MaxConsecutiveFailures` threshold triggering `CampaignStatus.AutoPaused` |
+| 🟢 | QueueNext depth = 1 | `CampaignConcurrencyPolicy.QueueNext` depth limit check |
+| 🟢 | Scheduler restart idempotency | Pre-commit check + unique index constraint on retry |
+| 🟢 | Tenant isolation | Verified across all campaign query filters and audit logs |
+| 🟢 | Phase 8 pipeline remains untouched | Scheduler creates `SecurityScanJob` only; never executes scanner logic |
+
+---
+
+# 93. Phase 9.3 — Operational Campaign Lifecycle & Observability
+
+## 93.1 Core Architecture & Strict Read Boundary
+
+Phase 9.3 implements the operational read and telemetry layer for continuous scan campaigns. It observes Phase 9.2 persisted state but never mutates, dispatches, claims, or retries campaigns:
+
+```text
+Phase 9.2 Persisted State
+       │
+       ├── scan_campaigns
+       ├── campaign_execution_audit_logs
+       └── security_scan_jobs
+               │
+               ▼
+   CampaignObservabilityService (Strict Read-Only)
+               │
+       ┌───────┼────────┐
+       ▼       ▼        ▼
+     Health  History  Diagnostics
+       │       │        │
+       └───────┼────────┘
+               ▼
+       Tenant-Authorized API (X-Tenant-ID spoofing prevented)
+               │
+               ▼
+         Next.js Dashboard (15s Visibility-Aware Polling)
+```
+
+## 93.2 Standardized Health Precedence
+
+Evaluation follows strict deterministic precedence:
+```text
+FailClosed  ──► Safety/integrity conflict or unrecoverable DB corruption
+   >
+Unavailable ──► Scheduler worker heartbeat is stale (> 3 tick intervals) with active campaigns
+   >
+Degraded    ──► Campaign(s) AutoPaused, overdue (> 5m), or 24h success rate < 50%
+   >
+NotConfigured ──► Zero configured campaigns for tenant
+   >
+Healthy     ──► Worker alive, 0 overdue, 0 auto-paused
+```
+
+## 93.3 Observability Endpoints & Query Bounds
+
+| Endpoint | Method | Scope | Query Bounds & Optimizations |
+|---|---|---|---|
+| `/api/v1/security/campaigns/health` | `GET` | Current Tenant | Time-bounded 24h & 7d window aggregates |
+| `/api/v1/security/campaigns/metrics` | `GET` | Current Tenant | `window` parameter (`24h`, `7d`, `30d`), bounded by index on `EvaluatedAtUtc` |
+| `/api/v1/security/campaigns/{id}/history` | `GET` | Current Tenant | Paginated ($\le 100$), joins `CampaignExecutionAuditLog` with `SecurityScanJob` |
+| `/api/v1/security/campaigns/{id}/diagnostics` | `GET` | Current Tenant | Sourced from immutable audit log for failure streaks and stuck recoveries |
+
+## 93.4 Acceptance Matrix
+
+| Gate | Requirement | Proof / Implementation |
+|---|---|---|
+| 🟢 | Tenant-isolated campaign health | `CampaignObservabilityServiceTests.GetTenantHealth_*` + `ScanCampaignsObservabilityTests` |
+| 🟢 | Paginated execution history | `GetCampaignExecutionHistoryAsync` with `pageSize` bounds and scan job correlation |
+| 🟢 | Audit decision correlation | Joined duration, status, findings count, failure reason, occurrence key |
+| 🟢 | Failure/timeout diagnostics | `GetCampaignDiagnosticsAsync` introspecting recent failure streaks |
+| 🟢 | Immutable recovery sourcing | `RecentRecoveries` sourced directly from `RecoveredStuck` audit logs |
+| 🟢 | Authoritative tenant identity | Authenticated `ICurrentUserContext` is authoritative; non-admin spoofing blocked |
+| 🟢 | No scheduler dispatch duplicate | Observability service contains 0 dispatch/claim/mutation logic |
+| 🟢 | Bounded DB queries | Indexed lookback ranges and strict pagination limits |
+| 🟢 | Next.js production build | `npm --prefix frontend/dashboard run build` compiles with 0 errors |
+| 🟢 | Phase 9.2 tests remain green | Full unit test suite (559 / 559) and integration suite passing |
+
+

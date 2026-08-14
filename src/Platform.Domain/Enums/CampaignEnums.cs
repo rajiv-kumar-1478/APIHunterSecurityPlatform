@@ -53,5 +53,16 @@ public enum SchedulerDecision
     SkippedQueueFull = 5,
     SkippedTargetDisabled = 6,
     SkippedProfileInvalid = 7,
-    SkippedScopeUnapproved = 8
+    SkippedScopeUnapproved = 8,
+
+    /// <summary>
+    /// Optimistic concurrency race lost: another scheduler instance claimed this occurrence first.
+    /// The current instance discards its work with zero duplicate jobs created.
+    /// </summary>
+    SkippedClaimLost = 9,
+
+    /// <summary>
+    /// Stuck job recovered: a Running job exceeded its heartbeat lease and was transitioned to TimedOut.
+    /// </summary>
+    RecoveredStuck = 10
 }

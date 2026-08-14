@@ -263,7 +263,7 @@ public class ScanExperienceAndObservabilityTests : IDisposable
             ScanProfile = SecurityScanProfileType.Standard,
             Status = SecurityScanJobStatus.Running,
             RequestedByUserId = tenantAUser,
-            Version = 1
+            JobVersion = 1
         };
 
         _dbContext.SecurityScanJobs.Add(job);

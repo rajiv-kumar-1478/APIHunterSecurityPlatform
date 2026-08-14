@@ -266,3 +266,24 @@ public sealed record ScanDiff(
     DateTime GeneratedAtUtc
 );
 
+public sealed record ScanExecutionContext(
+    Guid ScanJobId,
+    string TargetUrl,
+    SecurityScanProfileType Profile,
+    Guid TenantId,
+    IReadOnlyDictionary<string, string>? ProviderSecrets = null,
+    IReadOnlyDictionary<string, string>? AdditionalOptions = null
+);
+
+public sealed record ToolExecutionRawOutput(
+    string ToolKey,
+    string Version,
+    int ExitCode,
+    string? StandardOutput,
+    string? StandardError,
+    long OutputSizeBytes,
+    long DurationMs,
+    string? ArtifactReference = null
+);
+
+

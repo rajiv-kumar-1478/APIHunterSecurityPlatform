@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel.DataAnnotations;
 using Platform.Domain.Enums;
 
 namespace Platform.Domain.Entities;
@@ -56,9 +57,33 @@ public class SecurityScanJob
     public string TriggeredBy { get; set; } = "Manual";
 
     /// <summary>
-    /// EF Core Optimistic Concurrency Token
+    /// EF Core Optimistic Concurrency Token for job-level mutations (e.g. recovery race).
+    /// Recovery UPDATE includes WHERE JobVersion = @expected; live worker heartbeat increments this,
+    /// causing a DbUpdateConcurrencyException in the recovery path → recovery loses the race safely.
     /// </summary>
-    public int Version { get; set; } = 1;
+    [ConcurrencyCheck]
+    public int JobVersion { get; set; } = 1;
+
+    /// <summary>
+    /// Identifies which worker instance picked up and started this job.
+    /// Set at job start; used for observability and stuck-job attribution.
+    /// </summary>
+    public string? WorkerInstanceId { get; set; }
+
+    /// <summary>
+    /// Last UTC timestamp at which the executing worker confirmed liveness.
+    /// Updated periodically (not just at start) by GenericScanWorker.
+    /// Recovery considers a job stuck when: Status=Running AND LastHeartbeatUtc &lt; (now - threshold).
+    /// </summary>
+    public DateTime? LastHeartbeatUtc { get; set; }
+
+    /// <summary>
+    /// Deterministic idempotency key for scheduled occurrences.
+    /// SHA-256( CampaignId + ScheduledOccurrenceUtc."O" + ScheduleVersion ).
+    /// Null for manual/run-now jobs. A unique index on (CampaignId, CampaignOccurrenceKey)
+    /// prevents duplicate dispatch on scheduler retry after an ambiguous failure.
+    /// </summary>
+    public string? CampaignOccurrenceKey { get; set; }
 
     // Navigation properties
     public Repository? Repository { get; set; }

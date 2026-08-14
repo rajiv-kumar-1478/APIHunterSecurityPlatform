@@ -89,3 +89,16 @@ public sealed record CampaignRunNowResult(
     string Reason,
     DateTime EvaluatedAtUtc
 );
+
+/// <summary>
+/// Summary of outcomes from a single scheduler polling tick across all due campaigns.
+/// </summary>
+public sealed record CampaignSchedulerTickResult(
+    int CampaignsEvaluated,
+    int Dispatched,
+    int Skipped,
+    int ClaimLost,
+    int Errors,
+    DateTime TickStartUtc,
+    DateTime TickEndUtc
+);

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using Platform.Domain.Enums;
 
 namespace Platform.Domain.Entities;
@@ -79,7 +80,10 @@ public class ScanCampaign
 
     /// <summary>
     /// Monotonically increasing version token for optimistic concurrency and stale scheduler dispatch rejection.
+    /// Configured as an EF Core concurrency token: the scheduler UPDATE includes WHERE ScheduleVersion = @expected.
+    /// A DbUpdateConcurrencyException means another instance claimed this campaign first → SkippedClaimLost.
     /// </summary>
+    [ConcurrencyCheck]
     public long ScheduleVersion { get; set; } = 1;
 
     /// <summary>
@@ -126,6 +130,13 @@ public class ScanCampaign
     /// Record last update timestamp in UTC.
     /// </summary>
     public DateTime? UpdatedAtUtc { get; set; }
+
+    /// <summary>
+    /// Idempotency key for the most recently claimed scheduled occurrence.
+    /// Computed as SHA-256( CampaignId + ScheduledOccurrenceUtc."O" + ScheduleVersion ) before dispatch.
+    /// A matching key on an existing SecurityScanJob means the occurrence was already dispatched (retry-safe).
+    /// </summary>
+    public string? LastCampaignOccurrenceKey { get; set; }
 
     /// <summary>
     /// Audit log history of scheduler decisions and manual triggers.

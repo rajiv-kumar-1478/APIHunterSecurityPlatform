@@ -734,12 +734,32 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.HasIndex(sj => sj.Status);
             e.HasIndex(sj => sj.TargetUrl);
             e.HasIndex(sj => sj.CreatedAtUtc);
+            e.HasIndex(sj => sj.CampaignId);
+
+            // Phase 9.2 idempotency gate: prevents duplicate dispatch on scheduler retry
+            // after ambiguous failures. Partial index (WHERE campaign_occurrence_key IS NOT NULL)
+            // avoids indexing manual/run-now jobs that have no occurrence key.
+            e.HasIndex(sj => new { sj.CampaignId, sj.CampaignOccurrenceKey })
+             .IsUnique()
+             .HasFilter("campaign_occurrence_key IS NOT NULL")
+             .HasDatabaseName("IX_security_scan_jobs_campaign_occurrence_key");
+
             e.Property(sj => sj.TargetUrl).HasMaxLength(1024).IsRequired();
             e.Property(sj => sj.ProviderKey).HasMaxLength(100).IsRequired();
             e.Property(sj => sj.CorrelationId).HasMaxLength(100).IsRequired();
+            e.Property(sj => sj.TriggeredBy).HasMaxLength(100).IsRequired();
             e.Property(sj => sj.ScanProfile).HasConversion<string>().HasMaxLength(50);
             e.Property(sj => sj.Status).HasConversion<string>().HasMaxLength(50);
-            e.Property(sj => sj.Version).IsConcurrencyToken();
+            e.Property(sj => sj.WorkerInstanceId).HasMaxLength(200);
+            e.Property(sj => sj.CampaignOccurrenceKey).HasMaxLength(64);
+
+            // Phase 9.2: JobVersion is the optimistic concurrency token for recovery races.
+            // Recovery UPDATE includes WHERE JobVersion = @expected; a live worker that
+            // heartbeats (incrementing JobVersion) causes DbUpdateConcurrencyException,
+            // defeating the recovery attempt — correct behavior.
+            e.Property(sj => sj.JobVersion)
+             .HasColumnName("JobVersion")
+             .IsConcurrencyToken();
 
             e.HasOne(sj => sj.Target)
              .WithMany()
@@ -836,7 +856,15 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.Property(c => c.Description).HasMaxLength(2000);
             e.Property(c => c.TimeZoneId).HasMaxLength(100).IsRequired();
             e.Property(c => c.CronExpression).HasMaxLength(100);
-            e.Property(c => c.ScheduleVersion).IsRequired();
+            e.Property(c => c.LastCampaignOccurrenceKey).HasMaxLength(64);
+
+            // Phase 9.2: ScheduleVersion is the optimistic concurrency token for scheduler dispatch.
+            // The scheduler UPDATE includes WHERE ScheduleVersion = @expected; two concurrent
+            // schedulers racing on the same campaign → exactly one wins, the other gets
+            // DbUpdateConcurrencyException → SkippedClaimLost, zero side effects.
+            e.Property(c => c.ScheduleVersion)
+             .IsRequired()
+             .IsConcurrencyToken();
 
             e.HasOne(c => c.Repository)
              .WithMany()

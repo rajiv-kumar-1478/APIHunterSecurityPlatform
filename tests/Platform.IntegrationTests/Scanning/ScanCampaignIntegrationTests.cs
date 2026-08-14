@@ -9,8 +9,10 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 using Platform.Api.Controllers;
+using Platform.Application.Configuration;
 using Platform.Application.Scanning.Contracts;
 using Platform.Application.Services;
 using Platform.Domain.Contracts;
@@ -76,8 +78,12 @@ public class ScanCampaignIntegrationTests : IDisposable
         var mockUser = new Mock<ICurrentUserContext>();
         mockUser.Setup(u => u.UserId).Returns(userId);
         mockUser.Setup(u => u.IsAuthenticated).Returns(true);
+        mockUser.Setup(u => u.IsPlatformAdmin).Returns(true);
 
-        var controller = new ScanCampaignsController(_service, mockUser.Object)
+        var options = Options.Create(new CampaignSchedulerOptions());
+        var obsService = new CampaignObservabilityService(_dbContext, options, NullLogger<CampaignObservabilityService>.Instance);
+
+        var controller = new ScanCampaignsController(_service, obsService, mockUser.Object)
         {
             ControllerContext = new ControllerContext
             {
