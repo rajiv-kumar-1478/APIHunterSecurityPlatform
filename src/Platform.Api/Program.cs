@@ -356,6 +356,7 @@ try
     builder.Services.AddSingleton<Platform.Application.Scanning.Orchestration.IDeploymentConcurrencyGate, Platform.Application.Scanning.Orchestration.DeploymentConcurrencyGate>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Orchestration.IDeploymentScanOrchestrator, Platform.Application.Scanning.Orchestration.DeploymentScanOrchestrator>();
     builder.Services.AddScoped<Platform.Application.Scanning.Audit.IScanPlanAuditService, Platform.Application.Scanning.Audit.ScanPlanAuditService>();
+    builder.Services.AddScoped<Platform.Application.Scanning.Execution.IScanExecutionEngine, Platform.Application.Scanning.Execution.ScanExecutionEngine>();
 
 
 

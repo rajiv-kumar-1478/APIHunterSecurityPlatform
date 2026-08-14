@@ -28,6 +28,7 @@ public class SecurityScanController : ControllerBase
     private readonly ScanReportBuilderService _reportBuilder;
     private readonly SecurityReportFormatterRegistry _formatterRegistry;
     private readonly Platform.Application.Scanning.Audit.IScanPlanAuditService _auditService;
+    private readonly Platform.Application.Scanning.Execution.IScanExecutionEngine _executionEngine;
 
     public SecurityScanController(
         ScanJobService scanJobService,
@@ -37,6 +38,7 @@ public class SecurityScanController : ControllerBase
         ScanPostExecutionProcessor postProcessor,
         ScanReportBuilderService reportBuilder,
         Platform.Application.Scanning.Audit.IScanPlanAuditService? auditService = null,
+        Platform.Application.Scanning.Execution.IScanExecutionEngine? executionEngine = null,
         SecurityReportFormatterRegistry? formatterRegistry = null)
     {
         _scanJobService = scanJobService;
@@ -46,6 +48,7 @@ public class SecurityScanController : ControllerBase
         _postProcessor = postProcessor;
         _reportBuilder = reportBuilder;
         _auditService = auditService!;
+        _executionEngine = executionEngine!;
         _formatterRegistry = formatterRegistry ?? new SecurityReportFormatterRegistry();
     }
 
@@ -295,6 +298,19 @@ public class SecurityScanController : ControllerBase
         }
 
         return Ok(provenance);
+    }
+
+    [HttpGet("jobs/{id:guid}/invocations")]
+    public async Task<ActionResult<Platform.Application.Scanning.Execution.Contracts.ScanJobExecutionSummaryDto>> GetInvocations(Guid id, CancellationToken ct)
+    {
+        var tenantId = ResolveTenantId();
+        var summary = await _executionEngine.GetExecutionSummaryAsync(id, tenantId, ct);
+        if (summary == null)
+        {
+            return NotFound(new { message = $"Scan tool execution summary for job '{id}' was not found for current tenant." });
+        }
+
+        return Ok(summary);
     }
 
     private Guid ResolveTenantId()

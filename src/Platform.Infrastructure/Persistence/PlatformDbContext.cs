@@ -66,8 +66,9 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
     public DbSet<ScanCampaign> ScanCampaigns => Set<ScanCampaign>();
     public DbSet<CampaignExecutionAuditLog> CampaignExecutionAuditLogs => Set<CampaignExecutionAuditLog>();
 
-    // SPEC-008.9 Scan Plan Audit DbSets
+    // SPEC-008.9 & 008.10 Scan Plan & Invocation DbSets
     public DbSet<ScanPlanAuditRecord> ScanPlanAudits => Set<ScanPlanAuditRecord>();
+    public DbSet<ScanToolInvocationRecord> ScanToolInvocations => Set<ScanToolInvocationRecord>();
 
 
 
@@ -921,6 +922,22 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.Property(a => a.PlannerVersion).HasMaxLength(50).IsRequired();
             e.Property(a => a.TargetKind).HasMaxLength(50).IsRequired();
             e.Property(a => a.Profile).HasMaxLength(50).IsRequired();
+        });
+
+        // SPEC-008.10 ScanToolInvocationRecord
+        modelBuilder.Entity<ScanToolInvocationRecord>(e =>
+        {
+            e.ToTable("scan_tool_invocations");
+            e.HasKey(i => i.Id);
+            e.HasIndex(i => new { i.ScanJobId, i.ToolKey });
+            e.HasIndex(i => new { i.TenantId, i.StartedAtUtc });
+            e.Property(i => i.ToolKey).HasMaxLength(100).IsRequired();
+            e.Property(i => i.ToolVersion).HasMaxLength(50).IsRequired();
+            e.Property(i => i.ContainerImageDigest).HasMaxLength(128).IsRequired();
+            e.Property(i => i.PlanHash).HasMaxLength(128).IsRequired();
+            e.Property(i => i.RegistrySnapshotHash).HasMaxLength(128).IsRequired();
+            e.Property(i => i.ExecutionPhase).HasMaxLength(50).IsRequired();
+            e.Property(i => i.Status).HasMaxLength(50).IsRequired();
         });
     }
 

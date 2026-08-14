@@ -67,8 +67,9 @@ public interface IPlatformDbContext
     DbSet<ScanCampaign> ScanCampaigns { get; }
     DbSet<CampaignExecutionAuditLog> CampaignExecutionAuditLogs { get; }
 
-    // SPEC-008.9 Scan Plan Audit DbSets
+    // SPEC-008.9 & 008.10 Scan Plan & Invocation DbSets
     DbSet<ScanPlanAuditRecord> ScanPlanAudits { get; }
+    DbSet<ScanToolInvocationRecord> ScanToolInvocations { get; }
 
     Microsoft.EntityFrameworkCore.ChangeTracking.ChangeTracker ChangeTracker { get; }
 
