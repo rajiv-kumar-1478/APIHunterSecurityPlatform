@@ -341,6 +341,7 @@ try
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.SubfinderAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.JsMinerAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolRegistry, Platform.Application.Scanning.Adapters.ScanToolRegistry>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsDiscoveryEngine, Platform.Application.Scanning.JavaScript.JsDiscoveryEngine>();
 
 
 
