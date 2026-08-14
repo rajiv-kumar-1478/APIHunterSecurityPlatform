@@ -99,6 +99,7 @@ builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsAstAna
 builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsSecretAnalyzer, Platform.Application.Scanning.JavaScript.JsSecretAnalyzer>();
 builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsDataFlowAnalyzer, Platform.Application.Scanning.JavaScript.JsDataFlowAnalyzer>();
 builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IUnifiedJsAnalyzer, Platform.Application.Scanning.JavaScript.UnifiedJsAnalyzer>();
+builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsAiEnrichmentService, Platform.Application.Scanning.JavaScript.JsAiEnrichmentService>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Verification.IVerificationPlanner, Platform.Application.Scanning.Verification.VerificationPlanner>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Orchestration.IDeploymentConcurrencyGate, Platform.Application.Scanning.Orchestration.DeploymentConcurrencyGate>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Orchestration.IDeploymentScanOrchestrator, Platform.Application.Scanning.Orchestration.DeploymentScanOrchestrator>();
