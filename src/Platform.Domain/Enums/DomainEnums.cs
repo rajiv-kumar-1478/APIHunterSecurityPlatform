@@ -147,9 +147,20 @@ public enum SecurityScanJobStatus
 
 public enum SecurityScanProfileType
 {
-    Recon,
-    WebAssessment,
-    FullAssessment
+    Recon = 0,
+    WebAssessment = 1,
+    Standard = 1,
+    FullAssessment = 2,
+    Deep = 2
+}
+
+public enum ToolOutputFormat
+{
+    Json,
+    JsonLines,
+    Sarif,
+    Xml,
+    PlainText
 }
 
 public enum ToolCapability
