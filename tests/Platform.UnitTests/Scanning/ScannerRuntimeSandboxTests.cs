@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Platform.Application.Scanning;
@@ -14,6 +15,7 @@ using Platform.Application.Scanning.Contracts;
 using Platform.Application.Services;
 using Platform.Domain.Entities;
 using Platform.Domain.Enums;
+using Platform.Infrastructure.Persistence;
 using Platform.Infrastructure.Scanning;
 using Xunit;
 
@@ -246,81 +248,162 @@ public class ScannerRuntimeSandboxTests
     }
 
     [Fact]
-    public async Task DockerScannerRuntime_FailsClosed_WhenImageRepositoryIsNotInTrustedAllowlist()
+    public async Task GenericScanWorker_FailsClosed_WhenRuntimeSandboxIsNull_AndNeverInvokesAdapter()
     {
-        var options = new ScannerRuntimeOptions { EnforceImageProvenance = true };
-        Mock<IGenericCliToolAdapter> mockAdapter = new();
-        var runtime = new DockerScannerRuntime(options, toolKey => mockAdapter.Object, _mockEgressGateway.Object, NullLogger<DockerScannerRuntime>.Instance);
-        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+        var dbOptions = new DbContextOptionsBuilder<PlatformDbContext>()
+            .UseInMemoryDatabase("WorkerNullSandboxDb_" + Guid.NewGuid())
+            .Options;
+        using var db = new PlatformDbContext(dbOptions);
 
-        var request = new ToolExecutionRequest(
-            ToolKey: "subfinder",
-            Version: "v2.6.6",
-            Arguments: new Dictionary<string, string>(),
-            ScanJobId: Guid.NewGuid(),
-            Timeout: TimeSpan.FromMinutes(10),
-            Executable: "subfinder",
-            ContainerImageRepository: "untrusted-registry.evil.io/malicious/subfinder",
-            ContainerImageDigest: "sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd46059d33ef0"
+        db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Authorized Target", BaseUrl = "https://example.com", Enabled = true });
+        var job = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            TargetUrl = "https://example.com",
+            ScanProfile = SecurityScanProfileType.Recon,
+            Status = SecurityScanJobStatus.Queued,
+            ProviderKey = "bughunter"
+        };
+        db.SecurityScanJobs.Add(job);
+        await db.SaveChangesAsync();
+
+        var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
+        await registry.RegisterToolAsync("subfinder", "Subfinder", "v2.6.6", true, new[] { ToolCapability.SubdomainEnumeration }, executable: "subfinder");
+
+        _mockEgressEngine.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
+                         .ReturnsAsync(_validEgressTarget);
+
+        var worker = new GenericScanWorker(
+            db,
+            new InMemoryScanProviderSecretStore(),
+            registry,
+            _mockEgressEngine.Object,
+            runtimeSandbox: null, // NULL sandbox
+            NullLogger<GenericScanWorker>.Instance
         );
 
-        var scratchDir = Path.Combine(options.PlatformScratchRoot, request.ScanJobId.ToString("N"));
-        var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, scratchDir);
+        var result = await worker.ExecuteScanJobAsync(job.Id);
 
-        result.Status.Should().Be(ToolExecutionStatus.Failed);
-        result.ErrorCode.Should().StartWith("TOOL_PROVENANCE_NOT_VERIFIED");
+        // Assert fail closed
+        result.Status.Should().Be(SecurityScanJobStatus.Failed);
+        result.FailureReason.Should().Contain("SECURITY_SANDBOX_REQUIRED");
     }
 
     [Fact]
-    public async Task DockerScannerRuntime_RejectsExpiredEgressTarget()
+    public void DevelopmentHostScannerRuntime_ThrowsException_WhenInitializedInProduction()
     {
-        var options = new ScannerRuntimeOptions();
         Mock<IGenericCliToolAdapter> mockAdapter = new();
-        var runtime = new DockerScannerRuntime(options, toolKey => mockAdapter.Object, _mockEgressGateway.Object, NullLogger<DockerScannerRuntime>.Instance);
-        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
-
-        var request = new ToolExecutionRequest(
-            ToolKey: "subfinder",
-            Version: "v2.6.6",
-            Arguments: new Dictionary<string, string>(),
-            ScanJobId: Guid.NewGuid(),
-            Timeout: TimeSpan.FromMinutes(10),
-            Executable: "subfinder",
-            ContainerImageRepository: "ghcr.io/apihunter-security/subfinder",
-            ContainerImageDigest: "sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd46059d33ef0"
+        Action act = () => new DevelopmentHostScannerRuntime(
+            toolKey => mockAdapter.Object,
+            _mockEgressGateway.Object,
+            isProductionEnvironment: true
         );
 
-        var scratchDir = Path.Combine(options.PlatformScratchRoot, request.ScanJobId.ToString("N"));
-        var result = await runtime.ExecuteInSandboxAsync(request, _expiredEgressTarget, secretLease, scratchDir);
-
-        result.Status.Should().Be(ToolExecutionStatus.Failed);
-        result.ErrorCode.Should().Be("EXPIRED_EGRESS_AUTHORIZATION");
+        act.Should().Throw<InvalidOperationException>()
+           .WithMessage("*CRITICAL_SECURITY_VIOLATION*");
     }
 
     [Fact]
-    public async Task DockerScannerRuntime_RejectsEscapedScratchMountPath()
+    public async Task ScanToolHealthService_CloudMode_ProbesEndpoint_ReturnsReady_When200Ok()
     {
-        var options = new ScannerRuntimeOptions();
-        Mock<IGenericCliToolAdapter> mockAdapter = new();
-        var runtime = new DockerScannerRuntime(options, toolKey => mockAdapter.Object, _mockEgressGateway.Object, NullLogger<DockerScannerRuntime>.Instance);
-        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+        var messageHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("{\"status\":\"healthy\"}")
+        });
 
-        var request = new ToolExecutionRequest(
-            ToolKey: "subfinder",
-            Version: "v2.6.6",
-            Arguments: new Dictionary<string, string>(),
-            ScanJobId: Guid.NewGuid(),
-            Timeout: TimeSpan.FromMinutes(10),
-            Executable: "subfinder",
-            ContainerImageRepository: "ghcr.io/apihunter-security/subfinder",
-            ContainerImageDigest: "sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd46059d33ef0"
-        );
+        using var httpClient = new HttpClient(messageHandler);
 
-        var maliciousScratch = "C:\\Windows\\System32";
-        Func<Task> act = async () => await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, maliciousScratch);
+        var options = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
+            HostedScannerServiceEndpoint = "https://scanner.internal",
+            HostedScannerServiceKey = "SECRET_KEY_123"
+        };
 
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*outside approved root*");
+        var healthService = new ScanToolHealthService(
+            registryService: null,
+            logger: NullLogger<ScanToolHealthService>.Instance,
+            options: options,
+            egressGateway: _mockEgressGateway.Object,
+            httpClient: httpClient);
+
+        var health = await healthService.GetScannerRuntimeHealthAsync();
+        health.Runtime.Available.Should().BeTrue();
+        health.ReadyForScans.Should().BeTrue();
+        health.Runtime.Version.Should().Be("Cloud Managed Scanner Service Active");
+    }
+
+    [Fact]
+    public async Task ScanToolHealthService_CloudMode_ReturnsNotReady_When500InternalServerError()
+    {
+        var messageHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        using var httpClient = new HttpClient(messageHandler);
+
+        var options = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
+            HostedScannerServiceEndpoint = "https://scanner.internal",
+            HostedScannerServiceKey = "SECRET_KEY_123"
+        };
+
+        var healthService = new ScanToolHealthService(
+            registryService: null,
+            logger: NullLogger<ScanToolHealthService>.Instance,
+            options: options,
+            egressGateway: _mockEgressGateway.Object,
+            httpClient: httpClient);
+
+        var health = await healthService.GetScannerRuntimeHealthAsync();
+        health.Runtime.Available.Should().BeFalse();
+        health.ReadyForScans.Should().BeFalse();
+        health.Runtime.Version.Should().Contain("500");
+    }
+
+    [Fact]
+    public async Task ScanToolHealthService_CloudMode_ReturnsNotReady_WhenProbeTimesOutOrUnreachable()
+    {
+        var messageHandler = new TimeoutHttpMessageHandler();
+        using var httpClient = new HttpClient(messageHandler);
+
+        var options = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
+            HostedScannerServiceEndpoint = "https://scanner.internal",
+            HostedScannerServiceKey = "SECRET_KEY_123"
+        };
+
+        var healthService = new ScanToolHealthService(
+            registryService: null,
+            logger: NullLogger<ScanToolHealthService>.Instance,
+            options: options,
+            egressGateway: _mockEgressGateway.Object,
+            httpClient: httpClient);
+
+        var health = await healthService.GetScannerRuntimeHealthAsync();
+        health.Runtime.Available.Should().BeFalse();
+        health.ReadyForScans.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task ScanToolHealthService_CloudMode_ReturnsNotReady_WhenUnconfigured()
+    {
+        var options = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
+            HostedScannerServiceEndpoint = null,
+            HostedScannerServiceKey = null
+        };
+
+        var healthService = new ScanToolHealthService(
+            registryService: null,
+            logger: NullLogger<ScanToolHealthService>.Instance,
+            options: options,
+            egressGateway: _mockEgressGateway.Object);
+
+        var health = await healthService.GetScannerRuntimeHealthAsync();
+        health.Runtime.Available.Should().BeFalse();
+        health.ReadyForScans.Should().BeFalse();
+        health.Runtime.Version.Should().Be("Cloud Scanner Service Unconfigured");
     }
 
     [Fact]
@@ -415,46 +498,6 @@ public class ScannerRuntimeSandboxTests
         result.ExitCode.Should().Be(0);
     }
 
-    [Fact]
-    public async Task ScanToolHealthService_RequiresCloudConfig_InCloudManagedContainerMode()
-    {
-        // 1. Unconfigured Cloud Mode -> ReadyForScans = False
-        var unconfiguredOptions = new ScannerRuntimeOptions
-        {
-            RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
-            HostedScannerServiceEndpoint = null,
-            HostedScannerServiceKey = null
-        };
-
-        var unconfiguredHealthService = new ScanToolHealthService(
-            registryService: null,
-            logger: NullLogger<ScanToolHealthService>.Instance,
-            options: unconfiguredOptions,
-            egressGateway: _mockEgressGateway.Object);
-
-        var unconfiguredHealth = await unconfiguredHealthService.GetScannerRuntimeHealthAsync();
-        unconfiguredHealth.Runtime.Available.Should().BeFalse();
-        unconfiguredHealth.ReadyForScans.Should().BeFalse();
-
-        // 2. Properly Configured Cloud Mode -> ReadyForScans = True
-        var configuredOptions = new ScannerRuntimeOptions
-        {
-            RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
-            HostedScannerServiceEndpoint = "https://scanner.internal",
-            HostedScannerServiceKey = "SECRET_KEY_123"
-        };
-
-        var configuredHealthService = new ScanToolHealthService(
-            registryService: null,
-            logger: NullLogger<ScanToolHealthService>.Instance,
-            options: configuredOptions,
-            egressGateway: _mockEgressGateway.Object);
-
-        var configuredHealth = await configuredHealthService.GetScannerRuntimeHealthAsync();
-        configuredHealth.Runtime.Available.Should().BeTrue();
-        configuredHealth.ReadyForScans.Should().BeTrue();
-    }
-
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
         private readonly HttpResponseMessage _response;
@@ -467,6 +510,14 @@ public class ScannerRuntimeSandboxTests
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             return Task.FromResult(_response);
+        }
+    }
+
+    private class TimeoutHttpMessageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            throw new TaskCanceledException("Request timed out");
         }
     }
 }

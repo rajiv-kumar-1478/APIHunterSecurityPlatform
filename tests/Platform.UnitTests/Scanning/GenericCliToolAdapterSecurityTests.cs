@@ -314,15 +314,21 @@ public class GenericCliToolAdapterSecurityTests
             return mockAdapter.Object;
         };
 
+        var mockGateway = new Mock<IEnforcedEgressGateway>();
+        var mockSession = new Mock<IEnforcedEgressGatewaySession>();
+        mockSession.Setup(s => s.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockGateway.Setup(g => g.CreateScopedSessionAsync(It.IsAny<EgressTarget>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(mockSession.Object);
+
+        var sandbox = new DevelopmentHostScannerRuntime(factory, mockGateway.Object, isProductionEnvironment: false);
+
         var worker = new GenericScanWorker(
             db,
             new InMemoryScanProviderSecretStore(),
             registry,
-            factory,
             new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance),
-            NullLogger<GenericScanWorker>.Instance,
-            runtimeSandbox: null,
-            allowUnsafeProcessFallback: true
+            runtimeSandbox: sandbox,
+            logger: NullLogger<GenericScanWorker>.Instance
         );
 
         var result = await worker.ExecuteScanJobAsync(db.SecurityScanJobs.First().Id);

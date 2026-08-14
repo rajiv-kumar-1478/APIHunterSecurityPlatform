@@ -183,7 +183,14 @@ public class HostedScanWorkerIntegrationTests
             return mockAdapter.Object;
         };
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance), NullLogger<GenericScanWorker>.Instance, runtimeSandbox: null, allowUnsafeProcessFallback: true);
+        var mockGateway = new Mock<IEnforcedEgressGateway>();
+        var mockSession = new Mock<IEnforcedEgressGatewaySession>();
+        mockSession.Setup(s => s.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockGateway.Setup(g => g.CreateScopedSessionAsync(It.IsAny<EgressTarget>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(mockSession.Object);
+
+        var sandbox = new DevelopmentHostScannerRuntime(factory, mockGateway.Object, isProductionEnvironment: false);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance), runtimeSandbox: sandbox, logger: NullLogger<GenericScanWorker>.Instance);
         var result = await worker.ExecuteScanJobAsync(job.Id);
 
         result.Status.Should().Be(SecurityScanJobStatus.Completed);
@@ -430,7 +437,14 @@ public class HostedScanWorkerIntegrationTests
             return mockAdapter.Object;
         };
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance), NullLogger<GenericScanWorker>.Instance, runtimeSandbox: null, allowUnsafeProcessFallback: true);
+        var mockGateway = new Mock<IEnforcedEgressGateway>();
+        var mockSession = new Mock<IEnforcedEgressGatewaySession>();
+        mockSession.Setup(s => s.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockGateway.Setup(g => g.CreateScopedSessionAsync(It.IsAny<EgressTarget>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(mockSession.Object);
+
+        var sandbox = new DevelopmentHostScannerRuntime(factory, mockGateway.Object, isProductionEnvironment: false);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance), runtimeSandbox: sandbox, logger: NullLogger<GenericScanWorker>.Instance);
         var result = await worker.ExecuteScanJobAsync(jobId);
 
         result.Status.Should().Be(SecurityScanJobStatus.Completed);
@@ -470,7 +484,14 @@ public class HostedScanWorkerIntegrationTests
         mockEgressEngine.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
                          .ReturnsAsync(new EgressTarget("127.0.0.1", "127.0.0.1", 80, "http", new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Loopback }, DateTime.UtcNow, DateTime.UtcNow.AddMinutes(10), "v1.0"));
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, mockEgressEngine.Object, NullLogger<GenericScanWorker>.Instance, runtimeSandbox: null, allowUnsafeProcessFallback: true);
+        var mockGateway = new Mock<IEnforcedEgressGateway>();
+        var mockSession = new Mock<IEnforcedEgressGatewaySession>();
+        mockSession.Setup(s => s.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockGateway.Setup(g => g.CreateScopedSessionAsync(It.IsAny<EgressTarget>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(mockSession.Object);
+
+        var sandbox = new DevelopmentHostScannerRuntime(realAdapterFactory, mockGateway.Object, isProductionEnvironment: false);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, mockEgressEngine.Object, runtimeSandbox: sandbox, logger: NullLogger<GenericScanWorker>.Instance);
 
         var workerTask = worker.ExecuteScanJobAsync(jobId, cts.Token);
 
@@ -537,7 +558,14 @@ public class HostedScanWorkerIntegrationTests
         mockFullChainEgress.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
                             .ReturnsAsync(new EgressTarget("version", "version", 80, "http", new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Loopback }, DateTime.UtcNow, DateTime.UtcNow.AddMinutes(10), "v1.0"));
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, mockFullChainEgress.Object, NullLogger<GenericScanWorker>.Instance, runtimeSandbox: null, allowUnsafeProcessFallback: true);
+        var mockGateway = new Mock<IEnforcedEgressGateway>();
+        var mockSession = new Mock<IEnforcedEgressGatewaySession>();
+        mockSession.Setup(s => s.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockGateway.Setup(g => g.CreateScopedSessionAsync(It.IsAny<EgressTarget>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(mockSession.Object);
+
+        var sandbox = new DevelopmentHostScannerRuntime(realAdapterFactory, mockGateway.Object, isProductionEnvironment: false);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, mockFullChainEgress.Object, runtimeSandbox: sandbox, logger: NullLogger<GenericScanWorker>.Instance);
         var result = await worker.ExecuteScanJobAsync(jobId);
 
         result.Status.Should().Be(SecurityScanJobStatus.Completed);
@@ -633,8 +661,15 @@ public class HostedScanWorkerIntegrationTests
             return mockAdapter.Object;
         };
 
+        var mockGateway = new Mock<IEnforcedEgressGateway>();
+        var mockSession = new Mock<IEnforcedEgressGatewaySession>();
+        mockSession.Setup(s => s.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockGateway.Setup(g => g.CreateScopedSessionAsync(It.IsAny<EgressTarget>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(mockSession.Object);
+
+        var sandbox = new DevelopmentHostScannerRuntime(factory, mockGateway.Object, isProductionEnvironment: false);
         var egressEngine = new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance);
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, egressEngine, NullLogger<GenericScanWorker>.Instance);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, egressEngine, runtimeSandbox: sandbox, logger: NullLogger<GenericScanWorker>.Instance);
 
         var result = await worker.ExecuteScanJobAsync(job.Id);
 
@@ -678,7 +713,14 @@ public class HostedScanWorkerIntegrationTests
         mockEgressEngine.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
                          .ThrowsAsync(new InvalidOperationException("Prohibited target destination."));
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, mockEgressEngine.Object, NullLogger<GenericScanWorker>.Instance);
+        var mockGateway2 = new Mock<IEnforcedEgressGateway>();
+        var mockSession2 = new Mock<IEnforcedEgressGatewaySession>();
+        mockSession2.Setup(s => s.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        mockGateway2.Setup(g => g.CreateScopedSessionAsync(It.IsAny<EgressTarget>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(mockSession2.Object);
+
+        var sandbox2 = new DevelopmentHostScannerRuntime(factory, mockGateway2.Object, isProductionEnvironment: false);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, mockEgressEngine.Object, runtimeSandbox: sandbox2, logger: NullLogger<GenericScanWorker>.Instance);
 
         var result = await worker.ExecuteScanJobAsync(job.Id);
 
