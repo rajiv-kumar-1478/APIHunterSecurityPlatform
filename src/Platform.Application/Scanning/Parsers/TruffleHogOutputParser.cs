@@ -220,17 +220,19 @@ public sealed class TruffleHogOutputParser
 
         // Zero Raw Secret Storage Policy:
         // Raw and RawV2 are NEVER persisted.
-        // Only safely redacted string is stored in ExtractedData.
+        // Even the Redacted field from untrusted scanner output is strictly sanitized through EvidenceSanitizer.
         string redacted = $"[REDACTED {detectorName} SECRET]";
         if (root.TryGetProperty("Redacted", out var redProp) && !string.IsNullOrWhiteSpace(redProp.GetString()))
         {
             var rawRedacted = redProp.GetString()!;
-            redacted = rawRedacted.Length > 256 ? rawRedacted.Substring(0, 256) : rawRedacted;
+            var bounded = rawRedacted.Length > 256 ? rawRedacted.Substring(0, 256) : rawRedacted;
+            redacted = EvidenceSanitizer.SanitizeEvidence(bounded, 256);
         }
         else if (root.TryGetProperty("redacted", out var redProp2) && !string.IsNullOrWhiteSpace(redProp2.GetString()))
         {
             var rawRedacted = redProp2.GetString()!;
-            redacted = rawRedacted.Length > 256 ? rawRedacted.Substring(0, 256) : rawRedacted;
+            var bounded = rawRedacted.Length > 256 ? rawRedacted.Substring(0, 256) : rawRedacted;
+            redacted = EvidenceSanitizer.SanitizeEvidence(bounded, 256);
         }
 
         // Calibrated Platform Severity & FindingType

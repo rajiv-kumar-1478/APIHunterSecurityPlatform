@@ -55,6 +55,10 @@ public sealed class TruffleHogAdapter : IScanToolAdapter
     {
         ArgumentNullException.ThrowIfNull(context);
 
+        bool allowLiveVerification = context.AdditionalOptions != null &&
+            context.AdditionalOptions.TryGetValue("enable_live_verification", out var liveVal) &&
+            string.Equals(liveVal, "true", StringComparison.OrdinalIgnoreCase);
+
         var args = new List<string>
         {
             "filesystem",
@@ -63,6 +67,12 @@ public sealed class TruffleHogAdapter : IScanToolAdapter
             "--no-update",
             "--fail=false"
         };
+
+        if (!allowLiveVerification)
+        {
+            // Default fail-closed policy: disable outbound network verification requests unless explicitly authorized
+            args.Add("--no-verification");
+        }
 
         if (context.Profile == SecurityScanProfileType.Deep)
         {
@@ -83,11 +93,18 @@ public sealed class TruffleHogAdapter : IScanToolAdapter
             }
         }
 
+        var metadata = new Dictionary<string, string>
+        {
+            ["NetworkBehavior"] = allowLiveVerification ? "CredentialVerification" : "None",
+            ["RequiresEgressAuthorization"] = allowLiveVerification ? "true" : "false"
+        };
+
         return new ToolExecutionPlan(
             ToolKey: Manifest.ToolKey,
             Version: Manifest.Version,
             CommandLineArguments: args,
-            EnvironmentVariables: env
+            EnvironmentVariables: env,
+            AdditionalMetadata: metadata
         );
     }
 

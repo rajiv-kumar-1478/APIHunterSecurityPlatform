@@ -60,8 +60,37 @@ public class TruffleHogAdapterTests
         Assert.Contains("--json", plan.CommandLineArguments);
         Assert.Contains("--no-update", plan.CommandLineArguments);
         Assert.Contains("--fail=false", plan.CommandLineArguments);
+        Assert.Contains("--no-verification", plan.CommandLineArguments);
         Assert.DoesNotContain("--archive-max-depth=5", plan.CommandLineArguments);
         Assert.Equal("true", plan.EnvironmentVariables["TRUFFLEHOG_NO_UPDATE"]);
+        Assert.NotNull(plan.AdditionalMetadata);
+        Assert.Equal("None", plan.AdditionalMetadata["NetworkBehavior"]);
+        Assert.Equal("false", plan.AdditionalMetadata["RequiresEgressAuthorization"]);
+    }
+
+    [Fact]
+    public void PrepareExecution_WithLiveVerificationOption_EnablesVerificationAndDeclaresEgressRequired()
+    {
+        var options = new Dictionary<string, string>
+        {
+            ["enable_live_verification"] = "true"
+        };
+
+        var context = new ScanExecutionContext(
+            ScanJobId: Guid.NewGuid(),
+            TargetUrl: "https://github.com/org/repo",
+            Profile: SecurityScanProfileType.Standard,
+            TenantId: Guid.NewGuid(),
+            AdditionalOptions: options
+        );
+
+        var plan = _adapter.PrepareExecution(context);
+
+        // When live verification is authorized, --no-verification is omitted and egress is declared
+        Assert.DoesNotContain("--no-verification", plan.CommandLineArguments);
+        Assert.NotNull(plan.AdditionalMetadata);
+        Assert.Equal("CredentialVerification", plan.AdditionalMetadata["NetworkBehavior"]);
+        Assert.Equal("true", plan.AdditionalMetadata["RequiresEgressAuthorization"]);
     }
 
     [Fact]

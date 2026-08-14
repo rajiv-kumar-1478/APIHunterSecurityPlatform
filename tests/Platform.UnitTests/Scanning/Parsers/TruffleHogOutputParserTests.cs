@@ -223,4 +223,31 @@ public class TruffleHogOutputParserTests
         Assert.NotNull(finding.Attributes);
         Assert.Equal("a1b2c3d4e5f6", finding.Attributes["git_commit"]);
     }
+
+    [Fact]
+    public async Task ParseOutput_RedactedFieldContainingSecretLikeMaterial_IsSanitized()
+    {
+        // Untrusted scanner output contains raw secret material inside the "Redacted" field
+        var secretLikeInRedacted = "bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.untrusted_token_data_12345";
+        var line = @"{""SourceMetadata"":{""Data"":{""Filesystem"":{""file"":""auth.js"",""line"":10}}},""DetectorName"":""JWT"",""Verified"":false,""Raw"":""raw_jwt"",""Redacted"":""" + secretLikeInRedacted + @"""}";
+
+        var rawOutput = new ToolExecutionRawOutput(
+            ToolKey: "trufflehog",
+            Version: "3.96.0",
+            ExitCode: 0,
+            StandardOutput: line,
+            StandardError: "",
+            OutputSizeBytes: Encoding.UTF8.GetByteCount(line),
+            DurationMs: 120
+        );
+
+        var result = await _parser.ParseAsync(_context, rawOutput);
+
+        Assert.Single(result.FindingCandidates);
+        var finding = result.FindingCandidates[0];
+
+        // Ensure the token inside the Redacted field was stripped by EvidenceSanitizer
+        Assert.DoesNotContain("untrusted_token_data_12345", finding.ExtractedData ?? "");
+        Assert.Contains("[REDACTED_TOKEN]", finding.ExtractedData ?? "");
+    }
 }
