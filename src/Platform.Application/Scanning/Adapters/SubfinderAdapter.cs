@@ -22,6 +22,7 @@ public sealed class SubfinderAdapter : IScanToolAdapter
         Version: "2.6.5",
         Description: "ProjectDiscovery Subfinder fast passive subdomain enumeration engine",
         ContainerImageRepository: "ghcr.io/projectdiscovery/subfinder",
+        ContainerImageReference: "ghcr.io/projectdiscovery/subfinder:v2.6.5",
         ContainerImageDigest: "sha256:5a9e3d937013e8e2d424b94f1c1f4e5a9c40212f0e0f8f9024f0c430e764a59b",
         SupportedProfiles: new HashSet<SecurityScanProfileType>
         {

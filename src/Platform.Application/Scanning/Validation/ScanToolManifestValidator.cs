@@ -71,10 +71,15 @@ public static class ScanToolManifestValidator
             }
         }
 
-        // 4. Image Repository Validation
+        // 4. Image Repository & Reference Validation
         if (string.IsNullOrWhiteSpace(manifest.ContainerImageRepository))
         {
             errors.Add("ContainerImageRepository cannot be empty.");
+        }
+
+        if (string.IsNullOrWhiteSpace(manifest.ContainerImageReference))
+        {
+            errors.Add("ContainerImageReference cannot be empty.");
         }
 
         // 5. Supported Profiles Validation

@@ -22,6 +22,7 @@ public sealed class NucleiAdapter : IScanToolAdapter
         Version: "3.2.0",
         Description: "ProjectDiscovery Nuclei template-based vulnerability assessment scanner",
         ContainerImageRepository: "ghcr.io/projectdiscovery/nuclei",
+        ContainerImageReference: "ghcr.io/projectdiscovery/nuclei:v3.2.0",
         ContainerImageDigest: "sha256:1a85e13b8279930f796de14187063d80b721e7d8001fb1e204c35e39d5628bbf",
         SupportedProfiles: new HashSet<SecurityScanProfileType>
         {

@@ -11,6 +11,7 @@ public sealed record ScanToolManifest(
     string Version,
     string Description,
     string ContainerImageRepository,
+    string ContainerImageReference,
     string ContainerImageDigest,
     IReadOnlySet<SecurityScanProfileType> SupportedProfiles,
     IReadOnlySet<string> Capabilities,

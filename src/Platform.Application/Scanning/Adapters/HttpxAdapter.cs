@@ -22,6 +22,7 @@ public sealed class HttpxAdapter : IScanToolAdapter
         Version: "1.6.0",
         Description: "ProjectDiscovery httpx HTTP probing and web technology detection engine",
         ContainerImageRepository: "ghcr.io/projectdiscovery/httpx",
+        ContainerImageReference: "ghcr.io/projectdiscovery/httpx:v1.6.0",
         ContainerImageDigest: "sha256:52d58be716e8fe2a592da2a3a3652985d6c71c9b68a6f3dc8e4b789ad7e2c91b",
         SupportedProfiles: new HashSet<SecurityScanProfileType>
         {

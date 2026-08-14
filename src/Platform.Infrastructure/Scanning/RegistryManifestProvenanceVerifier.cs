@@ -40,7 +40,7 @@ public sealed class RegistryManifestProvenanceVerifier : IToolProvenanceVerifier
         try
         {
             // Build the OCI/Docker registry manifest URL
-            var registryEndpoint = ResolveRegistryManifestUrl(manifest.ContainerImageRepository, manifest.Version);
+            var registryEndpoint = ResolveRegistryManifestUrl(manifest.ContainerImageRepository, manifest.ContainerImageReference ?? manifest.Version);
             if (string.IsNullOrEmpty(registryEndpoint))
             {
                 return new ProvenanceVerificationResult(
@@ -50,50 +50,45 @@ public sealed class RegistryManifestProvenanceVerifier : IToolProvenanceVerifier
                     $"Unsupported or unparseable image repository: '{manifest.ContainerImageRepository}'.");
             }
 
-            using var request = new HttpRequestMessage(HttpMethod.Head, registryEndpoint);
+            using var request = new HttpRequestMessage(HttpMethod.Get, registryEndpoint);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.docker.distribution.manifest.v2+json"));
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.oci.image.manifest.v1+json"));
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.oci.image.index.v1+json"));
 
-            using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var response = await _httpClient.SendAsync(request, ct);
 
-            string? resolvedDigest = null;
-            if (response.Headers.TryGetValues("Docker-Content-Digest", out var values))
-            {
-                resolvedDigest = System.Linq.Enumerable.FirstOrDefault(values)?.Trim();
-            }
-
-            if (string.IsNullOrWhiteSpace(resolvedDigest))
-            {
-                // Fallback: If HEAD doesn't return Docker-Content-Digest header, perform GET and compute SHA-256 over raw manifest bytes
-                using var getRequest = new HttpRequestMessage(HttpMethod.Get, registryEndpoint);
-                getRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.docker.distribution.manifest.v2+json"));
-                getRequest.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.oci.image.manifest.v1+json"));
-
-                using var getResponse = await _httpClient.SendAsync(getRequest, ct);
-                if (getResponse.IsSuccessStatusCode)
-                {
-                    if (getResponse.Headers.TryGetValues("Docker-Content-Digest", out var getValues))
-                    {
-                        resolvedDigest = System.Linq.Enumerable.FirstOrDefault(getValues)?.Trim();
-                    }
-                    else
-                    {
-                        var rawBytes = await getResponse.Content.ReadAsByteArrayAsync(ct);
-                        var computedHash = Convert.ToHexString(SHA256.HashData(rawBytes)).ToLowerInvariant();
-                        resolvedDigest = $"sha256:{computedHash}";
-                    }
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(resolvedDigest))
+            if (!response.IsSuccessStatusCode)
             {
                 return new ProvenanceVerificationResult(
                     false,
                     manifest.ContainerImageDigest,
                     null,
-                    $"Could not resolve Docker-Content-Digest from registry for {manifest.ContainerImageRepository}:{manifest.Version}.");
+                    $"Registry HTTP {(int)response.StatusCode} {response.ReasonPhrase} for endpoint: {registryEndpoint}");
             }
+
+            string? headerDigest = null;
+            if (response.Headers.TryGetValues("Docker-Content-Digest", out var values))
+            {
+                headerDigest = System.Linq.Enumerable.FirstOrDefault(values)?.Trim();
+            }
+
+            var rawBytes = await response.Content.ReadAsByteArrayAsync(ct);
+            var computedByteDigest = $"sha256:{Convert.ToHexString(SHA256.HashData(rawBytes)).ToLowerInvariant()}";
+
+            // If header exists, enforce consistency: header digest must match computed raw bytes digest
+            if (!string.IsNullOrWhiteSpace(headerDigest))
+            {
+                if (!string.Equals(headerDigest, computedByteDigest, StringComparison.OrdinalIgnoreCase))
+                {
+                    return new ProvenanceVerificationResult(
+                        false,
+                        manifest.ContainerImageDigest,
+                        headerDigest,
+                        $"Registry integrity breach: Docker-Content-Digest header '{headerDigest}' differs from SHA-256 of raw response payload '{computedByteDigest}'.");
+                }
+            }
+
+            var resolvedDigest = !string.IsNullOrWhiteSpace(headerDigest) ? headerDigest : computedByteDigest;
 
             var isMatch = string.Equals(resolvedDigest, manifest.ContainerImageDigest, StringComparison.OrdinalIgnoreCase);
 
@@ -101,7 +96,7 @@ public sealed class RegistryManifestProvenanceVerifier : IToolProvenanceVerifier
                 isMatch,
                 manifest.ContainerImageDigest,
                 resolvedDigest,
-                isMatch ? null : $"Digest mismatch: Manifest declares '{manifest.ContainerImageDigest}', but registry returned '{resolvedDigest}'.");
+                isMatch ? null : $"Digest mismatch: Manifest declares '{manifest.ContainerImageDigest}', but registry resolved '{resolvedDigest}'.");
         }
         catch (Exception ex)
         {
@@ -116,15 +111,15 @@ public sealed class RegistryManifestProvenanceVerifier : IToolProvenanceVerifier
         }
     }
 
-    private static string? ResolveRegistryManifestUrl(string imageRepository, string version)
+    private static string? ResolveRegistryManifestUrl(string imageRepository, string? imageReference)
     {
         if (string.IsNullOrWhiteSpace(imageRepository)) return null;
 
         var repo = imageRepository.Trim();
-        var tag = string.IsNullOrWhiteSpace(version) ? "latest" : version.Trim();
-        if (!tag.StartsWith("v") && char.IsDigit(tag[0]))
+        var tag = string.IsNullOrWhiteSpace(imageReference) ? "latest" : imageReference.Trim();
+        if (tag.Contains(':'))
         {
-            tag = "v" + tag;
+            tag = tag.Split(':')[^1];
         }
 
         // GitHub Container Registry (ghcr.io)
