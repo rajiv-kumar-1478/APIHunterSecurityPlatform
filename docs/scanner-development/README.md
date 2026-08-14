@@ -19,6 +19,7 @@ The core orchestration engine, campaign scheduler, and Phase 8 finding ingestion
 | [`sandbox-requirements.md`](./sandbox-requirements.md) | `IScannerRuntimeSandbox` execution, capability dropping, and network isolation. |
 | [`finding-mapping.md`](./finding-mapping.md) | Mapping tool findings to `FindingCandidate`, evidence redaction, and canonical v1 fingerprinting. |
 | [`testing-requirements.md`](./testing-requirements.md) | Golden fixtures, adversarial parsing, manifest validation, and plan determinism tests. |
+| [`dashboard-integration.md`](./dashboard-integration.md) | Frontend UI decoupled read models, provenance display, and boundary invariants. |
 | [`adding-a-new-scanner.md`](./adding-a-new-scanner.md) | Step-by-step developer checklist for onboarding a new scanner plugin. |
 
 ---
