@@ -23,6 +23,7 @@ public class GenericScanWorker : IScanWorker
     private readonly ScanToolRegistryService _toolRegistryService;
     private readonly IEgressPolicyEngine _egressPolicyEngine;
     private readonly IScannerRuntimeSandbox? _runtimeSandbox;
+    private readonly ScanExecutionOrchestrator _orchestrator;
     private readonly ScannerRuntimeOptions _options;
     private readonly ILogger<GenericScanWorker> _logger;
 
@@ -33,6 +34,7 @@ public class GenericScanWorker : IScanWorker
         IEgressPolicyEngine egressPolicyEngine,
         IScannerRuntimeSandbox? runtimeSandbox,
         ILogger<GenericScanWorker> logger,
+        ScanExecutionOrchestrator? orchestrator = null,
         ScannerRuntimeOptions? options = null)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
@@ -42,6 +44,13 @@ public class GenericScanWorker : IScanWorker
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _runtimeSandbox = runtimeSandbox;
         _options = options ?? new ScannerRuntimeOptions();
+
+        _orchestrator = orchestrator ?? new ScanExecutionOrchestrator(
+            _toolRegistryService,
+            new ToolOutputParserProvider(),
+            new ScanFindingIngestionEngine(_dbContext, Microsoft.Extensions.Logging.Abstractions.NullLogger<ScanFindingIngestionEngine>.Instance),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<ScanExecutionOrchestrator>.Instance
+        );
     }
 
     public async Task<ScanExecutionResult> ExecuteScanJobAsync(Guid scanJobId, CancellationToken ct = default)
@@ -100,59 +109,16 @@ public class GenericScanWorker : IScanWorker
             job.StartedAtUtc = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
 
-            // Resolve required tool capabilities and authoritative scanner manifest
-            var requiredCapabilities = ScanJobService.GetRequiredCapabilitiesForProfile(job.ScanProfile);
-            var tools = await _toolRegistryService.GetToolsForCapabilitiesAsync(requiredCapabilities, ct);
-            var authorizedManifestMap = await _toolRegistryService.GetAuthorizedManifestMapAsync(ct);
+            // 3. Phased Multi-Tool Pipeline Orchestration
+            var receipt = await _orchestrator.ExecutePipelineAsync(job, egressTarget, secretLease, scratchDirectory, _runtimeSandbox, ct);
 
-            var toolResults = new List<ToolExecutionResult>();
-
-            foreach (var tool in tools)
-            {
-                if (!tool.Enabled || tool.HealthStatus != ToolHealthStatus.Healthy)
-                {
-                    _logger.LogWarning("Worker skipping disabled or unhealthy tool '{ToolKey}' for job '{ScanJobId}'.", tool.ToolKey, scanJobId);
-                    continue;
-                }
-
-                var toolRequest = new ToolExecutionRequest(
-                    ToolKey: tool.ToolKey,
-                    Version: tool.Version,
-                    Arguments: new Dictionary<string, string> { ["target"] = job.TargetUrl },
-                    ScanJobId: job.Id,
-                    Timeout: TimeSpan.FromMinutes(10),
-                    Executable: tool.Executable,
-                    ContainerImageRepository: tool.ContainerImageRepository,
-                    ContainerImageDigest: tool.ContainerImageDigest,
-                    AuthorizedManifest: authorizedManifestMap
-                );
-
-                // Authoritative execution through sandbox ONLY
-                var toolResult = await _runtimeSandbox.ExecuteInSandboxAsync(toolRequest, egressTarget, secretLease, scratchDirectory, ct);
-                toolResults.Add(toolResult);
-
-                if (toolResult.Status == ToolExecutionStatus.TimedOut || toolResult.Status == ToolExecutionStatus.Failed || toolResult.Status == ToolExecutionStatus.Cancelled)
-                {
-                    if (tool.Required)
-                    {
-                        _logger.LogError("Required tool '{ToolKey}' failed, timed out, or was cancelled for job '{ScanJobId}'. Aborting scan.", tool.ToolKey, scanJobId);
-                        job.Status = SecurityScanJobStatus.Failed;
-                        job.FailureReason = $"Required tool '{tool.ToolKey}' failed: {toolResult.ErrorCode}";
-                        job.CompletedAtUtc = DateTime.UtcNow;
-                        await _dbContext.SaveChangesAsync(ct);
-
-                        return new ScanExecutionResult(job.Id, job.Status, null, null, job.FailureReason, DateTime.UtcNow);
-                    }
-                }
-            }
-
-            job.Status = SecurityScanJobStatus.Completed;
-            job.FailureReason = null;
+            job.Status = receipt.FinalJobStatus;
+            job.FailureReason = receipt.FinalJobStatus == SecurityScanJobStatus.Failed ? receipt.Summary : null;
             job.CompletedAtUtc = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
 
-            _logger.LogInformation("GenericScanWorker completed job '{ScanJobId}' successfully with {Count} tool results.", scanJobId, toolResults.Count);
-            return new ScanExecutionResult(job.Id, job.Status, null, null, null, DateTime.UtcNow);
+            _logger.LogInformation("GenericScanWorker completed job '{ScanJobId}' with status '{Status}'. Summary: {Summary}", scanJobId, job.Status, receipt.Summary);
+            return new ScanExecutionResult(job.Id, job.Status, null, null, job.FailureReason, DateTime.UtcNow);
         }
         catch (OperationCanceledException)
         {
