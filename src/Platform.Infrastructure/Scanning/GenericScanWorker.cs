@@ -19,6 +19,7 @@ public class GenericScanWorker : IScanWorker
     private readonly ScanToolRegistryService _toolRegistryService;
     private readonly Func<string, IGenericCliToolAdapter> _cliAdapterFactory;
     private readonly IEgressPolicyEngine _egressPolicyEngine;
+    private readonly IScannerRuntimeSandbox? _runtimeSandbox;
     private readonly ILogger<GenericScanWorker> _logger;
 
     public GenericScanWorker(
@@ -27,7 +28,8 @@ public class GenericScanWorker : IScanWorker
         ScanToolRegistryService toolRegistryService,
         Func<string, IGenericCliToolAdapter> cliAdapterFactory,
         IEgressPolicyEngine egressPolicyEngine,
-        ILogger<GenericScanWorker> logger)
+        ILogger<GenericScanWorker> logger,
+        IScannerRuntimeSandbox? runtimeSandbox = null)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _secretStore = secretStore ?? throw new ArgumentNullException(nameof(secretStore));
@@ -35,6 +37,7 @@ public class GenericScanWorker : IScanWorker
         _cliAdapterFactory = cliAdapterFactory ?? throw new ArgumentNullException(nameof(cliAdapterFactory));
         _egressPolicyEngine = egressPolicyEngine ?? throw new ArgumentNullException(nameof(egressPolicyEngine));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _runtimeSandbox = runtimeSandbox;
     }
 
     public async Task<ScanExecutionResult> ExecuteScanJobAsync(Guid scanJobId, CancellationToken ct = default)
@@ -107,7 +110,9 @@ public class GenericScanWorker : IScanWorker
                     AuthorizedManifest: authorizedManifestMap
                 );
 
-                var toolResult = await cliAdapter.ExecuteAsync(toolRequest, secretLease, scratchDirectory, ct);
+                var toolResult = _runtimeSandbox != null
+                    ? await _runtimeSandbox.ExecuteInSandboxAsync(toolRequest, egressTarget, secretLease, scratchDirectory, ct)
+                    : await cliAdapter.ExecuteAsync(toolRequest, secretLease, scratchDirectory, ct);
                 toolResults.Add(toolResult);
 
                 if (toolResult.Status == ToolExecutionStatus.TimedOut || toolResult.Status == ToolExecutionStatus.Failed)

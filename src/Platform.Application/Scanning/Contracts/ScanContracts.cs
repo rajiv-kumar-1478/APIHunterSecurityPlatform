@@ -170,3 +170,19 @@ public record ProvisioningResult(
     string? ErrorCode,
     string? ErrorMessage
 );
+
+public record ScannerRuntimeHealthDto(
+    string Provider,
+    string Mode,
+    string Status,
+    string Version,
+    double CpuCores,
+    long MemoryBytes,
+    int MaxPids,
+    long ScratchBytes,
+    int TimeoutMinutes,
+    bool EgressProtected,
+    int ActiveJobsCount,
+    DateTime LastHealthCheckUtc
+);
+
