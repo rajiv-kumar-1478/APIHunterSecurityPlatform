@@ -63,6 +63,9 @@ public interface IPlatformDbContext
     DbSet<SecurityProviderCredential> SecurityProviderCredentials { get; }
     DbSet<ScanFindingObservation> ScanFindingObservations { get; }
 
+    // Phase 9 DbSets
+    DbSet<ScanCampaign> ScanCampaigns { get; }
+    DbSet<CampaignExecutionAuditLog> CampaignExecutionAuditLogs { get; }
 
     Microsoft.EntityFrameworkCore.ChangeTracking.ChangeTracker ChangeTracker { get; }
 

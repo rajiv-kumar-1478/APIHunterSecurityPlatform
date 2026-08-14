@@ -62,6 +62,10 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
     public DbSet<SecurityProviderCredential> SecurityProviderCredentials => Set<SecurityProviderCredential>();
     public DbSet<ScanFindingObservation> ScanFindingObservations => Set<ScanFindingObservation>();
 
+    // Phase 9 DbSets
+    public DbSet<ScanCampaign> ScanCampaigns => Set<ScanCampaign>();
+    public DbSet<CampaignExecutionAuditLog> CampaignExecutionAuditLogs => Set<CampaignExecutionAuditLog>();
+
 
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -816,6 +820,58 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.HasOne(o => o.ScanJob)
              .WithMany()
              .HasForeignKey(o => o.ScanJobId)
+             .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // ScanCampaign
+        modelBuilder.Entity<ScanCampaign>(e =>
+        {
+            e.ToTable("scan_campaigns");
+            e.HasKey(c => c.Id);
+            e.HasIndex(c => new { c.TenantId, c.Status });
+            e.HasIndex(c => new { c.Status, c.NextRunUtc });
+            e.HasIndex(c => c.RepositoryId);
+            e.HasIndex(c => c.SecurityTargetId);
+            e.Property(c => c.Name).HasMaxLength(200).IsRequired();
+            e.Property(c => c.Description).HasMaxLength(2000);
+            e.Property(c => c.TimeZoneId).HasMaxLength(100).IsRequired();
+            e.Property(c => c.CronExpression).HasMaxLength(100);
+            e.Property(c => c.ScheduleVersion).IsRequired();
+
+            e.HasOne(c => c.Repository)
+             .WithMany()
+             .HasForeignKey(c => c.RepositoryId)
+             .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasOne(c => c.SecurityTarget)
+             .WithMany()
+             .HasForeignKey(c => c.SecurityTargetId)
+             .OnDelete(DeleteBehavior.Restrict);
+
+            e.HasMany(c => c.ScanJobs)
+             .WithOne(j => j.Campaign)
+             .HasForeignKey(j => j.CampaignId)
+             .OnDelete(DeleteBehavior.SetNull);
+
+            e.HasMany(c => c.AuditLogs)
+             .WithOne(a => a.Campaign)
+             .HasForeignKey(a => a.CampaignId)
+             .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // CampaignExecutionAuditLog
+        modelBuilder.Entity<CampaignExecutionAuditLog>(e =>
+        {
+            e.ToTable("campaign_execution_audit_logs");
+            e.HasKey(a => a.Id);
+            e.HasIndex(a => new { a.CampaignId, a.EvaluatedAtUtc });
+            e.HasIndex(a => new { a.TenantId, a.EvaluatedAtUtc });
+            e.Property(a => a.TriggerSource).HasMaxLength(100).IsRequired();
+            e.Property(a => a.Reason).HasMaxLength(1000).IsRequired();
+
+            e.HasOne(a => a.Campaign)
+             .WithMany(c => c.AuditLogs)
+             .HasForeignKey(a => a.CampaignId)
              .OnDelete(DeleteBehavior.Cascade);
         });
     }

@@ -324,6 +324,10 @@ try
         builder.Services.AddSingleton<IScanProviderSecretStore, ConfigurationScanProviderSecretStore>();
     }
 
+    // Phase 9 — Continuous Security Scan Campaigns
+    builder.Services.AddSingleton<ICampaignScheduleCalculator, CampaignScheduleCalculator>();
+    builder.Services.AddScoped<IScanCampaignService, ScanCampaignService>();
+
 
 
 

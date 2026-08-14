@@ -46,6 +46,16 @@ public class SecurityScanJob
     public Guid? RetryOfJobId { get; set; }
 
     /// <summary>
+    /// Foreign key to parent continuous scan campaign if job was dispatched by a campaign.
+    /// </summary>
+    public Guid? CampaignId { get; set; }
+
+    /// <summary>
+    /// Source triggering the execution: 'Manual', 'CampaignScheduler', 'CampaignRunNow', 'CiCdWebhook', etc.
+    /// </summary>
+    public string TriggeredBy { get; set; } = "Manual";
+
+    /// <summary>
     /// EF Core Optimistic Concurrency Token
     /// </summary>
     public int Version { get; set; } = 1;
@@ -54,4 +64,5 @@ public class SecurityScanJob
     public Repository? Repository { get; set; }
     public SecurityTarget? Target { get; set; }
     public User? RequestedByUser { get; set; }
+    public ScanCampaign? Campaign { get; set; }
 }

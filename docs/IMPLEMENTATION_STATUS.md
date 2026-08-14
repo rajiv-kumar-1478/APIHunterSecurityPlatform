@@ -379,6 +379,22 @@ Legend:
   - [x] Next.js Dashboard: Production build clean with 0 errors.
   - [x] Phase 8 Status: **PHASE 8 OFFICIALLY LOCKED & COMPLETE**.
 
+---
+
+## Phase 9 — Continuous Security Scan Campaigns (IN PROGRESS)
+
+- [x] Step 9.1 — Campaign & Schedule Contract (FULLY IMPLEMENTED & VERIFIED):
+  - [x] Complete Tenant Ownership Chain: `Tenant` $\rightarrow$ `Repository` $\rightarrow$ `SecurityTarget` $\rightarrow$ `ScanCampaign` $\rightarrow$ `SecurityScanJob` validated on creation, update, and execution.
+  - [x] Schedule Model: Built deterministic `CampaignScheduleCalculator` supporting `Cron` (standard 5-part syntax evaluated against IANA timezone) and `Interval` ($\ge 15\text{ minutes}$ minimum limit) with explicit DST transition disambiguation.
+  - [x] Concurrency Policies: Implemented `SkipIfRunning` (default), `ForbidConcurrent`, and `QueueNext` (strictly capped at queue depth = 1).
+  - [x] Optimistic Concurrency: `ScheduleVersion` monotonically incremented on state mutations; stale dispatch protection.
+  - [x] Authoritative Database Cursor: `NextRunUtc` serves as the authoritative database scheduler cursor.
+  - [x] Audit Logging: Every dispatch, skip, queue, or reject decision persisted to `CampaignExecutionAuditLog` with `SchedulerDecision` enum and diagnostic reasons.
+  - [x] REST Controller: `POST`, `GET`, `PUT`, `DELETE` (soft archive), `/pause`, `/resume`, `/run-now`, and `/audit-logs` endpoints on `/api/v1/security/campaigns`.
+  - [x] Immutability: Pausing, resuming, or archiving a campaign never mutates or deletes historical scan jobs or findings.
+  - [x] Automated Test Suite: **607 / 607 Automated Tests Passed (100%)** (530 Unit Tests + 77 Integration Tests) with 0 warnings (`-warnaserror`).
+  - [x] Next.js Dashboard: Production build clean with 0 errors.
+
 
 
 
