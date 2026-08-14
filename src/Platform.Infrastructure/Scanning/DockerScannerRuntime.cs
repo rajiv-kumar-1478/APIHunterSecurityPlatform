@@ -3,11 +3,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
+using Platform.Application.Services;
 using Platform.Domain.Entities;
 using Platform.Domain.Enums;
 
@@ -16,25 +18,28 @@ namespace Platform.Infrastructure.Scanning;
 /// <summary>
 /// Containerized OCI/Docker Scanner Runtime Sandbox.
 /// Enforces strong container isolation (CPU, Memory, PIDs, read-only root, dropped capabilities, no-new-privileges, scratch volume mount).
-/// Executes real `docker run` container processes with image provenance binding and pinned egress environment controls.
-/// Fails closed with DOCKER_RUNTIME_UNAVAILABLE when RuntimeMode is Docker or RequireDockerSandbox is true and Docker daemon is absent.
+/// Enforces immutable container image provenance pinning (repository allowlist + sha256 digest) and routes container traffic through an Enforced Egress Gateway.
+/// Fails closed with DOCKER_RUNTIME_UNAVAILABLE when RuntimeMode is LocalDocker or RequireDockerSandbox is true and Docker daemon is absent.
 /// </summary>
 public class DockerScannerRuntime : IScannerRuntimeSandbox
 {
+    private static readonly Regex ContainerNameRegex = new(@"^apihunter-[a-zA-Z0-9_\-]+$", RegexOptions.Compiled);
+    private static readonly Regex DigestRegex = new(@"^sha256:[a-fA-F0-9]{64}$", RegexOptions.Compiled);
+
     private readonly ScannerRuntimeOptions _options;
     private readonly Func<string, IGenericCliToolAdapter> _cliAdapterFactory;
-    private readonly IEgressNetworkProxy _egressNetworkProxy;
+    private readonly IEnforcedEgressGateway _egressGateway;
     private readonly ILogger<DockerScannerRuntime> _logger;
 
     public DockerScannerRuntime(
         ScannerRuntimeOptions options,
         Func<string, IGenericCliToolAdapter> cliAdapterFactory,
-        IEgressNetworkProxy egressNetworkProxy,
+        IEnforcedEgressGateway egressGateway,
         ILogger<DockerScannerRuntime> logger)
     {
         _options = options ?? new ScannerRuntimeOptions();
         _cliAdapterFactory = cliAdapterFactory ?? throw new ArgumentNullException(nameof(cliAdapterFactory));
-        _egressNetworkProxy = egressNetworkProxy ?? throw new ArgumentNullException(nameof(egressNetworkProxy));
+        _egressGateway = egressGateway ?? throw new ArgumentNullException(nameof(egressGateway));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -49,11 +54,21 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         if (egressTarget == null) throw new ArgumentNullException(nameof(egressTarget));
         if (secretLease == null) throw new ArgumentNullException(nameof(secretLease));
 
-        // 1. Fail Closed on Executable Missing / Unconfigured
+        // 1. Fail Closed on Executable Missing / Unconfigured (No fallback to ToolKey)
         if (string.IsNullOrWhiteSpace(request.Executable))
         {
             _logger.LogError("DockerScannerRuntime execution rejected: Executable is missing or unconfigured for tool '{ToolKey}'.", request.ToolKey);
             return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "TOOL_EXECUTABLE_NOT_CONFIGURED");
+        }
+
+        try
+        {
+            ScanToolRegistryService.ValidateExecutableName(request.Executable);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "DockerScannerRuntime execution rejected: Executable name '{Executable}' failed security validation.", request.Executable);
+            return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "TOOL_EXECUTABLE_INVALID");
         }
 
         // 2. Fail Closed on Expired or Unapproved Egress Target Authorization
@@ -69,18 +84,30 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
             return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "UNAPPROVED_EGRESS_TARGET");
         }
 
-        // 3. Scratch Directory Path Defense in Depth
-        ValidateScratchMountPath(scratchDirectory);
+        // 3. Immutable Container Image Provenance Verification (Strict Fail-Closed)
+        if (_options.EnforceImageProvenance)
+        {
+            var provenanceValid = ValidateImageProvenance(request, out var provenanceErrorCode);
+            if (!provenanceValid)
+            {
+                _logger.LogError("DockerScannerRuntime execution rejected: Container image provenance verification failed for tool '{ToolKey}' ({ErrorCode}).",
+                    request.ToolKey, provenanceErrorCode);
+                return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, provenanceErrorCode);
+            }
+        }
 
-        // 4. Establish Scoped Network Proxy Policy Enforcement
-        await using var scopedPolicy = await _egressNetworkProxy.CreateScopedPolicyAsync(egressTarget, cancellationToken);
+        // 4. Scratch Directory Path Defense in Depth
+        ValidateScratchMountPath(scratchDirectory, _options.PlatformScratchRoot);
 
-        // 5. Build Docker Container Isolation Arguments deterministically from ScannerRuntimeOptions
-        var dockerArgs = BuildDockerIsolationArguments(request, egressTarget, scratchDirectory);
+        // 5. Establish Scoped Enforced Egress Gateway Session
+        await using var gatewaySession = await _egressGateway.CreateScopedSessionAsync(egressTarget, cancellationToken);
 
-        // 6. Verify Docker Daemon Availability when Docker RuntimeMode or RequireDockerSandbox is Enforced
+        // 6. Build Docker Container Isolation Arguments deterministically
+        var dockerArgs = BuildDockerIsolationArguments(request, egressTarget, gatewaySession, scratchDirectory);
+
+        // 7. Verify Docker Daemon Availability
         var isDockerAvailable = IsDockerDaemonAvailable();
-        if ((_options.RuntimeMode == ScannerRuntimeMode.Docker || _options.RequireDockerSandbox) && !isDockerAvailable)
+        if ((_options.RuntimeMode == ScannerRuntimeMode.LocalDocker || _options.RequireDockerSandbox) && !isDockerAvailable)
         {
             _logger.LogError("DockerScannerRuntime execution rejected: Docker runtime is required (RuntimeMode: {Mode}) but Docker daemon is unavailable.", _options.RuntimeMode);
             return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "DOCKER_RUNTIME_UNAVAILABLE");
@@ -89,7 +116,7 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         _logger.LogInformation("DockerScannerRuntime launching execution for tool '{ToolKey}' (v{Version}) with limits [CPU: {Cpu}, Memory: {Mem}B, PIDs: {Pids}].",
             request.ToolKey, request.Version, _options.MaxCpuCores, _options.MaxMemoryBytes, _options.MaxPids);
 
-        // 7. Execute real `docker run` container if Docker daemon is active
+        // 8. Execute real `docker run` container if Docker daemon is active
         if (isDockerAvailable)
         {
             return await ExecuteDockerContainerAsync(request, egressTarget, dockerArgs, scratchDirectory, cancellationToken);
@@ -97,12 +124,16 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
 
         _logger.LogWarning("DEVELOPMENT_MODE_REDUCED_ISOLATION: Docker daemon is unavailable on host. Running local process execution fallback.");
 
-        // 8. Local Process Fallback (strictly in UnsafeLocalProcessFallback mode)
+        // 9. Local Process Fallback (strictly in UnsafeLocalProcessFallback mode)
         var cliAdapter = _cliAdapterFactory(request.ToolKey);
         return await cliAdapter.ExecuteAsync(request, secretLease, scratchDirectory, cancellationToken);
     }
 
-    public IReadOnlyList<string> BuildDockerIsolationArguments(ToolExecutionRequest request, EgressTarget egressTarget, string scratchDirectory)
+    public IReadOnlyList<string> BuildDockerIsolationArguments(
+        ToolExecutionRequest request,
+        EgressTarget egressTarget,
+        IEnforcedEgressGatewaySession gatewaySession,
+        string scratchDirectory)
     {
         var args = new List<string>
         {
@@ -128,16 +159,62 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
             args.Add("--security-opt=no-new-privileges:true");
         }
 
-        var normalizedScratch = Path.GetFullPath(scratchDirectory);
-        var approvedIps = string.Join(",", egressTarget.ApprovedIpAddresses.Select(ip => ip.ToString()));
+        // Dedicated network isolation
+        if (!string.IsNullOrWhiteSpace(gatewaySession?.NetworkName))
+        {
+            args.Add($"--network={gatewaySession.NetworkName}");
+        }
 
+        // Gateway environment variables (including NO_PROXY="")
+        if (gatewaySession?.ContainerEnvironmentVariables != null)
+        {
+            foreach (var kvp in gatewaySession.ContainerEnvironmentVariables)
+            {
+                args.Add($"--env={kvp.Key}={kvp.Value}");
+            }
+        }
+
+        var normalizedScratch = Path.GetFullPath(scratchDirectory);
         args.Add($"--volume={normalizedScratch}:/tmp/apihunter_scratch:rw");
-        args.Add($"--env=APIHUNTER_TARGET_HOST={egressTarget.CanonicalHost}");
-        args.Add($"--env=APIHUNTER_APPROVED_IPS={approvedIps}");
-        args.Add($"--env=APIHUNTER_EGRESS_POLICY_VERSION={egressTarget.PolicyVersion}");
         args.Add($"--env=APIHUNTER_SCAN_JOB_ID={request.ScanJobId:N}");
 
         return args.AsReadOnly();
+    }
+
+    private bool ValidateImageProvenance(ToolExecutionRequest request, out string errorCode)
+    {
+        if (string.IsNullOrWhiteSpace(request.ContainerImageRepository))
+        {
+            errorCode = "TOOL_PROVENANCE_NOT_VERIFIED: ContainerImageRepository is missing or unconfigured.";
+            return false;
+        }
+
+        var repo = request.ContainerImageRepository.Trim();
+        var isTrustedRegistry = _options.TrustedImageRegistries != null && _options.TrustedImageRegistries.Any(trusted =>
+            repo.Equals(trusted, StringComparison.OrdinalIgnoreCase) ||
+            repo.StartsWith(trusted + "/", StringComparison.OrdinalIgnoreCase));
+
+        if (!isTrustedRegistry)
+        {
+            errorCode = $"TOOL_PROVENANCE_NOT_VERIFIED: ContainerImageRepository '{repo}' is not in the trusted registry allowlist.";
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(request.ContainerImageDigest))
+        {
+            errorCode = "TOOL_PROVENANCE_NOT_VERIFIED: ContainerImageDigest is missing. Immutable digest pin required.";
+            return false;
+        }
+
+        var digest = request.ContainerImageDigest.Trim();
+        if (!DigestRegex.IsMatch(digest))
+        {
+            errorCode = $"TOOL_PROVENANCE_NOT_VERIFIED: ContainerImageDigest '{digest}' does not match sha256 hexadecimal format.";
+            return false;
+        }
+
+        errorCode = string.Empty;
+        return true;
     }
 
     private async Task<ToolExecutionResult> ExecuteDockerContainerAsync(
@@ -147,16 +224,21 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         string scratchDirectory,
         CancellationToken cancellationToken)
     {
-        var containerName = $"apihunter-{request.ToolKey}-{request.ScanJobId:N}";
-        var imageDigest = request.AuthorizedManifest != null && request.AuthorizedManifest.TryGetValue("ImageDigest", out var digestVal) ? digestVal : null;
-        var imageName = string.IsNullOrWhiteSpace(imageDigest)
-            ? $"apihunter/{request.ToolKey}:{request.Version}"
-            : $"apihunter/{request.ToolKey}@{imageDigest}";
+        var containerName = $"apihunter-{request.ToolKey.ToLowerInvariant()}-{request.ScanJobId:N}";
+        if (!ContainerNameRegex.IsMatch(containerName))
+        {
+            _logger.LogError("DockerScannerRuntime container name '{ContainerName}' failed format validation.", containerName);
+            return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "INVALID_CONTAINER_NAME");
+        }
+
+        var imageSpec = !string.IsNullOrWhiteSpace(request.ContainerImageRepository) && !string.IsNullOrWhiteSpace(request.ContainerImageDigest)
+            ? $"{request.ContainerImageRepository}@{request.ContainerImageDigest}"
+            : $"ghcr.io/apihunter-security/{request.ToolKey}:latest";
 
         var fullArgs = new List<string>(isolationArgs)
         {
             $"--name={containerName}",
-            imageName,
+            imageSpec,
             request.Executable!
         };
 
@@ -220,7 +302,7 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
             if (cancellationToken.IsCancellationRequested)
             {
                 _logger.LogWarning("Docker container execution for tool '{ToolKey}' was cancelled by user.", request.ToolKey);
-                return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "CANCELLED");
+                return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Cancelled, -1, null, "CANCELLED");
             }
 
             _logger.LogWarning("Docker container execution for tool '{ToolKey}' timed out after {Timeout}.", request.ToolKey, _options.ExecutionTimeout);
@@ -233,17 +315,19 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         }
     }
 
-    private static void ValidateScratchMountPath(string scratchDirectory)
+    private static void ValidateScratchMountPath(string scratchDirectory, string platformScratchRoot)
     {
         if (string.IsNullOrWhiteSpace(scratchDirectory))
             throw new ArgumentException("Scratch directory path cannot be empty.", nameof(scratchDirectory));
 
         var fullPath = Path.GetFullPath(scratchDirectory);
-        var tempRoot = Path.GetFullPath(Path.GetTempPath());
+        var canonicalRoot = Path.GetFullPath(platformScratchRoot);
 
-        if (!fullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+        var prefix = canonicalRoot.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+        if (!fullPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && !fullPath.Equals(canonicalRoot, StringComparison.OrdinalIgnoreCase))
         {
-            throw new InvalidOperationException($"Scratch directory '{fullPath}' is outside approved root '{tempRoot}'.");
+            throw new InvalidOperationException($"Scratch directory '{fullPath}' is outside approved root '{canonicalRoot}'.");
         }
 
         var dirInfo = new DirectoryInfo(fullPath);
@@ -257,6 +341,11 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
     {
         try
         {
+            if (!ContainerNameRegex.IsMatch(containerName))
+            {
+                return;
+            }
+
             var psi = new ProcessStartInfo
             {
                 FileName = "docker",

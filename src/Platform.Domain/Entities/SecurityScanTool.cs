@@ -35,6 +35,8 @@ public class SecurityScanTool
 
     public string? ArtifactSignature { get; set; }
 
+    public string? ContainerImageRepository { get; set; }
+
     public string? ContainerImageDigest { get; set; }
 
     public bool Enabled { get; set; } = true;

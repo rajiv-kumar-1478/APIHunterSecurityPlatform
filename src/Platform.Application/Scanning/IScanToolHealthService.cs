@@ -10,4 +10,6 @@ public interface IScanToolHealthService
     Task<ScanToolDto> CheckToolHealthAsync(string toolKey, CancellationToken ct = default);
 
     Task<IReadOnlyList<ScanToolDto>> GetAllToolStatusAsync(CancellationToken ct = default);
+
+    Task<ScannerRuntimeHealthDto> GetScannerRuntimeHealthAsync(CancellationToken ct = default);
 }

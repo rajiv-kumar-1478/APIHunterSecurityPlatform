@@ -5,7 +5,13 @@ namespace Platform.Domain.Entities;
 
 public sealed record ScannerRuntimeOptions
 {
-    public ScannerRuntimeMode RuntimeMode { get; init; } = ScannerRuntimeMode.Docker;
+    public ScannerRuntimeMode RuntimeMode { get; init; } = ScannerRuntimeMode.LocalDocker;
+
+    public EgressGatewayMode EgressGatewayMode { get; init; } = EgressGatewayMode.EnforcedGateway;
+
+    public string EgressNetworkName { get; init; } = "apihunter-sandbox-net";
+
+    public string EgressGatewayEndpoint { get; init; } = "http://127.0.0.1:8888";
 
     public double MaxCpuCores { get; init; } = 2.0;
 
@@ -24,4 +30,15 @@ public sealed record ScannerRuntimeOptions
     public bool NoNewPrivileges { get; init; } = true;
 
     public bool RequireDockerSandbox { get; init; } = false;
+
+    public bool EnforceImageProvenance { get; init; } = true;
+
+    public IReadOnlyList<string> TrustedImageRegistries { get; init; } = new[]
+    {
+        "ghcr.io/apihunter-security",
+        "docker.io/apihunter",
+        "quay.io/apihunter"
+    };
+
+    public string PlatformScratchRoot { get; init; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "apihunter_scans");
 }

@@ -309,8 +309,8 @@ public class GenericCliToolAdapterSecurityTests
             var mockAdapter = new Mock<IGenericCliToolAdapter>();
             mockAdapter.Setup(a => a.ToolKey).Returns(toolKey);
             mockAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                       .Callback<ToolExecutionRequest, ProviderSecretLease, string, CancellationToken>((req, _, _, _) => executedExecutables.Add(req.Executable ?? req.ToolKey))
-                       .ReturnsAsync(new ToolExecutionResult(toolKey, "v4.0.0", ToolExecutionStatus.Success, 0, null, null));
+                       .Callback<ToolExecutionRequest, ProviderSecretLease, string, CancellationToken>((req, _, _, _) => executedExecutables.Add(req.Executable!))
+                       .ReturnsAsync(new ToolExecutionResult(toolKey, "v2.0.0", ToolExecutionStatus.Success, 0, null, null));
             return mockAdapter.Object;
         };
 

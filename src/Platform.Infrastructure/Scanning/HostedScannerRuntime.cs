@@ -25,20 +25,20 @@ public class HostedScannerRuntime : IScannerRuntimeSandbox
     private readonly HttpClient _httpClient;
     private readonly string? _serviceKey;
     private readonly Func<string, IGenericCliToolAdapter> _localFallbackAdapterFactory;
-    private readonly IEgressNetworkProxy _egressNetworkProxy;
+    private readonly IEnforcedEgressGateway _egressGateway;
     private readonly ILogger<HostedScannerRuntime> _logger;
 
     public HostedScannerRuntime(
         HttpClient httpClient,
         string? serviceKey,
         Func<string, IGenericCliToolAdapter> localFallbackAdapterFactory,
-        IEgressNetworkProxy egressNetworkProxy,
+        IEnforcedEgressGateway egressGateway,
         ILogger<HostedScannerRuntime> logger)
     {
         _httpClient = httpClient ?? throw new ArgumentNullException(nameof(httpClient));
         _serviceKey = serviceKey;
         _localFallbackAdapterFactory = localFallbackAdapterFactory ?? throw new ArgumentNullException(nameof(localFallbackAdapterFactory));
-        _egressNetworkProxy = egressNetworkProxy ?? throw new ArgumentNullException(nameof(egressNetworkProxy));
+        _egressGateway = egressGateway ?? throw new ArgumentNullException(nameof(egressGateway));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -67,8 +67,8 @@ public class HostedScannerRuntime : IScannerRuntimeSandbox
             return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "EXPIRED_EGRESS_AUTHORIZATION");
         }
 
-        // 3. Establish Scoped Network Proxy Policy Enforcement
-        await using var scopedPolicy = await _egressNetworkProxy.CreateScopedPolicyAsync(egressTarget, cancellationToken);
+        // 3. Establish Scoped Enforced Egress Gateway Session
+        await using var scopedPolicy = await _egressGateway.CreateScopedSessionAsync(egressTarget, cancellationToken);
 
         // 4. Remote Private Service Endpoint Dispatch (or local authenticated execution fallback)
         if (_httpClient.BaseAddress != null)

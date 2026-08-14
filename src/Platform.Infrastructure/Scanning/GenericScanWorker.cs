@@ -122,6 +122,8 @@ public class GenericScanWorker : IScanWorker
                     ScanJobId: job.Id,
                     Timeout: TimeSpan.FromMinutes(10),
                     Executable: tool.Executable,
+                    ContainerImageRepository: tool.ContainerImageRepository,
+                    ContainerImageDigest: tool.ContainerImageDigest,
                     AuthorizedManifest: authorizedManifestMap
                 );
 
@@ -130,11 +132,11 @@ public class GenericScanWorker : IScanWorker
                     : await cliAdapter.ExecuteAsync(toolRequest, secretLease, scratchDirectory, ct);
                 toolResults.Add(toolResult);
 
-                if (toolResult.Status == ToolExecutionStatus.TimedOut || toolResult.Status == ToolExecutionStatus.Failed)
+                if (toolResult.Status == ToolExecutionStatus.TimedOut || toolResult.Status == ToolExecutionStatus.Failed || toolResult.Status == ToolExecutionStatus.Cancelled)
                 {
                     if (tool.Required)
                     {
-                        _logger.LogError("Required tool '{ToolKey}' failed or timed out for job '{ScanJobId}'. Aborting scan.", tool.ToolKey, scanJobId);
+                        _logger.LogError("Required tool '{ToolKey}' failed, timed out, or was cancelled for job '{ScanJobId}'. Aborting scan.", tool.ToolKey, scanJobId);
                         job.Status = SecurityScanJobStatus.Failed;
                         job.FailureReason = $"Required tool '{tool.ToolKey}' failed: {toolResult.ErrorCode}";
                         job.CompletedAtUtc = DateTime.UtcNow;

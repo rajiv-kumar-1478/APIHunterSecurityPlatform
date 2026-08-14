@@ -115,4 +115,20 @@ public class SecurityScanControllerTests : IDisposable
         job.TargetUrl.Should().Be("https://authorized.example.com");
         job.Status.Should().Be(SecurityScanJobStatus.Queued);
     }
+
+    [Fact]
+    public async Task Test5_GetRuntimeHealth_ReturnsStructuredStatus()
+    {
+        var result = await _controller.GetRuntimeHealth(default);
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        var health = okResult.Value.Should().BeOfType<ScannerRuntimeHealthDto>().Subject;
+
+        health.Should().NotBeNull();
+        health.Runtime.Should().NotBeNull();
+        health.Provenance.Should().NotBeNull();
+        health.Provenance.ImageDigestRequired.Should().BeTrue();
+        health.Egress.Should().NotBeNull();
+        health.Limits.Should().NotBeNull();
+        health.Limits.CpuCores.Should().Be(2.0);
+    }
 }

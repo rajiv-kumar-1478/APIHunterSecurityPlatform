@@ -48,6 +48,13 @@ public class SecurityScanController : ControllerBase
         return Ok(tools);
     }
 
+    [HttpGet("runtime/health")]
+    public async Task<ActionResult<ScannerRuntimeHealthDto>> GetRuntimeHealth(CancellationToken ct)
+    {
+        var health = await _toolHealthService.GetScannerRuntimeHealthAsync(ct);
+        return Ok(health);
+    }
+
     [HttpGet("providers")]
     public async Task<ActionResult<IReadOnlyList<ScanProviderDto>>> GetProviders(CancellationToken ct)
     {

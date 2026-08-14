@@ -36,22 +36,88 @@ public class HostedScanWorkerIntegrationTests
     }
 
     [Fact]
-    public async Task DockerScannerRuntime_Integration_ExecutesRealDockerOrFailsClosedGracefully()
+    public void DockerScannerRuntime_BuildsCompleteIsolationAndProvenanceArguments()
     {
         var options = new ScannerRuntimeOptions
         {
-            RuntimeMode = ScannerRuntimeMode.Docker,
+            RuntimeMode = ScannerRuntimeMode.LocalDocker,
+            RequireDockerSandbox = true,
+            EgressNetworkName = "apihunter-sandbox-net",
+            EgressGatewayEndpoint = "http://127.0.0.1:8888"
+        };
+
+        var mockSession = new Mock<IEnforcedEgressGatewaySession>();
+        mockSession.Setup(s => s.NetworkName).Returns("apihunter-sandbox-net");
+        mockSession.Setup(s => s.GatewayEndpoint).Returns("http://127.0.0.1:8888");
+        mockSession.Setup(s => s.ContainerEnvironmentVariables).Returns(new Dictionary<string, string>
+        {
+            ["HTTP_PROXY"] = "http://127.0.0.1:8888",
+            ["HTTPS_PROXY"] = "http://127.0.0.1:8888",
+            ["NO_PROXY"] = "",
+            ["APIHUNTER_EGRESS_TARGET"] = "example.com"
+        });
+
+        var gatewayMock = new Mock<IEnforcedEgressGateway>();
+        gatewayMock.Setup(g => g.CreateScopedSessionAsync(It.IsAny<EgressTarget>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(mockSession.Object);
+
+        Mock<IGenericCliToolAdapter> cliAdapterMock = new();
+        var runtime = new DockerScannerRuntime(options, toolKey => cliAdapterMock.Object, gatewayMock.Object, NullLogger<DockerScannerRuntime>.Instance);
+
+        var egressTarget = new EgressTarget(
+            RawTargetUrl: "https://example.com",
+            CanonicalHost: "example.com",
+            Port: 443,
+            Scheme: "https",
+            ApprovedIpAddresses: new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Parse("93.184.216.34") },
+            ResolvedAtUtc: DateTime.UtcNow,
+            ExpiresAtUtc: DateTime.UtcNow.AddMinutes(10),
+            PolicyVersion: "v1.0");
+
+        var request = new ToolExecutionRequest(
+            ToolKey: "subfinder",
+            Version: "v2.6.6",
+            Arguments: new Dictionary<string, string> { ["d"] = "example.com" },
+            ScanJobId: Guid.NewGuid(),
+            Timeout: TimeSpan.FromMinutes(1),
+            Executable: "subfinder",
+            ContainerImageRepository: "ghcr.io/apihunter-security/subfinder",
+            ContainerImageDigest: "sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd46059d33ef0"
+        );
+
+        var isolationArgs = runtime.BuildDockerIsolationArguments(request, egressTarget, mockSession.Object, Path.GetTempPath());
+
+        isolationArgs.Should().Contain("--read-only");
+        isolationArgs.Should().Contain("--cap-drop=ALL");
+        isolationArgs.Should().Contain("--security-opt=no-new-privileges:true");
+        isolationArgs.Should().Contain("--network=apihunter-sandbox-net");
+        isolationArgs.Should().Contain("--env=HTTP_PROXY=http://127.0.0.1:8888");
+        isolationArgs.Should().Contain("--env=HTTPS_PROXY=http://127.0.0.1:8888");
+        isolationArgs.Should().Contain("--env=NO_PROXY=");
+        isolationArgs.Should().Contain("--env=APIHUNTER_EGRESS_TARGET=example.com");
+    }
+
+    [Fact]
+    public async Task DockerScannerRuntime_FailsClosed_WhenDockerUnavailable_AndSandboxRequired()
+    {
+        var options = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.LocalDocker,
             RequireDockerSandbox = true
         };
 
-        var egressProxyMock = new Mock<IEgressNetworkProxy>();
-        var mockHandle = new Mock<IAsyncDisposable>();
-        mockHandle.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
-        egressProxyMock.Setup(p => p.CreateScopedPolicyAsync(It.IsAny<EgressTarget>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(mockHandle.Object);
+        var mockSession = new Mock<IEnforcedEgressGatewaySession>();
+        mockSession.Setup(s => s.NetworkName).Returns("apihunter-sandbox-net");
+        mockSession.Setup(s => s.GatewayEndpoint).Returns("http://127.0.0.1:8888");
+        mockSession.Setup(s => s.ContainerEnvironmentVariables).Returns(new Dictionary<string, string>());
+        mockSession.Setup(s => s.DisposeAsync()).Returns(ValueTask.CompletedTask);
+
+        var gatewayMock = new Mock<IEnforcedEgressGateway>();
+        gatewayMock.Setup(g => g.CreateScopedSessionAsync(It.IsAny<EgressTarget>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(mockSession.Object);
 
         Mock<IGenericCliToolAdapter> cliAdapterMock = new();
-        var runtime = new DockerScannerRuntime(options, toolKey => cliAdapterMock.Object, egressProxyMock.Object, NullLogger<DockerScannerRuntime>.Instance);
+        var runtime = new DockerScannerRuntime(options, toolKey => cliAdapterMock.Object, gatewayMock.Object, NullLogger<DockerScannerRuntime>.Instance);
 
         var egressTarget = new EgressTarget(
             RawTargetUrl: "https://example.com",
@@ -64,14 +130,24 @@ public class HostedScanWorkerIntegrationTests
             PolicyVersion: "v1.0");
 
         using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
-        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(1), Executable: "subfinder");
+        var request = new ToolExecutionRequest(
+            ToolKey: "subfinder",
+            Version: "v2.6.6",
+            Arguments: new Dictionary<string, string>(),
+            ScanJobId: Guid.NewGuid(),
+            Timeout: TimeSpan.FromMinutes(1),
+            Executable: "subfinder",
+            ContainerImageRepository: "ghcr.io/apihunter-security/subfinder",
+            ContainerImageDigest: "sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd46059d33ef0"
+        );
 
-        var result = await runtime.ExecuteInSandboxAsync(request, egressTarget, secretLease, Path.GetTempPath());
+        var scratchDir = Path.Combine(options.PlatformScratchRoot, request.ScanJobId.ToString("N"));
+        var result = await runtime.ExecuteInSandboxAsync(request, egressTarget, secretLease, scratchDir);
 
         result.Should().NotBeNull();
         if (result.Status == ToolExecutionStatus.Failed)
         {
-            result.ErrorCode.Should().Match(code => code == "DOCKER_RUNTIME_UNAVAILABLE" || code == "DOCKER_CONTAINER_EXECUTION_FAILED" || code.StartsWith("DOCKER_LAUNCH_FAILED"));
+            result.ErrorCode.Should().Match(code => code == "DOCKER_RUNTIME_UNAVAILABLE" || code == "DOCKER_CONTAINER_EXECUTION_FAILED" || code!.StartsWith("DOCKER_LAUNCH_FAILED"));
         }
     }
 
@@ -102,7 +178,7 @@ public class HostedScanWorkerIntegrationTests
             var mockAdapter = new Mock<IGenericCliToolAdapter>();
             mockAdapter.Setup(a => a.ToolKey).Returns(toolKey);
             mockAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-                       .Callback<ToolExecutionRequest, ProviderSecretLease, string, CancellationToken>((req, _, _, _) => executedExecutable = req.Executable ?? req.ToolKey)
+                       .Callback<ToolExecutionRequest, ProviderSecretLease, string, CancellationToken>((req, _, _, _) => executedExecutable = req.Executable!)
                        .ReturnsAsync(new ToolExecutionResult(toolKey, "v4.0.0", ToolExecutionStatus.Success, 0, null, null));
             return mockAdapter.Object;
         };

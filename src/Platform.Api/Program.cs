@@ -274,6 +274,13 @@ try
         new GenericCliToolAdapter(toolKey, sp.GetRequiredService<ILogger<GenericCliToolAdapter>>()));
     builder.Services.AddScoped<IScanWorker, GenericScanWorker>();
 
+    builder.Services.AddSingleton(new ScannerRuntimeOptions());
+    builder.Services.AddSingleton<IEgressPolicyEngine, EgressPolicyEngine>();
+    builder.Services.AddSingleton<EnforcedEgressGateway>();
+    builder.Services.AddSingleton<IEnforcedEgressGateway>(sp => sp.GetRequiredService<EnforcedEgressGateway>());
+    builder.Services.AddSingleton<IEgressNetworkProxy>(sp => sp.GetRequiredService<EnforcedEgressGateway>());
+    builder.Services.AddSingleton<IScannerRuntimeSandbox, DockerScannerRuntime>();
+
     if (builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing"))
     {
         builder.Services.AddSingleton<IScanProviderSecretStore, InMemoryScanProviderSecretStore>();

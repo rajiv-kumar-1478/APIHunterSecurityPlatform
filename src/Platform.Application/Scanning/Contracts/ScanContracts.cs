@@ -50,6 +50,8 @@ public record ToolExecutionRequest(
     Guid ScanJobId,
     TimeSpan Timeout,
     string? Executable = null,
+    string? ContainerImageRepository = null,
+    string? ContainerImageDigest = null,
     IReadOnlyDictionary<string, string>? AuthorizedManifest = null
 );
 
@@ -120,7 +122,9 @@ public record ScanToolDto(
     bool Required,
     IReadOnlyList<string> Capabilities,
     ToolHealthStatus HealthStatus,
-    DateTime? LastHealthCheckUtc
+    DateTime? LastHealthCheckUtc,
+    string? ContainerImageRepository = null,
+    string? ContainerImageDigest = null
 );
 
 public record ScanProviderDto(
@@ -171,18 +175,39 @@ public record ProvisioningResult(
     string? ErrorMessage
 );
 
-public record ScannerRuntimeHealthDto(
-    string Provider,
+public record RuntimeHealthInfo(
     string Mode,
-    string Status,
-    string Version,
+    bool Available,
+    string Version
+);
+
+public record ProvenanceHealthInfo(
+    bool ImageDigestRequired,
+    IReadOnlyList<string> TrustedRegistries
+);
+
+public record EgressHealthInfo(
+    string Mode,
+    bool Enforced,
+    bool GatewayHealthy,
+    string GatewayEndpoint
+);
+
+public record RuntimeLimitsInfo(
     double CpuCores,
     long MemoryBytes,
-    int MaxPids,
+    int Pids,
     long ScratchBytes,
-    int TimeoutMinutes,
-    bool EgressProtected,
+    int TimeoutSeconds
+);
+
+public record ScannerRuntimeHealthDto(
+    RuntimeHealthInfo Runtime,
+    ProvenanceHealthInfo Provenance,
+    EgressHealthInfo Egress,
+    RuntimeLimitsInfo Limits,
     int ActiveJobsCount,
+    bool ReadyForScans,
     DateTime LastHealthCheckUtc
 );
 

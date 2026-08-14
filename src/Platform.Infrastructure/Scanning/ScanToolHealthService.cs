@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,18 +21,24 @@ public class ScanToolHealthService : IScanToolHealthService
     private readonly ScanToolRegistryService _registryService;
     private readonly IPlatformDbContext _dbContext;
     private readonly IToolRuntimeVerifier _runtimeVerifier;
+    private readonly ScannerRuntimeOptions _options;
+    private readonly IEnforcedEgressGateway? _egressGateway;
     private readonly ILogger<ScanToolHealthService> _logger;
 
     public ScanToolHealthService(
         ScanToolRegistryService registryService,
         ILogger<ScanToolHealthService> logger,
         IPlatformDbContext? dbContext = null,
-        IToolRuntimeVerifier? runtimeVerifier = null)
+        IToolRuntimeVerifier? runtimeVerifier = null,
+        ScannerRuntimeOptions? options = null,
+        IEnforcedEgressGateway? egressGateway = null)
     {
         _registryService = registryService;
         _logger = logger;
         _dbContext = dbContext!;
         _runtimeVerifier = runtimeVerifier ?? new ToolRuntimeVerifier(NullLogger<ToolRuntimeVerifier>.Instance);
+        _options = options ?? new ScannerRuntimeOptions();
+        _egressGateway = egressGateway;
     }
 
     public async Task<ScanToolDto> CheckToolHealthAsync(string toolKey, CancellationToken ct = default)
@@ -101,6 +108,98 @@ public class ScanToolHealthService : IScanToolHealthService
         return await _registryService.GetAllToolsAsync(ct);
     }
 
+    public async Task<ScannerRuntimeHealthDto> GetScannerRuntimeHealthAsync(CancellationToken ct = default)
+    {
+        var (dockerAvailable, dockerVersion) = CheckDockerDaemon();
+        var gatewayHealthy = _egressGateway == null || await _egressGateway.IsGatewayHealthyAsync(ct);
+
+        var activeJobsCount = 0;
+        if (_dbContext != null)
+        {
+            try
+            {
+                activeJobsCount = await _dbContext.SecurityScanJobs
+                    .CountAsync(j => j.Status == SecurityScanJobStatus.Running || j.Status == SecurityScanJobStatus.Queued, ct);
+            }
+            catch
+            {
+                // Fallback for in-memory or uninitialized test DBs
+            }
+        }
+
+        var isRuntimeAvailable = _options.RuntimeMode switch
+        {
+            ScannerRuntimeMode.LocalDocker => dockerAvailable,
+            ScannerRuntimeMode.CloudManagedContainer => true,
+            ScannerRuntimeMode.UnsafeLocalProcessFallback => true,
+            _ => dockerAvailable
+        };
+
+        var readyForScans = isRuntimeAvailable && gatewayHealthy && _options.EnforceImageProvenance;
+
+        return new ScannerRuntimeHealthDto(
+            Runtime: new RuntimeHealthInfo(
+                Mode: _options.RuntimeMode.ToString(),
+                Available: isRuntimeAvailable,
+                Version: dockerVersion
+            ),
+            Provenance: new ProvenanceHealthInfo(
+                ImageDigestRequired: _options.EnforceImageProvenance,
+                TrustedRegistries: _options.TrustedImageRegistries
+            ),
+            Egress: new EgressHealthInfo(
+                Mode: _options.EgressGatewayMode.ToString(),
+                Enforced: _options.EgressGatewayMode == EgressGatewayMode.EnforcedGateway,
+                GatewayHealthy: gatewayHealthy,
+                GatewayEndpoint: _options.EgressGatewayEndpoint
+            ),
+            Limits: new RuntimeLimitsInfo(
+                CpuCores: _options.MaxCpuCores,
+                MemoryBytes: _options.MaxMemoryBytes,
+                Pids: _options.MaxPids,
+                ScratchBytes: _options.MaxScratchDiskBytes,
+                TimeoutSeconds: (int)_options.ExecutionTimeout.TotalSeconds
+            ),
+            ActiveJobsCount: activeJobsCount,
+            ReadyForScans: readyForScans,
+            LastHealthCheckUtc: DateTime.UtcNow
+        );
+    }
+
+    private static (bool Available, string Version) CheckDockerDaemon()
+    {
+        try
+        {
+            using var proc = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "docker",
+                    Arguments = "--version",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            proc.Start();
+            var output = proc.StandardOutput.ReadToEnd();
+            var exited = proc.WaitForExit(3000);
+
+            if (exited && proc.ExitCode == 0)
+            {
+                return (true, string.IsNullOrWhiteSpace(output) ? "Docker CLI Active" : output.Trim());
+            }
+
+            return (false, "Docker Daemon Offline / Unavailable");
+        }
+        catch
+        {
+            return (false, "Docker CLI Not Installed / Unavailable");
+        }
+    }
+
     private static ScanToolDto MapToDto(SecurityScanTool tool) => new(
         Id: tool.Id,
         ToolKey: tool.ToolKey,
@@ -111,6 +210,8 @@ public class ScanToolHealthService : IScanToolHealthService
         Required: tool.Required,
         Capabilities: Array.Empty<string>(),
         HealthStatus: tool.HealthStatus,
-        LastHealthCheckUtc: tool.LastHealthCheckUtc
+        LastHealthCheckUtc: tool.LastHealthCheckUtc,
+        ContainerImageRepository: tool.ContainerImageRepository,
+        ContainerImageDigest: tool.ContainerImageDigest
     );
 }

@@ -181,14 +181,24 @@ public enum ToolExecutionStatus
     Warning,
     Failed,
     TimedOut,
+    Cancelled,
     Skipped
 }
 
 public enum ScannerRuntimeMode
 {
-    Docker,
-    Hosted,
-    UnsafeLocalProcessFallback
+    LocalDocker,
+    CloudManagedContainer,
+    UnsafeLocalProcessFallback,
+    Docker = LocalDocker,
+    Hosted = CloudManagedContainer
+}
+
+public enum EgressGatewayMode
+{
+    EnforcedGateway,
+    IsolatedNetwork,
+    None
 }
 
 public enum RemediationVerificationStatus

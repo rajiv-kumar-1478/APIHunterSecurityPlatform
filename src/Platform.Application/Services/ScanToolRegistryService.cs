@@ -148,7 +148,9 @@ public class ScanToolRegistryService
         Required: tool.Required,
         Capabilities: ParseCapabilities(tool.CapabilitiesJson),
         HealthStatus: tool.HealthStatus,
-        LastHealthCheckUtc: tool.LastHealthCheckUtc
+        LastHealthCheckUtc: tool.LastHealthCheckUtc,
+        ContainerImageRepository: tool.ContainerImageRepository,
+        ContainerImageDigest: tool.ContainerImageDigest
     );
 
     private static IReadOnlyList<string> ParseCapabilities(string json)
