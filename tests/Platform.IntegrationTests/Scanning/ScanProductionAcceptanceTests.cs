@@ -217,6 +217,9 @@ public class ScanProductionAcceptanceTests : IDisposable
 
         using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string> { ["API_KEY"] = "secret-token" }, TimeSpan.FromMinutes(10));
 
+        var runtimeOptions = new ScannerRuntimeOptions();
+        var scratchDirectory = Path.Combine(runtimeOptions.PlatformScratchRoot, createdJob.Id.ToString("N"));
+
         // ----------------------------------------------------------------------------------
         // STEP 4: Execute Full Orchestrator Pipeline (Sandbox -> Real Parsers -> Ingestion Engine)
         // ----------------------------------------------------------------------------------
@@ -224,7 +227,7 @@ public class ScanProductionAcceptanceTests : IDisposable
             createdJob,
             egressTarget,
             secretLease,
-            Path.GetTempPath(),
+            scratchDirectory,
             testSandbox,
             null,
             default
@@ -235,6 +238,11 @@ public class ScanProductionAcceptanceTests : IDisposable
         receipt.FinalJobStatus.Should().Be(SecurityScanJobStatus.Completed);
         receipt.ToolReceipts.Should().HaveCount(2);
         receipt.TotalFindingsCreated.Should().BeGreaterThanOrEqualTo(1);
+
+        // Invariant: Scratch directory passed to sandbox must be inside PlatformScratchRoot
+        testSandbox.ExecutedScratchDirectories.Should().NotBeEmpty();
+        testSandbox.ExecutedScratchDirectories.Should().AllSatisfy(dir =>
+            dir.Should().StartWith(runtimeOptions.PlatformScratchRoot, "Scratch directory must be rooted within ScannerRuntimeOptions.PlatformScratchRoot"));
 
         // Verify valid SHA-256 digests in tool receipts
         foreach (var toolReceipt in receipt.ToolReceipts)
@@ -495,6 +503,7 @@ public class ScanProductionAcceptanceTests : IDisposable
     private class MockScannerRuntimeSandbox : IScannerRuntimeSandbox
     {
         private readonly Dictionary<string, (ToolExecutionStatus Status, string? Output, string? ErrorCode)> _configured = new(StringComparer.OrdinalIgnoreCase);
+        public List<string> ExecutedScratchDirectories { get; } = new();
 
         public void RegisterToolOutput(string toolKey, string stdout)
         {
@@ -508,6 +517,8 @@ public class ScanProductionAcceptanceTests : IDisposable
             string scratchDirectory,
             CancellationToken ct = default)
         {
+            ExecutedScratchDirectories.Add(scratchDirectory);
+
             if (_configured.TryGetValue(request.ToolKey, out var conf))
             {
                 return Task.FromResult(new ToolExecutionResult(
