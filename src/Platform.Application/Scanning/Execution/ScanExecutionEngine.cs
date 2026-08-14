@@ -12,6 +12,7 @@ using Platform.Application.Scanning.Adapters;
 using Platform.Application.Scanning.Contracts;
 using Platform.Application.Scanning.Execution.Contracts;
 using Platform.Application.Scanning.Planning.Contracts;
+using Platform.Application.Scanning.Validation;
 using Platform.Application.Services;
 using Platform.Domain.Entities;
 
@@ -29,6 +30,8 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
     private readonly IPlatformDbContext _dbContext;
     private readonly IScannerRuntimeSandbox? _runtimeSandbox;
     private readonly ScanFindingIngestionEngine? _ingestionEngine;
+    private readonly IEgressPolicyEngine? _egressPolicyEngine;
+    private readonly IToolProvenanceVerifier? _provenanceVerifier;
     private readonly ILogger<ScanExecutionEngine> _logger;
 
     public ScanExecutionEngine(
@@ -36,13 +39,17 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
         IPlatformDbContext dbContext,
         ILogger<ScanExecutionEngine> logger,
         IScannerRuntimeSandbox? runtimeSandbox = null,
-        ScanFindingIngestionEngine? ingestionEngine = null)
+        ScanFindingIngestionEngine? ingestionEngine = null,
+        IEgressPolicyEngine? egressPolicyEngine = null,
+        IToolProvenanceVerifier? provenanceVerifier = null)
     {
         _toolRegistry = toolRegistry ?? throw new ArgumentNullException(nameof(toolRegistry));
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _runtimeSandbox = runtimeSandbox;
         _ingestionEngine = ingestionEngine;
+        _egressPolicyEngine = egressPolicyEngine;
+        _provenanceVerifier = provenanceVerifier;
     }
 
     public async Task<PlanExecutionResult> ExecutePlanAsync(
@@ -145,6 +152,24 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                 continue;
             }
 
+            if (_provenanceVerifier != null)
+            {
+                var provResult = await _provenanceVerifier.VerifyManifestDigestAsync(adapter.Manifest, ct);
+                if (!provResult.IsVerified)
+                {
+                    invStopwatch.Stop();
+                    invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                    invocationRecord.ErrorMessage = $"PROVENANCE_SNAPSHOT_MISMATCH: Adapter container image digest did not verify against supply chain record. Expected: {provResult.ExpectedDigest}, Resolved: {provResult.ResolvedDigest}. Reason: {provResult.ErrorMessage}";
+                    invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                    invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                    await _dbContext.SaveChangesAsync(ct);
+
+                    toolsFailed++;
+                    invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                    continue;
+                }
+            }
+
             using var toolCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             toolCts.CancelAfter(DefaultPerToolTimeout);
 
@@ -161,50 +186,18 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                 var planResult = adapter.PrepareExecution(execContext);
 
                 // 5. Authoritative Target URL & DNS Egress Resolution
-                Uri targetUri;
-                try
-                {
-                    targetUri = new Uri(plan.TargetUrl);
-                }
-                catch
-                {
-                    targetUri = new Uri("https://" + plan.TargetUrl.TrimStart('/'));
-                }
-
-                var targetHost = targetUri.Host;
-                var targetPort = targetUri.Port > 0 ? targetUri.Port : (targetUri.Scheme == "http" ? 80 : 443);
-                var targetScheme = targetUri.Scheme;
-
-                HashSet<System.Net.IPAddress> approvedIps;
-                if (System.Net.IPAddress.TryParse(targetHost, out var directIp))
-                {
-                    approvedIps = new HashSet<System.Net.IPAddress> { directIp };
-                }
-                else
+                EgressTarget egressTarget;
+                if (_egressPolicyEngine != null)
                 {
                     try
                     {
-                        var resolved = System.Net.Dns.GetHostAddresses(targetHost);
-                        if (resolved == null || resolved.Length == 0)
-                        {
-                            invStopwatch.Stop();
-                            invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
-                            invocationRecord.ErrorMessage = $"TARGET_RESOLUTION_FAILED: Failed to resolve authoritative IP address for host '{targetHost}'.";
-                            invocationRecord.CompletedAtUtc = DateTime.UtcNow;
-                            invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
-                            await _dbContext.SaveChangesAsync(ct);
-
-                            toolsFailed++;
-                            invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
-                            continue;
-                        }
-                        approvedIps = new HashSet<System.Net.IPAddress>(resolved);
+                        egressTarget = await _egressPolicyEngine.EvaluateAndBuildTargetAsync(plan.TargetUrl, ct: toolCts.Token);
                     }
                     catch (Exception ex)
                     {
                         invStopwatch.Stop();
                         invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
-                        invocationRecord.ErrorMessage = $"TARGET_RESOLUTION_FAILED: DNS resolution failed for host '{targetHost}': {ex.Message}";
+                        invocationRecord.ErrorMessage = $"EGRESS_POLICY_VIOLATION: Target '{plan.TargetUrl}' violates egress boundary policy: {ex.Message}";
                         invocationRecord.CompletedAtUtc = DateTime.UtcNow;
                         invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
                         await _dbContext.SaveChangesAsync(ct);
@@ -214,17 +207,73 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                         continue;
                     }
                 }
+                else
+                {
+                    Uri targetUri;
+                    try
+                    {
+                        targetUri = new Uri(plan.TargetUrl);
+                    }
+                    catch
+                    {
+                        targetUri = new Uri("https://" + plan.TargetUrl.TrimStart('/'));
+                    }
 
-                var egressTarget = new EgressTarget(
-                    RawTargetUrl: plan.TargetUrl,
-                    CanonicalHost: targetHost,
-                    Port: targetPort,
-                    Scheme: targetScheme,
-                    ApprovedIpAddresses: approvedIps,
-                    ResolvedAtUtc: DateTime.UtcNow,
-                    ExpiresAtUtc: DateTime.UtcNow.AddMinutes(30),
-                    PolicyVersion: "v1.0-strict"
-                );
+                    var targetHost = targetUri.Host;
+                    var targetPort = targetUri.Port > 0 ? targetUri.Port : (targetUri.Scheme == "http" ? 80 : 443);
+                    var targetScheme = targetUri.Scheme;
+
+                    HashSet<System.Net.IPAddress> approvedIps;
+                    if (System.Net.IPAddress.TryParse(targetHost, out var directIp))
+                    {
+                        approvedIps = new HashSet<System.Net.IPAddress> { directIp };
+                    }
+                    else
+                    {
+                        try
+                        {
+                            var resolved = System.Net.Dns.GetHostAddresses(targetHost);
+                            if (resolved == null || resolved.Length == 0)
+                            {
+                                invStopwatch.Stop();
+                                invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                                invocationRecord.ErrorMessage = $"TARGET_RESOLUTION_FAILED: Failed to resolve authoritative IP address for host '{targetHost}'.";
+                                invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                                invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                                await _dbContext.SaveChangesAsync(ct);
+
+                                toolsFailed++;
+                                invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                                continue;
+                            }
+                            approvedIps = new HashSet<System.Net.IPAddress>(resolved);
+                        }
+                        catch (Exception ex)
+                        {
+                            invStopwatch.Stop();
+                            invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                            invocationRecord.ErrorMessage = $"TARGET_RESOLUTION_FAILED: DNS resolution failed for host '{targetHost}': {ex.Message}";
+                            invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                            invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                            await _dbContext.SaveChangesAsync(ct);
+
+                            toolsFailed++;
+                            invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                            continue;
+                        }
+                    }
+
+                    egressTarget = new EgressTarget(
+                        RawTargetUrl: plan.TargetUrl,
+                        CanonicalHost: targetHost,
+                        Port: targetPort,
+                        Scheme: targetScheme,
+                        ApprovedIpAddresses: approvedIps,
+                        ResolvedAtUtc: DateTime.UtcNow,
+                        ExpiresAtUtc: DateTime.UtcNow.AddMinutes(30),
+                        PolicyVersion: "v1.0-strict"
+                    );
+                }
 
                 var secretLease = new ProviderSecretLease(
                     providerKey: adapter.Manifest.ToolKey,

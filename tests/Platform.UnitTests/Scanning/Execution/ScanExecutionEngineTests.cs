@@ -437,6 +437,122 @@ public class ScanExecutionEngineTests
         Assert.True(capturedRequest.AuthorizedManifest.ContainsKey("httpx"));
         Assert.True(capturedRequest.AuthorizedManifest.ContainsKey("semgrep"));
     }
+
+    [Fact]
+    public async Task ExecutePlan_ProhibitedTargetAddress_FailsClosed()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        var prohibitedTarget = "http://169.254.169.254/latest/meta-data/";
+
+        var egressEngine = new Platform.Infrastructure.Scanning.EgressPolicyEngine(
+            NullLogger<Platform.Infrastructure.Scanning.EgressPolicyEngine>.Instance,
+            host => Task.FromResult(new[] { System.Net.IPAddress.Parse("169.254.169.254") })
+        );
+
+        var engine = new ScanExecutionEngine(
+            _toolRegistry,
+            _dbContext,
+            NullLogger<ScanExecutionEngine>.Instance,
+            runtimeSandbox: new MockScannerRuntimeSandbox((req, eg, sec, sc, ct) => Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(req.ToolKey, req.Version, Platform.Domain.Enums.ToolExecutionStatus.Success, 0, "{}", null))),
+            egressPolicyEngine: egressEngine
+        );
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("httpx", "1.6.8", ScannerExecutionPhase.Discovery, new[] { "http.probe" }, Array.Empty<string>(), "Discovery")
+        };
+
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.WebEndpoint,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "httpx" },
+            RuleSetVersions: new Dictionary<string, string>(),
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_prohibited_target",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: prohibitedTarget
+        );
+
+        var result = await engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Failed, result.OverallStatus);
+        Assert.Single(result.Invocations);
+        Assert.Equal(ToolInvocationStatus.Failed, result.Invocations[0].Status);
+        Assert.Contains("EGRESS_POLICY_VIOLATION", result.Invocations[0].ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ExecutePlan_ProvenanceSnapshotMismatch_FailsClosed()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+
+        var mockVerifier = new MockProvenanceVerifier(manifest =>
+            Task.FromResult(new Platform.Application.Scanning.Validation.ProvenanceVerificationResult(
+                IsVerified: false,
+                ExpectedDigest: "sha256:authentic_hash",
+                ResolvedDigest: "sha256:tampered_hash",
+                ErrorMessage: "Digest tampering detected"
+            ))
+        );
+
+        var engine = new ScanExecutionEngine(
+            _toolRegistry,
+            _dbContext,
+            NullLogger<ScanExecutionEngine>.Instance,
+            runtimeSandbox: new MockScannerRuntimeSandbox((req, eg, sec, sc, ct) => Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(req.ToolKey, req.Version, Platform.Domain.Enums.ToolExecutionStatus.Success, 0, "{}", null))),
+            provenanceVerifier: mockVerifier
+        );
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("httpx", "1.6.8", ScannerExecutionPhase.Discovery, new[] { "http.probe" }, Array.Empty<string>(), "Discovery")
+        };
+
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.WebEndpoint,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "httpx" },
+            RuleSetVersions: new Dictionary<string, string>(),
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_tampered_provenance",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://127.0.0.1"
+        );
+
+        var result = await engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Failed, result.OverallStatus);
+        Assert.Single(result.Invocations);
+        Assert.Equal(ToolInvocationStatus.Failed, result.Invocations[0].Status);
+        Assert.Contains("PROVENANCE_SNAPSHOT_MISMATCH", result.Invocations[0].ErrorMessage);
+    }
+}
+
+public class MockProvenanceVerifier : Platform.Application.Scanning.Validation.IToolProvenanceVerifier
+{
+    private readonly Func<Platform.Application.Scanning.Contracts.ScanToolManifest, Task<Platform.Application.Scanning.Validation.ProvenanceVerificationResult>> _verifier;
+
+    public MockProvenanceVerifier(Func<Platform.Application.Scanning.Contracts.ScanToolManifest, Task<Platform.Application.Scanning.Validation.ProvenanceVerificationResult>> verifier)
+    {
+        _verifier = verifier;
+    }
+
+    public Task<Platform.Application.Scanning.Validation.ProvenanceVerificationResult> VerifyManifestDigestAsync(
+        Platform.Application.Scanning.Contracts.ScanToolManifest manifest,
+        System.Threading.CancellationToken ct = default)
+    {
+        return _verifier(manifest);
+    }
 }
 
 public class MockScannerRuntimeSandbox : Platform.Application.Scanning.IScannerRuntimeSandbox
