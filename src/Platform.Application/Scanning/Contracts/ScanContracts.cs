@@ -201,13 +201,22 @@ public record RuntimeLimitsInfo(
     int TimeoutSeconds
 );
 
+public record SandboxReadinessInfo(
+    bool SandboxIsolated,
+    bool ProxyEnforced,
+    bool LimitsApplied
+);
+
 public record ScannerRuntimeHealthDto(
+    string Status,
     RuntimeHealthInfo Runtime,
+    SandboxReadinessInfo Sandbox,
     ProvenanceHealthInfo Provenance,
     EgressHealthInfo Egress,
     RuntimeLimitsInfo Limits,
     int ActiveJobsCount,
     bool ReadyForScans,
+    IReadOnlyList<string> Diagnostics,
     DateTime LastHealthCheckUtc
 );
 

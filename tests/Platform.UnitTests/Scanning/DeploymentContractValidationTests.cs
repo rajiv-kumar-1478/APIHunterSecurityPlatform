@@ -162,20 +162,90 @@ public class DeploymentContractValidationTests
         var health2 = await healthServiceMissingEndpoint.GetScannerRuntimeHealthAsync();
         health2.ReadyForScans.Should().BeFalse();
         health2.Runtime.Available.Should().BeFalse();
+        health2.Status.Should().Be("NotConfigured");
+        health2.Diagnostics.Should().Contain(d => d.Contains("not configured"));
+    }
+
+    [Fact]
+    public async Task ScannerRuntimeHealth_EvaluatesAllStatusCategories_Accurately()
+    {
+        // 1. Healthy (Cloud Mode with valid 200 response & active gateway)
+        var messageHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK));
+        using var httpClient = new HttpClient(messageHandler);
+
+        var healthyOptions = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
+            HostedScannerServiceEndpoint = "https://scanner.internal",
+            HostedScannerServiceKey = "SECRET_123",
+            EgressGatewayEndpoint = "http://gateway.internal:8888",
+            EnforceImageProvenance = true
+        };
+
+        var healthyService = new ScanToolHealthService(options: healthyOptions, egressGateway: _mockGateway.Object, httpClient: httpClient);
+        var healthyHealth = await healthyService.GetScannerRuntimeHealthAsync();
+        healthyHealth.Status.Should().Be("Healthy");
+        healthyHealth.ReadyForScans.Should().BeTrue();
+        healthyHealth.Diagnostics.Should().Contain(d => d.Contains("operational"));
+
+        // 2. Unavailable (Cloud endpoint returning 500 error)
+        var errHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+        using var errHttpClient = new HttpClient(errHandler);
+
+        var unavailService = new ScanToolHealthService(options: healthyOptions, egressGateway: _mockGateway.Object, httpClient: errHttpClient);
+        var unavailHealth = await unavailService.GetScannerRuntimeHealthAsync();
+        unavailHealth.Status.Should().Be("Unavailable");
+        unavailHealth.ReadyForScans.Should().BeFalse();
+
+        // 3. FailClosed (Image provenance disabled or gateway offline)
+        var failGatewayMock = new Mock<IEnforcedEgressGateway>();
+        failGatewayMock.Setup(g => g.IsGatewayHealthyAsync(It.IsAny<CancellationToken>())).ReturnsAsync(false);
+
+        var failClosedService = new ScanToolHealthService(options: healthyOptions, egressGateway: failGatewayMock.Object, httpClient: httpClient);
+        var failClosedHealth = await failClosedService.GetScannerRuntimeHealthAsync();
+        failClosedHealth.Status.Should().Be("FailClosed");
+        failClosedHealth.ReadyForScans.Should().BeFalse();
+        failClosedHealth.Diagnostics.Should().Contain(d => d.Contains("offline or unreachable"));
+
+        // 4. Degraded (Unsafe local process fallback mode enabled in dev)
+        var devDegradedOptions = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.UnsafeLocalProcessFallback,
+            AllowUnsafeProcessFallback = true,
+            EnforceImageProvenance = true
+        };
+        var degradedService = new ScanToolHealthService(options: devDegradedOptions, egressGateway: _mockGateway.Object);
+        var degradedHealth = await degradedService.GetScannerRuntimeHealthAsync();
+        degradedHealth.Status.Should().Be("Degraded");
+        degradedHealth.ReadyForScans.Should().BeFalse("Unsafe fallback mode must never report ReadyForScans=true in production dashboard");
+        degradedHealth.Diagnostics.Should().Contain(d => d.Contains("unsafe local process mode"));
     }
 
     private class FakeHttpMessageHandler : HttpMessageHandler
     {
-        private readonly HttpResponseMessage _response;
+        private readonly HttpStatusCode _statusCode;
+        private readonly string? _content;
+
+        public FakeHttpMessageHandler(HttpStatusCode statusCode, string? content = null)
+        {
+            _statusCode = statusCode;
+            _content = content;
+        }
 
         public FakeHttpMessageHandler(HttpResponseMessage response)
         {
-            _response = response;
+            _statusCode = response.StatusCode;
+            _content = response.Content?.ReadAsStringAsync().GetAwaiter().GetResult();
         }
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            return Task.FromResult(_response);
+            var response = new HttpResponseMessage(_statusCode);
+            if (_content != null)
+            {
+                response.Content = new StringContent(_content);
+            }
+            return Task.FromResult(response);
         }
     }
 }

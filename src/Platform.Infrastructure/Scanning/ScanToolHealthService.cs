@@ -134,6 +134,7 @@ public class ScanToolHealthService : IScanToolHealthService
             }
         }
 
+        var diagnostics = new List<string>();
         bool isRuntimeAvailable;
         string runtimeVersion;
 
@@ -142,17 +143,40 @@ public class ScanToolHealthService : IScanToolHealthService
             case ScannerRuntimeMode.LocalDocker:
                 isRuntimeAvailable = dockerAvailable;
                 runtimeVersion = dockerVersion;
+                if (!dockerAvailable)
+                {
+                    diagnostics.Add("Docker daemon socket offline or unavailable. LocalDocker sandbox execution is offline.");
+                }
                 break;
 
             case ScannerRuntimeMode.CloudManagedContainer:
                 var cloudHealth = await CheckCloudScannerHealthAsync(ct);
                 isRuntimeAvailable = cloudHealth.Available;
                 runtimeVersion = cloudHealth.Version;
+                if (!cloudHealth.Available)
+                {
+                    if (string.IsNullOrWhiteSpace(_options.HostedScannerServiceEndpoint) || string.IsNullOrWhiteSpace(_options.HostedScannerServiceKey))
+                    {
+                        diagnostics.Add("Cloud scanner service endpoint or secret authentication key not configured.");
+                    }
+                    else
+                    {
+                        diagnostics.Add($"Cloud scanner service at '{_options.HostedScannerServiceEndpoint}' is unreachable or degraded.");
+                    }
+                }
                 break;
 
             case ScannerRuntimeMode.UnsafeLocalProcessFallback:
                 isRuntimeAvailable = _options.AllowUnsafeProcessFallback;
                 runtimeVersion = "Unsafe Local Process (Dev Only)";
+                if (!_options.AllowUnsafeProcessFallback)
+                {
+                    diagnostics.Add("Unsafe local process fallback is strictly disabled.");
+                }
+                else
+                {
+                    diagnostics.Add("WARNING: Scanner is operating in unsafe local process mode without container sandbox isolation.");
+                }
                 break;
 
             default:
@@ -161,13 +185,58 @@ public class ScanToolHealthService : IScanToolHealthService
                 break;
         }
 
-        var readyForScans = isRuntimeAvailable && gatewayHealthy && _options.EnforceImageProvenance;
+        if (!gatewayHealthy)
+        {
+            diagnostics.Add("Enforced egress gateway endpoint is offline or unreachable.");
+        }
+
+        if (!_options.EnforceImageProvenance)
+        {
+            diagnostics.Add("Image provenance enforcement is disabled. Container digests will not be strictly verified.");
+        }
+
+        // Determine Granular Status: Healthy, Degraded, Unavailable, NotConfigured, FailClosed
+        string status;
+        if (_options.RuntimeMode == ScannerRuntimeMode.CloudManagedContainer &&
+            (string.IsNullOrWhiteSpace(_options.HostedScannerServiceEndpoint) || string.IsNullOrWhiteSpace(_options.HostedScannerServiceKey)))
+        {
+            status = "NotConfigured";
+        }
+        else if (!isRuntimeAvailable)
+        {
+            status = "Unavailable";
+        }
+        else if (!gatewayHealthy || !_options.EnforceImageProvenance)
+        {
+            status = "FailClosed";
+        }
+        else if (_options.RuntimeMode == ScannerRuntimeMode.UnsafeLocalProcessFallback)
+        {
+            status = "Degraded";
+        }
+        else
+        {
+            status = "Healthy";
+            diagnostics.Add("All security sandbox and egress gateway boundaries are operational.");
+        }
+
+        var sandboxIsolated = _options.RuntimeMode != ScannerRuntimeMode.UnsafeLocalProcessFallback && isRuntimeAvailable;
+        var proxyEnforced = _options.EgressGatewayMode == EgressGatewayMode.EnforcedGateway && gatewayHealthy;
+        var limitsApplied = _options.MaxCpuCores > 0 && _options.MaxMemoryBytes > 0;
+
+        var readyForScans = status == "Healthy" && isRuntimeAvailable && gatewayHealthy && _options.EnforceImageProvenance;
 
         return new ScannerRuntimeHealthDto(
+            Status: status,
             Runtime: new RuntimeHealthInfo(
                 Mode: _options.RuntimeMode.ToString(),
                 Available: isRuntimeAvailable,
                 Version: runtimeVersion
+            ),
+            Sandbox: new SandboxReadinessInfo(
+                SandboxIsolated: sandboxIsolated,
+                ProxyEnforced: proxyEnforced,
+                LimitsApplied: limitsApplied
             ),
             Provenance: new ProvenanceHealthInfo(
                 ImageDigestRequired: _options.EnforceImageProvenance,
@@ -188,6 +257,7 @@ public class ScanToolHealthService : IScanToolHealthService
             ),
             ActiveJobsCount: activeJobsCount,
             ReadyForScans: readyForScans,
+            Diagnostics: diagnostics,
             LastHealthCheckUtc: DateTime.UtcNow
         );
     }
