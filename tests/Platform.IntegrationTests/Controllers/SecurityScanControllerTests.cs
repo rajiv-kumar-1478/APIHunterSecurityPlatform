@@ -45,8 +45,9 @@ public class SecurityScanControllerTests : IDisposable
         _scanJobService = new ScanJobService(_dbContext, _mockUser.Object, _toolRegistryService, NullLogger<ScanJobService>.Instance);
         _toolHealthService = new ScanToolHealthService(_toolRegistryService, NullLogger<ScanToolHealthService>.Instance);
         _secretStore = new InMemoryScanProviderSecretStore();
+        var postProcessor = new ScanPostExecutionProcessor(_dbContext, _scanJobService, NullLogger<ScanPostExecutionProcessor>.Instance);
 
-        _controller = new SecurityScanController(_scanJobService, _toolRegistryService, _toolHealthService, _secretStore);
+        _controller = new SecurityScanController(_scanJobService, _toolRegistryService, _toolHealthService, _secretStore, postProcessor);
     }
 
     public void Dispose()
@@ -277,5 +278,63 @@ public class SecurityScanControllerTests : IDisposable
         var retryResult = await _controller.RetryJob(job.Id, default);
         var retryObjResult = retryResult.Result.Should().BeOfType<ObjectResult>().Subject;
         retryObjResult.StatusCode.Should().Be(403);
+
+        // 4. GetJobSummary returns 403
+        var summaryResult = await _controller.GetJobSummary(job.Id, default);
+        var summaryObjResult = summaryResult.Result.Should().BeOfType<ObjectResult>().Subject;
+        summaryObjResult.StatusCode.Should().Be(403);
+
+        // 5. GetJobDiff returns 403
+        var diffResult = await _controller.GetJobDiff(job.Id, null, default);
+        var diffObjResult = diffResult.Result.Should().BeOfType<ObjectResult>().Subject;
+        diffObjResult.StatusCode.Should().Be(403);
+    }
+
+    [Fact]
+    public async Task Test11_GetJobSummary_Returns200_WithAccurateMetrics()
+    {
+        var job = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Standard,
+            Status = SecurityScanJobStatus.Completed,
+            RequestedByUserId = _adminUserId,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        _dbContext.SecurityScanJobs.Add(job);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _controller.GetJobSummary(job.Id, default);
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        var summary = okResult.Value.Should().BeOfType<ScanResultSummary>().Subject;
+
+        summary.ScanJobId.Should().Be(job.Id);
+        summary.JobStatus.Should().Be(SecurityScanJobStatus.Completed);
+    }
+
+    [Fact]
+    public async Task Test12_GetJobDiff_Returns200_WithDiffItems()
+    {
+        var job = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Standard,
+            Status = SecurityScanJobStatus.Completed,
+            RequestedByUserId = _adminUserId,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        _dbContext.SecurityScanJobs.Add(job);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _controller.GetJobDiff(job.Id, null, default);
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        var diff = okResult.Value.Should().BeOfType<ScanDiff>().Subject;
+
+        diff.CurrentScanJobId.Should().Be(job.Id);
+        diff.NewFindings.Should().NotBeNull();
     }
 }

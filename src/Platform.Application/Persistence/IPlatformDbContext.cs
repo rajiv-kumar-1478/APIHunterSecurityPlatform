@@ -61,6 +61,7 @@ public interface IPlatformDbContext
     DbSet<SecurityScanTool> SecurityScanTools { get; }
     DbSet<ToolDependency> ToolDependencies { get; }
     DbSet<SecurityProviderCredential> SecurityProviderCredentials { get; }
+    DbSet<ScanFindingObservation> ScanFindingObservations { get; }
 
 
     Microsoft.EntityFrameworkCore.ChangeTracking.ChangeTracker ChangeTracker { get; }

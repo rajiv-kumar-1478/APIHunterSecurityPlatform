@@ -268,6 +268,7 @@ try
     // Phase 8 — Hosted Security Scanning & Scan Foundation
     builder.Services.AddScoped<ScanToolRegistryService>();
     builder.Services.AddScoped<ScanJobService>();
+    builder.Services.AddScoped<ScanPostExecutionProcessor>();
     builder.Services.AddScoped<IScanToolHealthService, ScanToolHealthService>();
     builder.Services.AddSingleton<IBugHunterProvider, BugHunterScanProvider>();
     builder.Services.AddSingleton<IScanProvider, BugHunterScanProvider>();

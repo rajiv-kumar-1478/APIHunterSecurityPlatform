@@ -221,3 +221,48 @@ public record ScannerRuntimeHealthDto(
     DateTime LastHealthCheckUtc
 );
 
+public sealed record ScanResultSummary(
+    Guid ScanJobId,
+    Guid? TargetId,
+    SecurityScanJobStatus JobStatus,
+    int FindingsCreated,
+    int FindingsUpdated,
+    int FindingsTotal,
+    int CriticalCount,
+    int HighCount,
+    int MediumCount,
+    int LowCount,
+    int InfoCount,
+    int ToolsAttempted,
+    int ToolsSucceeded,
+    int ToolsFailed,
+    long DurationMs,
+    long OutputBytes,
+    IReadOnlyDictionary<string, int> FindingsByTool,
+    IReadOnlyDictionary<string, int> FindingsByType,
+    DateTime CompletedAtUtc
+);
+
+public sealed record ScanFindingDiffItem(
+    string FindingFingerprint,
+    ScanFindingDiffStatus Status,
+    RiskSeverity Severity,
+    string FindingType,
+    string Title,
+    string CanonicalTarget,
+    DateTime? PreviousObservedAtUtc,
+    DateTime? CurrentObservedAtUtc,
+    int ConsecutiveAbsentScans,
+    bool FullCoverageConfirmed
+);
+
+public sealed record ScanDiff(
+    Guid CurrentScanJobId,
+    Guid? BaselineScanJobId,
+    IReadOnlyList<ScanFindingDiffItem> NewFindings,
+    IReadOnlyList<ScanFindingDiffItem> PersistentFindings,
+    IReadOnlyList<ScanFindingDiffItem> NotObservedFindings,
+    IReadOnlyList<ScanFindingDiffItem> ResolvedFindings,
+    DateTime GeneratedAtUtc
+);
+

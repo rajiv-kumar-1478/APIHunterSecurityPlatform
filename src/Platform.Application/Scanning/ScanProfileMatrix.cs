@@ -92,6 +92,14 @@ public static class ScanProfileMatrix
         [SecurityScanProfileType.Deep] = DeepProfile
     };
 
+    public static readonly IReadOnlyDictionary<string, IReadOnlyList<ToolCapability>> WellKnownToolCapabilities = new Dictionary<string, IReadOnlyList<ToolCapability>>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["subfinder"] = new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution },
+        ["httpx"] = new[] { ToolCapability.HttpProbing, ToolCapability.DnsResolution },
+        ["nuclei"] = new[] { ToolCapability.HttpProbing, ToolCapability.UrlCrawling, ToolCapability.VulnerabilityScanning, ToolCapability.SecretScanning },
+        ["bughunter"] = new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing, ToolCapability.UrlCrawling, ToolCapability.VulnerabilityScanning, ToolCapability.AiAssistedHunting, ToolCapability.ReportGeneration }
+    };
+
     /// <summary>
     /// Resolves any compatibility alias to its canonical profile enum value.
     /// WebAssessment -> Standard, FullAssessment -> Deep.

@@ -142,6 +142,14 @@ public enum ToolFailureClassification
     Cancelled = 4
 }
 
+public enum ScanFindingDiffStatus
+{
+    New,
+    Persistent,
+    NotObserved,
+    Resolved
+}
+
 public enum SecurityScanJobStatus
 {
     Queued,

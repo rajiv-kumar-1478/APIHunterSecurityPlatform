@@ -22,17 +22,20 @@ public class SecurityScanController : ControllerBase
     private readonly ScanToolRegistryService _toolRegistryService;
     private readonly IScanToolHealthService _toolHealthService;
     private readonly IScanProviderSecretStore _secretStore;
+    private readonly ScanPostExecutionProcessor _postProcessor;
 
     public SecurityScanController(
         ScanJobService scanJobService,
         ScanToolRegistryService toolRegistryService,
         IScanToolHealthService toolHealthService,
-        IScanProviderSecretStore secretStore)
+        IScanProviderSecretStore secretStore,
+        ScanPostExecutionProcessor postProcessor)
     {
         _scanJobService = scanJobService;
         _toolRegistryService = toolRegistryService;
         _toolHealthService = toolHealthService;
         _secretStore = secretStore;
+        _postProcessor = postProcessor;
     }
 
     [HttpGet("capabilities")]
@@ -113,6 +116,42 @@ public class SecurityScanController : ControllerBase
             }
 
             return Ok(receipt);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("jobs/{id:guid}/summary")]
+    public async Task<ActionResult<ScanResultSummary>> GetJobSummary(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            var summary = await _postProcessor.BuildSummaryAsync(id, ct);
+            return Ok(summary);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("jobs/{id:guid}/diff")]
+    public async Task<ActionResult<ScanDiff>> GetJobDiff(Guid id, [FromQuery] Guid? baselineJobId = null, CancellationToken ct = default)
+    {
+        try
+        {
+            var diff = await _postProcessor.CalculateDiffAsync(id, baselineJobId, ct);
+            return Ok(diff);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
         }
         catch (UnauthorizedAccessException ex)
         {

@@ -25,6 +25,7 @@ public class GenericScanWorker : IScanWorker
     private readonly IEgressPolicyEngine _egressPolicyEngine;
     private readonly IScannerRuntimeSandbox? _runtimeSandbox;
     private readonly ScanExecutionOrchestrator _orchestrator;
+    private readonly ScanPostExecutionProcessor? _postProcessor;
     private readonly ScannerRuntimeOptions _options;
     private readonly ILogger<GenericScanWorker> _logger;
 
@@ -36,6 +37,7 @@ public class GenericScanWorker : IScanWorker
         IScannerRuntimeSandbox? runtimeSandbox,
         ILogger<GenericScanWorker> logger,
         ScanExecutionOrchestrator? orchestrator = null,
+        ScanPostExecutionProcessor? postProcessor = null,
         ScannerRuntimeOptions? options = null)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
@@ -44,6 +46,7 @@ public class GenericScanWorker : IScanWorker
         _egressPolicyEngine = egressPolicyEngine ?? throw new ArgumentNullException(nameof(egressPolicyEngine));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _runtimeSandbox = runtimeSandbox;
+        _postProcessor = postProcessor;
         _options = options ?? new ScannerRuntimeOptions();
 
         _orchestrator = orchestrator ?? new ScanExecutionOrchestrator(
@@ -120,6 +123,18 @@ public class GenericScanWorker : IScanWorker
             job.ProgressPercentage = 100;
             job.CompletedAtUtc = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
+
+            if (_postProcessor != null)
+            {
+                try
+                {
+                    await _postProcessor.ProcessPostScanLifecycleAsync(job.Id, ct);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Post-scan lifecycle processing failed for job '{ScanJobId}'.", scanJobId);
+                }
+            }
 
             _logger.LogInformation("GenericScanWorker completed job '{ScanJobId}' with status '{Status}'. Summary: {Summary}", scanJobId, job.Status, receipt.Summary);
             return new ScanExecutionResult(job.Id, job.Status, null, null, job.FailureReason, DateTime.UtcNow);

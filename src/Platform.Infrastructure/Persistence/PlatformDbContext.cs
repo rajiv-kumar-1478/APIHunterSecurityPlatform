@@ -60,6 +60,7 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
     public DbSet<SecurityScanTool> SecurityScanTools => Set<SecurityScanTool>();
     public DbSet<ToolDependency> ToolDependencies => Set<ToolDependency>();
     public DbSet<SecurityProviderCredential> SecurityProviderCredentials => Set<SecurityProviderCredential>();
+    public DbSet<ScanFindingObservation> ScanFindingObservations => Set<ScanFindingObservation>();
 
 
 
@@ -797,6 +798,25 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.Property(pc => pc.SecretReference).HasMaxLength(250).IsRequired();
             e.Property(pc => pc.CredentialType).HasMaxLength(100).IsRequired();
             e.Property(pc => pc.ValidationStatus).HasMaxLength(50);
+        });
+
+        // ScanFindingObservation
+        modelBuilder.Entity<ScanFindingObservation>(e =>
+        {
+            e.ToTable("scan_finding_observations");
+            e.HasKey(o => o.Id);
+            e.HasIndex(o => new { o.FindingId, o.ScanJobId }).IsUnique();
+            e.HasIndex(o => new { o.FindingId, o.ObservedAtUtc });
+            e.HasIndex(o => o.ScanJobId);
+            e.Property(o => o.ToolCoverageHash).HasMaxLength(128).IsRequired();
+            e.HasOne(o => o.Finding)
+             .WithMany()
+             .HasForeignKey(o => o.FindingId)
+             .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne(o => o.ScanJob)
+             .WithMany()
+             .HasForeignKey(o => o.ScanJobId)
+             .OnDelete(DeleteBehavior.Cascade);
         });
     }
 
