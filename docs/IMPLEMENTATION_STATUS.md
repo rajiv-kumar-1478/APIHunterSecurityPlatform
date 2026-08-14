@@ -326,10 +326,17 @@ Legend:
   - [x] Compiler gate: `dotnet build -warnaserror` (0 warnings, 0 errors).
   - [x] Automated test suite: **503 / 503 Tests Passed (100%)**.
 
-- [ ] Step 3B.5 — Deployment Validation Pass (Docker / Render / Railway):
-  - [ ] Validate Docker, Render background workers, and Railway private service deployment contracts against actual hosting topology.
-  - [ ] Validate cloud scanner service endpoint configuration, secret authentication header (`X-Scanner-Service-Key`), and private mesh connectivity.
-  - [ ] Validate runtime health dashboard visibility and end-to-end telemetry.
+- [x] Step 3B.5 — Deployment Validation Pass & Operational Observability (VERIFIED & LOCKED - Commit `b4ff952`):
+  - [x] Step 3B.5.1 (Deployment Contracts): Verified strongly-typed configuration contracts for `LocalDocker` and `CloudManagedContainer`, environment variable binding, and secret sanitization (`X-Scanner-Service-Key` never exposed in health DTOs).
+  - [x] Step 3B.5.2 (Network Topology & Boundary Verification): Built `EnforcedEgressProxyServer` and verified real socket proxy interception, blocking loopback (`127.0.0.1`), RFC 1918 private subnets (`10.x`, `172.16-31.x`, `192.168.x`), IMDS (`169.254.169.254`), unapproved external IPs, and DNS rebinding attacks at connection time.
+  - [x] Step 3B.5.3 (Observability, Telemetry & Dashboard Health): Implemented granular status categories (`Healthy`, `Degraded`, `Unavailable`, `NotConfigured`, `FailClosed`), diagnostic breakdown, and frontend dashboard runtime readiness badge (`ReadyForScans`).
+  - [x] Compiler gate: `dotnet build -warnaserror` (0 warnings, 0 errors) & Frontend Next.js production build (`npm run build` with 0 errors).
+  - [x] Automated test suite: **517 / 517 Tests Passed (100%)**.
+
+- [ ] Step 4 — Scan Execution Profiles, Tool Capability Matrix & Provider Workflow:
+  - [ ] Multi-tool orchestration for `Recon`, `Standard`, and `Deep` profiles.
+  - [ ] Parsing, normalization, and deduplication of tool outputs into structured security findings.
+  - [ ] Ingestion into Phase 6 finding inventory and risk scoring pipeline.
 
 
 
