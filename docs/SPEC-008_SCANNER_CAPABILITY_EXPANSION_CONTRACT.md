@@ -127,6 +127,31 @@ public sealed record ScannerCoverage(
 ## 6. Phased Implementation Roadmap
 
 - **SPEC-008.1**: Contract Infrastructure & Validation (`ScanToolManifest`, `IScanToolAdapter`, `IScanToolRegistry`, `FindingFingerprintService`, `ScanToolManifestValidator`).
-- **SPEC-008.2**: Existing Adapter Migration (`Httpx`, `Nuclei`, `Subfinder`) with golden-file unit test fixtures.
-- **SPEC-008.3**: `JsMinerAdapter` (JavaScript crawling, route/secret discovery, and DOM XSS sink detection).
-- **SPEC-008.4**: `BugHunterAdapter` (API contract fuzzing and parameter tampering).
+- **SPEC-008.2**: Existing Adapter Migration (`Httpx`, `Nuclei`, `Subfinder`) & OCI Container Provenance Verifier.
+- **SPEC-008.3**: `JsMinerAdapter` (Adversarial line streaming parser, resource bounds, discovery vs. vulnerability separation).
+- **SPEC-008.4**: Multi-Layered JavaScript Intelligence Pipeline:
+  - **SPEC-008.4.1**: JavaScript Asset Inventory, Content Hashing (`SHA-256`) & Deployment Change Diffing.
+  - **SPEC-008.4.2**: ECMAScript AST Parsing (`Acornima`), Bounded Constant Folding, GraphQL/WebSocket Extraction & Attack-Surface Graph.
+  - **SPEC-008.4.3**: Sensitive-Value & Secret Intelligence, AST Context Correlation, Shannon Entropy & Cross-Chunk Deduplication.
+- **SPEC-008.5**: Attack Surface $\rightarrow$ BugHunter Verification Bridge & Secure Deployment Webhooks (HMAC-SHA256, Replay Prevention, Server-Side Target Resolution).
+- **SPEC-008.6**: Continuous Intelligence Orchestration & Deployment Scan Lifecycle.
+
+---
+
+## 7. Future Scanner Extension Contract
+
+Any future security tool (e.g., **OWASP ZAP**, **Semgrep**, **TruffleHog**, **ffuf**, **Kiterunner**, **Caido**, **Trivy**, etc.) integrates into APIHunter strictly through the pluggable adapter model:
+
+1. **Contractual Integration Point**:
+   - Implement [`IScanToolAdapter`](file:///c:/Users/rk170/Desktop/APIHunterSecurityPlatform/src/Platform.Application/Scanning/Adapters/IScanToolAdapter.cs).
+   - Declare an immutable [`ScanToolManifest`](file:///c:/Users/rk170/Desktop/APIHunterSecurityPlatform/src/Platform.Application/Scanning/Contracts/ScanToolManifest.cs) with an authentic OCI container image reference and cryptographic digest (`sha256:...`).
+   - Register in [`IScanToolRegistry`](file:///c:/Users/rk170/Desktop/APIHunterSecurityPlatform/src/Platform.Application/Scanning/Adapters/IScanToolRegistry.cs).
+
+2. **Immutable Boundary Invariants**:
+   Adding a new tool **MUST NEVER**:
+   - 🔒 Modify Phase 9 continuous campaign scheduler or cron mechanics.
+   - 🔒 Bypass or alter tenant isolation and authorized target boundary rules.
+   - 🔒 Bypass the Phase 8 Docker sandbox runtime (`IScannerRuntimeSandbox`).
+   - 🔒 Bypass `EvidenceSanitizer` or declare raw scanner output inherently "safe".
+   - 🔒 Alter the platform-owned `FindingFingerprintService` canonical v1 identity algorithm.
+   - 🔒 Directly write to or mutate `SecurityFinding` entities or database lifecycle states.
