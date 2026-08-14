@@ -444,9 +444,8 @@ public class ScannerRuntimeSandboxTests
     [Fact]
     public async Task HostedScannerRuntime_RejectsMissingServiceAuthenticationKey()
     {
-        Mock<IGenericCliToolAdapter> mockAdapter = new();
         using var httpClient = new HttpClient();
-        var runtime = new HostedScannerRuntime(httpClient, serviceKey: null, toolKey => mockAdapter.Object, _mockEgressGateway.Object, NullLogger<HostedScannerRuntime>.Instance);
+        var runtime = new HostedScannerRuntime(httpClient, serviceKey: null, _mockEgressGateway.Object, NullLogger<HostedScannerRuntime>.Instance);
         using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
 
         var request = new ToolExecutionRequest(
@@ -476,8 +475,7 @@ public class ScannerRuntimeSandboxTests
         });
 
         using var httpClient = new HttpClient(messageHandler) { BaseAddress = new Uri("https://scanner.internal") };
-        Mock<IGenericCliToolAdapter> mockAdapter = new();
-        var runtime = new HostedScannerRuntime(httpClient, serviceKey: "SECRET_KEY_123", toolKey => mockAdapter.Object, _mockEgressGateway.Object, NullLogger<HostedScannerRuntime>.Instance);
+        var runtime = new HostedScannerRuntime(httpClient, serviceKey: "SECRET_KEY_123", _mockEgressGateway.Object, NullLogger<HostedScannerRuntime>.Instance);
         using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
 
         var request = new ToolExecutionRequest(

@@ -21,6 +21,7 @@ using Platform.Application.Persistence;
 using Platform.Application.Providers;
 using Platform.Application.Services;
 using Platform.Application.Verification;
+using Platform.Domain.Enums;
 using Platform.Infrastructure.Remediation;
 using Platform.Application.Users;
 using Platform.Domain.Contracts;
@@ -274,12 +275,41 @@ try
         new GenericCliToolAdapter(toolKey, sp.GetRequiredService<ILogger<GenericCliToolAdapter>>()));
     builder.Services.AddScoped<IScanWorker, GenericScanWorker>();
 
-    builder.Services.AddSingleton(new ScannerRuntimeOptions());
+    var scannerOptions = builder.Configuration.GetSection("ScannerRuntime").Get<ScannerRuntimeOptions>() ?? new ScannerRuntimeOptions();
+    builder.Services.AddSingleton(scannerOptions);
     builder.Services.AddSingleton<IEgressPolicyEngine, EgressPolicyEngine>();
     builder.Services.AddSingleton<EnforcedEgressGateway>();
     builder.Services.AddSingleton<IEnforcedEgressGateway>(sp => sp.GetRequiredService<EnforcedEgressGateway>());
     builder.Services.AddSingleton<IEgressNetworkProxy>(sp => sp.GetRequiredService<EnforcedEgressGateway>());
-    builder.Services.AddSingleton<IScannerRuntimeSandbox, DockerScannerRuntime>();
+    builder.Services.AddSingleton<IScannerRuntimeSandbox>(sp =>
+    {
+        var options = sp.GetRequiredService<ScannerRuntimeOptions>();
+        var egressGateway = sp.GetRequiredService<IEnforcedEgressGateway>();
+        var cliAdapterFactory = sp.GetRequiredService<Func<string, IGenericCliToolAdapter>>();
+
+        if (options.RuntimeMode == ScannerRuntimeMode.CloudManagedContainer)
+        {
+            var httpClient = new HttpClient
+            {
+                BaseAddress = !string.IsNullOrWhiteSpace(options.HostedScannerServiceEndpoint)
+                    ? new Uri(options.HostedScannerServiceEndpoint.TrimEnd('/') + "/")
+                    : null,
+                Timeout = options.ExecutionTimeout
+            };
+
+            return new HostedScannerRuntime(
+                httpClient,
+                options.HostedScannerServiceKey,
+                egressGateway,
+                sp.GetRequiredService<ILogger<HostedScannerRuntime>>());
+        }
+
+        return new DockerScannerRuntime(
+            options,
+            cliAdapterFactory,
+            egressGateway,
+            sp.GetRequiredService<ILogger<DockerScannerRuntime>>());
+    });
 
     if (builder.Environment.IsDevelopment() || builder.Environment.IsEnvironment("Testing"))
     {
