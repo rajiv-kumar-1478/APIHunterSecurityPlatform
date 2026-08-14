@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
@@ -7,6 +8,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
+using Platform.Application.Scanning.Reporting.Formatters;
 using Platform.Application.Services;
 using Platform.Domain.Entities;
 using Platform.Domain.Enums;
@@ -23,19 +25,25 @@ public class SecurityScanController : ControllerBase
     private readonly IScanToolHealthService _toolHealthService;
     private readonly IScanProviderSecretStore _secretStore;
     private readonly ScanPostExecutionProcessor _postProcessor;
+    private readonly ScanReportBuilderService _reportBuilder;
+    private readonly SecurityReportFormatterRegistry _formatterRegistry;
 
     public SecurityScanController(
         ScanJobService scanJobService,
         ScanToolRegistryService toolRegistryService,
         IScanToolHealthService toolHealthService,
         IScanProviderSecretStore secretStore,
-        ScanPostExecutionProcessor postProcessor)
+        ScanPostExecutionProcessor postProcessor,
+        ScanReportBuilderService reportBuilder,
+        SecurityReportFormatterRegistry? formatterRegistry = null)
     {
         _scanJobService = scanJobService;
         _toolRegistryService = toolRegistryService;
         _toolHealthService = toolHealthService;
         _secretStore = secretStore;
         _postProcessor = postProcessor;
+        _reportBuilder = reportBuilder;
+        _formatterRegistry = formatterRegistry ?? new SecurityReportFormatterRegistry();
     }
 
     [HttpGet("capabilities")]
@@ -157,7 +165,52 @@ public class SecurityScanController : ControllerBase
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
         }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
     }
+
+    [HttpGet("jobs/{id:guid}/report")]
+    public async Task<IActionResult> GetReport(Guid id, [FromQuery] string format = "json", [FromQuery] Guid? baselineJobId = null, CancellationToken ct = default)
+    {
+        try
+        {
+            var formatter = _formatterRegistry.GetFormatter(format);
+            var canonicalReport = await _reportBuilder.BuildCanonicalReportAsync(id, baselineJobId, ct);
+            var result = formatter.FormatReport(canonicalReport);
+
+            return Content(result.Content, result.ContentType, Encoding.UTF8);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+        }
+    }
+
+    [HttpGet("jobs/{id:guid}/report/json")]
+    public Task<IActionResult> GetJsonReport(Guid id, [FromQuery] Guid? baselineJobId = null, CancellationToken ct = default)
+        => GetReport(id, "json", baselineJobId, ct);
+
+    [HttpGet("jobs/{id:guid}/report/sarif")]
+    public Task<IActionResult> GetSarifReport(Guid id, [FromQuery] Guid? baselineJobId = null, CancellationToken ct = default)
+        => GetReport(id, "sarif", baselineJobId, ct);
+
+    [HttpGet("jobs/{id:guid}/report/markdown")]
+    public Task<IActionResult> GetMarkdownReport(Guid id, [FromQuery] Guid? baselineJobId = null, CancellationToken ct = default)
+        => GetReport(id, "markdown", baselineJobId, ct);
+
+    [HttpGet("jobs/{id:guid}/report/html")]
+    public Task<IActionResult> GetHtmlReport(Guid id, [FromQuery] Guid? baselineJobId = null, CancellationToken ct = default)
+        => GetReport(id, "html", baselineJobId, ct);
 
     [HttpPost("jobs")]
     public async Task<ActionResult<SecurityScanJob>> CreateJob([FromBody] CreateScanJobRequest request, CancellationToken ct)

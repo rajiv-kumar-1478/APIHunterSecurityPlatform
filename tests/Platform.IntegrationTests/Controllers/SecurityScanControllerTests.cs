@@ -46,8 +46,9 @@ public class SecurityScanControllerTests : IDisposable
         _toolHealthService = new ScanToolHealthService(_toolRegistryService, NullLogger<ScanToolHealthService>.Instance);
         _secretStore = new InMemoryScanProviderSecretStore();
         var postProcessor = new ScanPostExecutionProcessor(_dbContext, _scanJobService, NullLogger<ScanPostExecutionProcessor>.Instance);
+        var reportBuilder = new ScanReportBuilderService(_dbContext, _scanJobService, postProcessor, NullLogger<ScanReportBuilderService>.Instance);
 
-        _controller = new SecurityScanController(_scanJobService, _toolRegistryService, _toolHealthService, _secretStore, postProcessor);
+        _controller = new SecurityScanController(_scanJobService, _toolRegistryService, _toolHealthService, _secretStore, postProcessor, reportBuilder);
     }
 
     public void Dispose()
@@ -288,6 +289,11 @@ public class SecurityScanControllerTests : IDisposable
         var diffResult = await _controller.GetJobDiff(job.Id, null, default);
         var diffObjResult = diffResult.Result.Should().BeOfType<ObjectResult>().Subject;
         diffObjResult.StatusCode.Should().Be(403);
+
+        // 6. GetReport returns 403
+        var reportResult = await _controller.GetReport(job.Id, "json", null, default);
+        var reportObjResult = reportResult.Should().BeOfType<ObjectResult>().Subject;
+        reportObjResult.StatusCode.Should().Be(403);
     }
 
     [Fact]
@@ -336,5 +342,63 @@ public class SecurityScanControllerTests : IDisposable
 
         diff.CurrentScanJobId.Should().Be(job.Id);
         diff.NewFindings.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task Test13_GetReport_AllFormats_Return200_WithCorrectContentTypes()
+    {
+        var job = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Standard,
+            Status = SecurityScanJobStatus.Completed,
+            RequestedByUserId = _adminUserId,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        _dbContext.SecurityScanJobs.Add(job);
+        await _dbContext.SaveChangesAsync();
+
+        // 1. JSON
+        var jsonRes = await _controller.GetJsonReport(job.Id, null, default);
+        var jsonContent = jsonRes.Should().BeOfType<ContentResult>().Subject;
+        jsonContent.ContentType.Should().StartWith("application/json");
+
+        // 2. SARIF
+        var sarifRes = await _controller.GetSarifReport(job.Id, null, default);
+        var sarifContent = sarifRes.Should().BeOfType<ContentResult>().Subject;
+        sarifContent.ContentType.Should().StartWith("application/sarif+json");
+
+        // 3. Markdown
+        var mdRes = await _controller.GetMarkdownReport(job.Id, null, default);
+        var mdContent = mdRes.Should().BeOfType<ContentResult>().Subject;
+        mdContent.ContentType.Should().StartWith("text/markdown");
+
+        // 4. HTML
+        var htmlRes = await _controller.GetHtmlReport(job.Id, null, default);
+        var htmlContent = htmlRes.Should().BeOfType<ContentResult>().Subject;
+        htmlContent.ContentType.Should().StartWith("text/html");
+    }
+
+    [Fact]
+    public async Task Test14_GetReport_UnknownFormat_Returns400()
+    {
+        var job = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Standard,
+            Status = SecurityScanJobStatus.Completed,
+            RequestedByUserId = _adminUserId,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+
+        _dbContext.SecurityScanJobs.Add(job);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _controller.GetReport(job.Id, "unsupported_xyz", null, default);
+        var badRequest = result.Should().BeOfType<BadRequestObjectResult>().Subject;
+        badRequest.StatusCode.Should().Be(400);
     }
 }

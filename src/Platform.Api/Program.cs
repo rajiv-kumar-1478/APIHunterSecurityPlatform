@@ -15,6 +15,7 @@ using Platform.Application.Health;
 using Platform.Application.Notifications;
 using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
+using Platform.Application.Scanning.Reporting.Formatters;
 using Platform.Infrastructure.Scanning;
 using Platform.Application.Permissions;
 using Platform.Application.Persistence;
@@ -269,6 +270,8 @@ try
     builder.Services.AddScoped<ScanToolRegistryService>();
     builder.Services.AddScoped<ScanJobService>();
     builder.Services.AddScoped<ScanPostExecutionProcessor>();
+    builder.Services.AddScoped<ScanReportBuilderService>();
+    builder.Services.AddSingleton<SecurityReportFormatterRegistry>();
     builder.Services.AddScoped<IScanToolHealthService, ScanToolHealthService>();
     builder.Services.AddSingleton<IBugHunterProvider, BugHunterScanProvider>();
     builder.Services.AddSingleton<IScanProvider, BugHunterScanProvider>();
