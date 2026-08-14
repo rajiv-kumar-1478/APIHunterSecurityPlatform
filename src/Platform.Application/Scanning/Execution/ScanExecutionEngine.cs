@@ -121,7 +121,37 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                 continue;
             }
 
-            // 2. Fail Closed if TargetUrl is missing or un-bound
+            // 2. Fail Closed if IEgressPolicyEngine is missing
+            if (_egressPolicyEngine == null)
+            {
+                invStopwatch.Stop();
+                invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                invocationRecord.ErrorMessage = "EGRESS_POLICY_ENGINE_UNAVAILABLE: Active IEgressPolicyEngine is required for security execution (Fail-Closed).";
+                invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                await _dbContext.SaveChangesAsync(ct);
+
+                toolsFailed++;
+                invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                continue;
+            }
+
+            // 3. Fail Closed if IToolProvenanceVerifier is missing
+            if (_provenanceVerifier == null)
+            {
+                invStopwatch.Stop();
+                invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                invocationRecord.ErrorMessage = "PROVENANCE_VERIFIER_UNAVAILABLE: Active IToolProvenanceVerifier is required for security execution (Fail-Closed).";
+                invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                await _dbContext.SaveChangesAsync(ct);
+
+                toolsFailed++;
+                invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                continue;
+            }
+
+            // 4. Fail Closed if TargetUrl is missing or un-bound
             if (string.IsNullOrWhiteSpace(plan.TargetUrl))
             {
                 invStopwatch.Stop();
@@ -136,7 +166,23 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                 continue;
             }
 
-            // 3. Provenance Integrity Check on Adapter Manifest
+            // 5. Version & Planned Snapshot Match Check
+            if (plan.RuleSetVersions.TryGetValue(plannedInv.ToolKey, out var expectedVersion) &&
+                !string.Equals(expectedVersion, adapter.Manifest.Version, StringComparison.OrdinalIgnoreCase))
+            {
+                invStopwatch.Stop();
+                invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                invocationRecord.ErrorMessage = $"PROVENANCE_SNAPSHOT_MISMATCH: Adapter version '{adapter.Manifest.Version}' does not match planned version '{expectedVersion}'.";
+                invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                await _dbContext.SaveChangesAsync(ct);
+
+                toolsFailed++;
+                invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                continue;
+            }
+
+            // 6. Provenance Integrity Check on Adapter Manifest
             if (string.IsNullOrWhiteSpace(adapter.Manifest.ContainerImageDigest) ||
                 !adapter.Manifest.ContainerImageDigest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
             {
@@ -152,22 +198,19 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                 continue;
             }
 
-            if (_provenanceVerifier != null)
+            var provResult = await _provenanceVerifier.VerifyManifestDigestAsync(adapter.Manifest, ct);
+            if (!provResult.IsVerified)
             {
-                var provResult = await _provenanceVerifier.VerifyManifestDigestAsync(adapter.Manifest, ct);
-                if (!provResult.IsVerified)
-                {
-                    invStopwatch.Stop();
-                    invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
-                    invocationRecord.ErrorMessage = $"PROVENANCE_SNAPSHOT_MISMATCH: Adapter container image digest did not verify against supply chain record. Expected: {provResult.ExpectedDigest}, Resolved: {provResult.ResolvedDigest}. Reason: {provResult.ErrorMessage}";
-                    invocationRecord.CompletedAtUtc = DateTime.UtcNow;
-                    invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
-                    await _dbContext.SaveChangesAsync(ct);
+                invStopwatch.Stop();
+                invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                invocationRecord.ErrorMessage = $"PROVENANCE_SNAPSHOT_MISMATCH: Adapter container image digest did not verify against supply chain record. Expected: {provResult.ExpectedDigest}, Resolved: {provResult.ResolvedDigest}. Reason: {provResult.ErrorMessage}";
+                invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                await _dbContext.SaveChangesAsync(ct);
 
-                    toolsFailed++;
-                    invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
-                    continue;
-                }
+                toolsFailed++;
+                invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                continue;
             }
 
             using var toolCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -182,97 +225,27 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                     TenantId: plan.TenantId
                 );
 
-                // 4. Prepare execution in sandbox contract
+                // 7. Prepare execution in sandbox contract
                 var planResult = adapter.PrepareExecution(execContext);
 
-                // 5. Authoritative Target URL & DNS Egress Resolution
+                // 8. Authoritative Target URL & DNS Egress Resolution via IEgressPolicyEngine
                 EgressTarget egressTarget;
-                if (_egressPolicyEngine != null)
+                try
                 {
-                    try
-                    {
-                        egressTarget = await _egressPolicyEngine.EvaluateAndBuildTargetAsync(plan.TargetUrl, ct: toolCts.Token);
-                    }
-                    catch (Exception ex)
-                    {
-                        invStopwatch.Stop();
-                        invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
-                        invocationRecord.ErrorMessage = $"EGRESS_POLICY_VIOLATION: Target '{plan.TargetUrl}' violates egress boundary policy: {ex.Message}";
-                        invocationRecord.CompletedAtUtc = DateTime.UtcNow;
-                        invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
-                        await _dbContext.SaveChangesAsync(ct);
-
-                        toolsFailed++;
-                        invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
-                        continue;
-                    }
+                    egressTarget = await _egressPolicyEngine.EvaluateAndBuildTargetAsync(plan.TargetUrl, ct: toolCts.Token);
                 }
-                else
+                catch (Exception ex)
                 {
-                    Uri targetUri;
-                    try
-                    {
-                        targetUri = new Uri(plan.TargetUrl);
-                    }
-                    catch
-                    {
-                        targetUri = new Uri("https://" + plan.TargetUrl.TrimStart('/'));
-                    }
+                    invStopwatch.Stop();
+                    invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                    invocationRecord.ErrorMessage = $"EGRESS_POLICY_VIOLATION: Target '{plan.TargetUrl}' violates egress boundary policy: {ex.Message}";
+                    invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                    invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                    await _dbContext.SaveChangesAsync(ct);
 
-                    var targetHost = targetUri.Host;
-                    var targetPort = targetUri.Port > 0 ? targetUri.Port : (targetUri.Scheme == "http" ? 80 : 443);
-                    var targetScheme = targetUri.Scheme;
-
-                    HashSet<System.Net.IPAddress> approvedIps;
-                    if (System.Net.IPAddress.TryParse(targetHost, out var directIp))
-                    {
-                        approvedIps = new HashSet<System.Net.IPAddress> { directIp };
-                    }
-                    else
-                    {
-                        try
-                        {
-                            var resolved = System.Net.Dns.GetHostAddresses(targetHost);
-                            if (resolved == null || resolved.Length == 0)
-                            {
-                                invStopwatch.Stop();
-                                invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
-                                invocationRecord.ErrorMessage = $"TARGET_RESOLUTION_FAILED: Failed to resolve authoritative IP address for host '{targetHost}'.";
-                                invocationRecord.CompletedAtUtc = DateTime.UtcNow;
-                                invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
-                                await _dbContext.SaveChangesAsync(ct);
-
-                                toolsFailed++;
-                                invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
-                                continue;
-                            }
-                            approvedIps = new HashSet<System.Net.IPAddress>(resolved);
-                        }
-                        catch (Exception ex)
-                        {
-                            invStopwatch.Stop();
-                            invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
-                            invocationRecord.ErrorMessage = $"TARGET_RESOLUTION_FAILED: DNS resolution failed for host '{targetHost}': {ex.Message}";
-                            invocationRecord.CompletedAtUtc = DateTime.UtcNow;
-                            invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
-                            await _dbContext.SaveChangesAsync(ct);
-
-                            toolsFailed++;
-                            invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
-                            continue;
-                        }
-                    }
-
-                    egressTarget = new EgressTarget(
-                        RawTargetUrl: plan.TargetUrl,
-                        CanonicalHost: targetHost,
-                        Port: targetPort,
-                        Scheme: targetScheme,
-                        ApprovedIpAddresses: approvedIps,
-                        ResolvedAtUtc: DateTime.UtcNow,
-                        ExpiresAtUtc: DateTime.UtcNow.AddMinutes(30),
-                        PolicyVersion: "v1.0-strict"
-                    );
+                    toolsFailed++;
+                    invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                    continue;
                 }
 
                 var secretLease = new ProviderSecretLease(
