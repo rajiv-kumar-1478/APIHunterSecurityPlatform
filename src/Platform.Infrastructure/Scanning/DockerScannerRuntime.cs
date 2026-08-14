@@ -373,7 +373,7 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         }
     }
 
-    private static bool IsDockerDaemonAvailable()
+    public static bool IsDockerDaemonAvailable()
     {
         try
         {
