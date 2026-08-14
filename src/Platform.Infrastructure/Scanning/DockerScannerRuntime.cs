@@ -54,6 +54,11 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         if (egressTarget == null) throw new ArgumentNullException(nameof(egressTarget));
         if (secretLease == null) throw new ArgumentNullException(nameof(secretLease));
 
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Cancelled, -1, null, "EXECUTION_CANCELLED");
+        }
+
         // 1. Fail Closed on Executable Missing / Unconfigured (No fallback to ToolKey)
         if (string.IsNullOrWhiteSpace(request.Executable))
         {
