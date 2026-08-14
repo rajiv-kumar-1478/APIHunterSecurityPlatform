@@ -15,7 +15,8 @@ public sealed record ToolExecutionPlan(
     IReadOnlyDictionary<string, string> EnvironmentVariables,
     string? TargetInputFilePath = null,
     string? TargetInputContent = null,
-    IReadOnlyDictionary<string, string>? AdditionalMetadata = null
+    IReadOnlyDictionary<string, string>? AdditionalMetadata = null,
+    IReadOnlyList<string>? AllowedVerificationDestinations = null
 );
 
 /// <summary>

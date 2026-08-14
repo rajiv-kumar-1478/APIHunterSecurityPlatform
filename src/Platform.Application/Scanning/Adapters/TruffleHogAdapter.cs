@@ -68,10 +68,30 @@ public sealed class TruffleHogAdapter : IScanToolAdapter
             "--fail=false"
         };
 
+        var allowedDestinations = new List<string>();
+
         if (!allowLiveVerification)
         {
             // Default fail-closed policy: disable outbound network verification requests unless explicitly authorized
             args.Add("--no-verification");
+        }
+        else
+        {
+            // Live verification authorized: populate provider endpoints
+            if (context.AdditionalOptions != null &&
+                context.AdditionalOptions.TryGetValue("verification_destinations", out var dests) &&
+                !string.IsNullOrWhiteSpace(dests))
+            {
+                var split = dests.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                allowedDestinations.AddRange(split);
+            }
+            else
+            {
+                // Default authoritative verification provider endpoints
+                allowedDestinations.Add("https://api.github.com");
+                allowedDestinations.Add("https://api.slack.com");
+                allowedDestinations.Add("https://api.stripe.com");
+            }
         }
 
         if (context.Profile == SecurityScanProfileType.Deep)
@@ -104,7 +124,8 @@ public sealed class TruffleHogAdapter : IScanToolAdapter
             Version: Manifest.Version,
             CommandLineArguments: args,
             EnvironmentVariables: env,
-            AdditionalMetadata: metadata
+            AdditionalMetadata: metadata,
+            AllowedVerificationDestinations: allowedDestinations.AsReadOnly()
         );
     }
 

@@ -222,7 +222,8 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                     ScanJobId: plan.ScanJobId,
                     TargetUrl: plan.TargetUrl,
                     Profile: plan.Profile,
-                    TenantId: plan.TenantId
+                    TenantId: plan.TenantId,
+                    AdditionalOptions: plan.AdditionalOptions
                 );
 
                 // 7. Prepare execution in sandbox contract
@@ -247,17 +248,45 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                     continue;
                 }
 
-                // 9. Authoritative Target URL & DNS Egress Resolution via IEgressPolicyEngine
+                // 9. Authoritative Target URL & Provider Verification Egress Resolution via IEgressPolicyEngine
                 EgressTarget egressTarget;
                 try
                 {
-                    egressTarget = await _egressPolicyEngine.EvaluateAndBuildTargetAsync(plan.TargetUrl, ct: toolCts.Token);
+                    var primaryTarget = await _egressPolicyEngine.EvaluateAndBuildTargetAsync(plan.TargetUrl, ct: toolCts.Token);
+                    var combinedApprovedIps = new HashSet<System.Net.IPAddress>(primaryTarget.ApprovedIpAddresses);
+
+                    // If tool requires live verification egress, evaluate and authorize all declared provider destinations
+                    if (requiresEgressAuth && planResult.AllowedVerificationDestinations != null && planResult.AllowedVerificationDestinations.Count > 0)
+                    {
+                        foreach (var providerDest in planResult.AllowedVerificationDestinations)
+                        {
+                            try
+                            {
+                                var providerTarget = await _egressPolicyEngine.EvaluateAndBuildTargetAsync(providerDest, ct: toolCts.Token);
+                                foreach (var ip in providerTarget.ApprovedIpAddresses)
+                                {
+                                    combinedApprovedIps.Add(ip);
+                                }
+                            }
+                            catch (Exception pEx)
+                            {
+                                throw new InvalidOperationException($"PROVIDER_EGRESS_UNAUTHORIZED: Provider verification destination '{providerDest}' is unauthorized or prohibited: {pEx.Message}", pEx);
+                            }
+                        }
+                    }
+
+                    egressTarget = primaryTarget with
+                    {
+                        ApprovedIpAddresses = combinedApprovedIps
+                    };
                 }
                 catch (Exception ex)
                 {
                     invStopwatch.Stop();
                     invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
-                    invocationRecord.ErrorMessage = $"EGRESS_POLICY_VIOLATION: Target '{plan.TargetUrl}' violates egress boundary policy: {ex.Message}";
+                    invocationRecord.ErrorMessage = ex.Message.StartsWith("PROVIDER_EGRESS_UNAUTHORIZED")
+                        ? ex.Message
+                        : $"EGRESS_POLICY_VIOLATION: Target '{plan.TargetUrl}' violates egress boundary policy: {ex.Message}";
                     invocationRecord.CompletedAtUtc = DateTime.UtcNow;
                     invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
                     await _dbContext.SaveChangesAsync(ct);

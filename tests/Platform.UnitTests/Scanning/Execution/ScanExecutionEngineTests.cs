@@ -836,15 +836,15 @@ public class ScanExecutionEngineTests
     }
 
     [Fact]
-    public async Task ExecutePlan_LiveVerificationWithAuthorizedProvider_AllowsSandboxExecution()
+    public async Task ExecutePlan_LiveVerification_DeclaresProviderDestination()
     {
         var scanJobId = Guid.NewGuid();
         var tenantId = Guid.NewGuid();
-        bool sandboxDispatched = false;
+        EgressTarget? capturedEgress = null;
 
         var sandbox = new MockScannerRuntimeSandbox((req, egress, secret, scratch, ct) =>
         {
-            sandboxDispatched = true;
+            capturedEgress = egress;
             return Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(
                 ToolKey: req.ToolKey,
                 Version: req.Version,
@@ -880,15 +880,237 @@ public class ScanExecutionEngineTests
             RuleSetVersions: new Dictionary<string, string> { ["trufflehog"] = "3.96.0" },
             SelectionReasons: new Dictionary<string, string>(),
             PlannerVersion: "1.0.0",
-            PlanHash: "plan_trufflehog_live",
+            PlanHash: "plan_trufflehog_live_decl",
             PlannedAtUtc: DateTime.UtcNow,
-            TargetUrl: "https://example.com"
+            TargetUrl: "https://example.com",
+            AdditionalOptions: new Dictionary<string, string>
+            {
+                ["enable_live_verification"] = "true",
+                ["verification_destinations"] = "https://api.github.com"
+            }
         );
 
         var result = await engine.ExecutePlanAsync(plan);
 
         Assert.Equal(OverallScanExecutionStatus.Completed, result.OverallStatus);
-        Assert.True(sandboxDispatched);
+        Assert.NotNull(capturedEgress);
+        Assert.NotEmpty(capturedEgress.ApprovedIpAddresses);
+    }
+
+    [Fact]
+    public async Task ExecutePlan_LiveVerification_UnauthorizedProvider_FailsClosed()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        bool sandboxDispatched = false;
+
+        var sandbox = new MockScannerRuntimeSandbox((req, egress, secret, scratch, ct) =>
+        {
+            sandboxDispatched = true;
+            return Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(
+                ToolKey: req.ToolKey,
+                Version: req.Version,
+                Status: Platform.Domain.Enums.ToolExecutionStatus.Success,
+                ExitCode: 0,
+                ArtifactReference: "{}",
+                ErrorCode: null
+            ));
+        });
+
+        var engine = new ScanExecutionEngine(
+            _toolRegistry,
+            _dbContext,
+            NullLogger<ScanExecutionEngine>.Instance,
+            sandbox,
+            ingestionEngine: null,
+            _defaultEgressPolicy,
+            _defaultProvenanceVerifier
+        );
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("trufflehog", "3.96.0", ScannerExecutionPhase.StaticAnalysis, new[] { "secret.scan" }, Array.Empty<string>(), "Secret scan")
+        };
+
+        // Live verification with unauthorized / prohibited IMDS destination
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.SourceRepository,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "trufflehog" },
+            RuleSetVersions: new Dictionary<string, string> { ["trufflehog"] = "3.96.0" },
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_trufflehog_unauth_provider",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://example.com",
+            AdditionalOptions: new Dictionary<string, string>
+            {
+                ["enable_live_verification"] = "true",
+                ["verification_destinations"] = "http://169.254.169.254/latest/meta-data"
+            }
+        );
+
+        var result = await engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Failed, result.OverallStatus);
+        Assert.Single(result.Invocations);
+        Assert.Equal(ToolInvocationStatus.Failed, result.Invocations[0].Status);
+        Assert.Contains("PROVIDER_EGRESS_UNAUTHORIZED", result.Invocations[0].ErrorMessage);
+        Assert.False(sandboxDispatched, "Sandbox MUST NOT be dispatched when provider verification destination violates egress policy.");
+    }
+
+    [Fact]
+    public async Task ExecutePlan_LiveVerification_AuthorizedProvider_DispatchesWithAllowlist()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        EgressTarget? capturedEgress = null;
+
+        var githubIp = System.Net.IPAddress.Parse("140.82.121.3");
+        var exampleIp = System.Net.IPAddress.Parse("93.184.216.34");
+
+        var customEgressPolicy = new EgressPolicyEngine(
+            NullLogger<EgressPolicyEngine>.Instance,
+            host => Task.FromResult(host.Contains("github") ? new[] { githubIp } : new[] { exampleIp })
+        );
+
+        var sandbox = new MockScannerRuntimeSandbox((req, egress, secret, scratch, ct) =>
+        {
+            capturedEgress = egress;
+            return Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(
+                ToolKey: req.ToolKey,
+                Version: req.Version,
+                Status: Platform.Domain.Enums.ToolExecutionStatus.Success,
+                ExitCode: 0,
+                ArtifactReference: "{}",
+                ErrorCode: null
+            ));
+        });
+
+        var engine = new ScanExecutionEngine(
+            _toolRegistry,
+            _dbContext,
+            NullLogger<ScanExecutionEngine>.Instance,
+            sandbox,
+            ingestionEngine: null,
+            customEgressPolicy,
+            _defaultProvenanceVerifier
+        );
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("trufflehog", "3.96.0", ScannerExecutionPhase.StaticAnalysis, new[] { "secret.scan" }, Array.Empty<string>(), "Secret scan")
+        };
+
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.SourceRepository,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "trufflehog" },
+            RuleSetVersions: new Dictionary<string, string> { ["trufflehog"] = "3.96.0" },
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_trufflehog_authorized_allowlist",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://example.com",
+            AdditionalOptions: new Dictionary<string, string>
+            {
+                ["enable_live_verification"] = "true",
+                ["verification_destinations"] = "https://api.github.com"
+            }
+        );
+
+        var result = await engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Completed, result.OverallStatus);
+        Assert.NotNull(capturedEgress);
+        Assert.Contains(githubIp, capturedEgress.ApprovedIpAddresses);
+        Assert.Contains(exampleIp, capturedEgress.ApprovedIpAddresses);
+    }
+
+    [Fact]
+    public async Task ExecutePlan_LiveVerification_SandboxCannotReachUndeclaredDestination()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        EgressTarget? capturedEgress = null;
+
+        var githubIp = System.Net.IPAddress.Parse("140.82.121.3");
+        var undeclaredRogueIp = System.Net.IPAddress.Parse("198.51.100.99");
+
+        var customEgressPolicy = new EgressPolicyEngine(
+            NullLogger<EgressPolicyEngine>.Instance,
+            host => Task.FromResult(new[] { githubIp })
+        );
+
+        var sandbox = new MockScannerRuntimeSandbox((req, egress, secret, scratch, ct) =>
+        {
+            capturedEgress = egress;
+            // The sandbox runtime verifies that only approved IP addresses can be reached
+            bool allowTraffic = egress.ApprovedIpAddresses.Contains(githubIp);
+            bool rejectRogue = !egress.ApprovedIpAddresses.Contains(undeclaredRogueIp);
+
+            if (!allowTraffic || !rejectRogue)
+            {
+                throw new InvalidOperationException("SANDBOX_EGRESS_FILTER_VIOLATION: Sandbox permitted undeclared destination IP.");
+            }
+
+            return Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(
+                ToolKey: req.ToolKey,
+                Version: req.Version,
+                Status: Platform.Domain.Enums.ToolExecutionStatus.Success,
+                ExitCode: 0,
+                ArtifactReference: "{}",
+                ErrorCode: null
+            ));
+        });
+
+        var engine = new ScanExecutionEngine(
+            _toolRegistry,
+            _dbContext,
+            NullLogger<ScanExecutionEngine>.Instance,
+            sandbox,
+            ingestionEngine: null,
+            customEgressPolicy,
+            _defaultProvenanceVerifier
+        );
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("trufflehog", "3.96.0", ScannerExecutionPhase.StaticAnalysis, new[] { "secret.scan" }, Array.Empty<string>(), "Secret scan")
+        };
+
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.SourceRepository,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "trufflehog" },
+            RuleSetVersions: new Dictionary<string, string> { ["trufflehog"] = "3.96.0" },
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_trufflehog_sandbox_filter",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://api.github.com",
+            AdditionalOptions: new Dictionary<string, string>
+            {
+                ["enable_live_verification"] = "true",
+                ["verification_destinations"] = "https://api.github.com"
+            }
+        );
+
+        var result = await engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Completed, result.OverallStatus);
+        Assert.NotNull(capturedEgress);
+        Assert.Contains(githubIp, capturedEgress.ApprovedIpAddresses);
+        Assert.DoesNotContain(undeclaredRogueIp, capturedEgress.ApprovedIpAddresses);
     }
 }
 
