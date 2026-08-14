@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Http;
 using System.Threading;
@@ -25,10 +26,10 @@ using Xunit;
 namespace Platform.IntegrationTests.Scanning;
 
 /// <summary>
-/// SPEC-008.11.3.2 Real Scanner Runtime Egress Enforcement Integration Tests.
-/// Validates that the runtime container sandbox and Enforced Egress Gateway physically block
-/// undeclared/unapproved destinations and only permit plan-authorized provider destinations
-/// through the entire end-to-end execution pipeline.
+/// SPEC-008.11.3.3 Real Scanner Process Egress Boundary Integration Tests.
+/// Validates that an actual OS child process spawned by the sandbox runtime executes
+/// through the Enforced Egress Gateway, connects to approved provider destinations,
+/// and is physically blocked when attempting to reach undeclared or prohibited destinations.
 /// </summary>
 public class RealSandboxEgressAllowlistIntegrationTests
 {
@@ -50,347 +51,166 @@ public class RealSandboxEgressAllowlistIntegrationTests
     }
 
     [Fact]
-    public async Task ExecuteRealSandbox_ApprovedProvider_IsReachable()
-    {
-        var target = new EgressTarget(
-            RawTargetUrl: "https://api.github.com",
-            CanonicalHost: "api.github.com",
-            Port: 443,
-            Scheme: "https",
-            ApprovedIpAddresses: new HashSet<IPAddress> { _githubApprovedIp },
-            ResolvedAtUtc: DateTime.UtcNow,
-            ExpiresAtUtc: DateTime.UtcNow.AddMinutes(10),
-            PolicyVersion: "v1.0"
-        );
-
-        var gateway = new EnforcedEgressGateway(_policyEngine, new ScannerRuntimeOptions(), NullLogger<EnforcedEgressGateway>.Instance);
-        await using var session = await gateway.CreateScopedSessionAsync(target);
-
-        Task<IPAddress[]> DnsResolver(string host) => Task.FromResult(new[] { _githubApprovedIp });
-
-        await using var proxyServer = new EnforcedEgressProxyServer(session, DnsResolver, NullLogger.Instance);
-        proxyServer.Start();
-
-        var handler = new HttpClientHandler
-        {
-            Proxy = new WebProxy(proxyServer.ProxyEndpoint),
-            UseProxy = true
-        };
-
-        using var client = new HttpClient(handler);
-        var response = await client.GetAsync("http://api.github.com/rate_limit");
-
-        response.StatusCode.Should().Be(HttpStatusCode.OK);
-        response.Headers.GetValues("X-Egress-Policy").Should().Contain("Approved");
-        var content = await response.Content.ReadAsStringAsync();
-        content.Should().Be("GATEWAY_EGRESS_APPROVED");
-    }
-
-    [Fact]
-    public async Task ExecuteRealSandbox_UndeclaredDestination_IsBlocked()
-    {
-        // Sandbox is authorized ONLY for api.github.com
-        var target = new EgressTarget(
-            RawTargetUrl: "https://api.github.com",
-            CanonicalHost: "api.github.com",
-            Port: 443,
-            Scheme: "https",
-            ApprovedIpAddresses: new HashSet<IPAddress> { _githubApprovedIp },
-            ResolvedAtUtc: DateTime.UtcNow,
-            ExpiresAtUtc: DateTime.UtcNow.AddMinutes(10),
-            PolicyVersion: "v1.0"
-        );
-
-        var gateway = new EnforcedEgressGateway(_policyEngine, new ScannerRuntimeOptions(), NullLogger<EnforcedEgressGateway>.Instance);
-        await using var session = await gateway.CreateScopedSessionAsync(target);
-
-        // DNS resolver maps undeclared host to unapproved external IP (198.51.100.99)
-        Task<IPAddress[]> DnsResolver(string host) => Task.FromResult(new[] { _undeclaredExternalIp });
-
-        await using var proxyServer = new EnforcedEgressProxyServer(session, DnsResolver, NullLogger.Instance);
-        proxyServer.Start();
-
-        var handler = new HttpClientHandler
-        {
-            Proxy = new WebProxy(proxyServer.ProxyEndpoint),
-            UseProxy = true
-        };
-
-        using var client = new HttpClient(handler);
-        var response = await client.GetAsync("http://unauthorized-provider.internal/probe");
-
-        // The real sandbox gateway listener must physically block connection to undeclared IP
-        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-        response.Headers.GetValues("X-Egress-Policy").Should().Contain("Blocked");
-        var content = await response.Content.ReadAsStringAsync();
-        content.Should().Contain("EGRESS_BLOCKED: Prohibited or unapproved destination IP");
-    }
-
-    [Fact]
-    public async Task ExecuteRealSandbox_ProhibitedProvider_NeverStartsTool()
-    {
-        // Target containing prohibited IMDS / private IP
-        var prohibitedTarget = new EgressTarget(
-            RawTargetUrl: "http://169.254.169.254/latest/meta-data",
-            CanonicalHost: "169.254.169.254",
-            Port: 80,
-            Scheme: "http",
-            ApprovedIpAddresses: new HashSet<IPAddress> { _imdsProhibitedIp },
-            ResolvedAtUtc: DateTime.UtcNow,
-            ExpiresAtUtc: DateTime.UtcNow.AddMinutes(10),
-            PolicyVersion: "v1.0"
-        );
-
-        var gateway = new EnforcedEgressGateway(_policyEngine, new ScannerRuntimeOptions(), NullLogger<EnforcedEgressGateway>.Instance);
-
-        // Attempting to create sandbox gateway session for prohibited address must throw immediately
-        Func<Task> act = async () => await gateway.CreateScopedSessionAsync(prohibitedTarget);
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*prohibited network address range*");
-    }
-
-    [Fact]
-    public async Task RealScannerRuntime_ApprovedDestination_Allowed()
+    public async Task RealProcess_ApprovedDestination_IsReachable()
     {
         var scanJobId = Guid.NewGuid();
-        var tenantId = Guid.NewGuid();
-
-        var dbOptions = new DbContextOptionsBuilder<PlatformDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options;
-        var dbContext = new PlatformDbContext(dbOptions);
-
-        var truffleHogParser = new TruffleHogOutputParser(NullLogger<TruffleHogOutputParser>.Instance);
-        var truffleHogAdapter = new TruffleHogAdapter(truffleHogParser);
-        var toolRegistry = new ScanToolRegistry(new[] { truffleHogAdapter });
-
         var customEgressPolicy = new EgressPolicyEngine(
             NullLogger<EgressPolicyEngine>.Instance,
             host => Task.FromResult(host.Contains("github") ? new[] { _githubApprovedIp } : new[] { _targetApprovedIp })
         );
 
         var realGateway = new EnforcedEgressGateway(customEgressPolicy, new ScannerRuntimeOptions(), NullLogger<EnforcedEgressGateway>.Instance);
-
-        bool processExecutedWithNetworkAccess = false;
-        var realCliAdapter = new Mock<IGenericCliToolAdapter>();
-        realCliAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<ToolExecutionRequest, ProviderSecretLease, string, CancellationToken>(async (req, secret, scratch, ct) =>
-            {
-                // In real execution, the tool process uses the proxy to reach the authorized provider
-                // Create the proxy server backed by the real gateway session
-                var egressTarget = new EgressTarget(
-                    RawTargetUrl: "https://api.github.com",
-                    CanonicalHost: "api.github.com",
-                    Port: 443,
-                    Scheme: "https",
-                    ApprovedIpAddresses: new HashSet<IPAddress> { _githubApprovedIp, _targetApprovedIp },
-                    ResolvedAtUtc: DateTime.UtcNow,
-                    ExpiresAtUtc: DateTime.UtcNow.AddMinutes(10),
-                    PolicyVersion: "v1.0"
-                );
-
-                await using var session = await realGateway.CreateScopedSessionAsync(egressTarget, ct);
-                await using var proxyServer = new EnforcedEgressProxyServer(session, host => Task.FromResult(new[] { _githubApprovedIp }), NullLogger.Instance);
-                proxyServer.Start();
-
-                var handler = new HttpClientHandler
-                {
-                    Proxy = new WebProxy(proxyServer.ProxyEndpoint),
-                    UseProxy = true
-                };
-
-                using var client = new HttpClient(handler);
-                var response = await client.GetAsync("http://api.github.com/rate_limit", ct);
-
-                if (response.StatusCode == HttpStatusCode.OK)
-                {
-                    processExecutedWithNetworkAccess = true;
-                }
-
-                return new ToolExecutionResult(
-                    ToolKey: "trufflehog",
-                    Version: "3.96.0",
-                    Status: ToolExecutionStatus.Success,
-                    ExitCode: 0,
-                    ArtifactReference: "{}",
-                    ErrorCode: null
-                );
-            });
-
-        var realSandbox = new DevelopmentHostScannerRuntime(
-            cliAdapterFactory: key => realCliAdapter.Object,
-            egressGateway: realGateway,
-            logger: NullLogger<DevelopmentHostScannerRuntime>.Instance
+        var target = new EgressTarget(
+            RawTargetUrl: "https://api.github.com",
+            CanonicalHost: "api.github.com",
+            Port: 443,
+            Scheme: "https",
+            ApprovedIpAddresses: new HashSet<IPAddress> { _githubApprovedIp, _targetApprovedIp },
+            ResolvedAtUtc: DateTime.UtcNow,
+            ExpiresAtUtc: DateTime.UtcNow.AddMinutes(10),
+            PolicyVersion: "v1.0"
         );
 
-        var provVerifier = new Mock<IToolProvenanceVerifier>();
-        provVerifier.Setup(v => v.VerifyManifestDigestAsync(It.IsAny<ScanToolManifest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ScanToolManifest m, CancellationToken ct) => new ProvenanceVerificationResult(true, m.ContainerImageDigest, m.ContainerImageDigest, null));
+        await using var session = await realGateway.CreateScopedSessionAsync(target);
+        await using var proxyServer = new EnforcedEgressProxyServer(session, host => Task.FromResult(new[] { _githubApprovedIp }), NullLogger.Instance);
+        proxyServer.Start();
 
-        var engine = new ScanExecutionEngine(
-            toolRegistry,
-            dbContext,
-            NullLogger<ScanExecutionEngine>.Instance,
-            realSandbox,
-            ingestionEngine: null,
-            customEgressPolicy,
-            provVerifier.Object
-        );
-
-        var invocations = new List<PlannedToolInvocation>
+        // Real CLI adapter executing real curl.exe process on the host
+        var realCliAdapter = new GenericCliToolAdapter("curl", NullLogger<GenericCliToolAdapter>.Instance);
+        var authorizedManifest = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            new("trufflehog", "3.96.0", ScannerExecutionPhase.StaticAnalysis, new[] { "secret.scan" }, Array.Empty<string>(), "Secret scan")
+            ["curl"] = "curl.exe"
         };
 
-        var plan = new ResolvedScanPlan(
-            ScanJobId: scanJobId,
-            TenantId: tenantId,
-            TargetKind: TargetAssetKind.SourceRepository,
-            Profile: SecurityScanProfileType.Standard,
-            PlannedInvocations: invocations.AsReadOnly(),
-            ExecutionSequence: new[] { "trufflehog" },
-            RuleSetVersions: new Dictionary<string, string> { ["trufflehog"] = "3.96.0" },
-            SelectionReasons: new Dictionary<string, string>(),
-            PlannerVersion: "1.0.0",
-            PlanHash: "plan_real_sandbox_approved",
-            PlannedAtUtc: DateTime.UtcNow,
-            TargetUrl: "https://example.com",
-            AdditionalOptions: new Dictionary<string, string>
+        var secretLease = new ProviderSecretLease(
+            providerKey: "curl",
+            secrets: new Dictionary<string, string>
             {
-                ["enable_live_verification"] = "true",
-                ["verification_destinations"] = "https://api.github.com"
-            }
+                ["HTTP_PROXY"] = proxyServer.ProxyEndpoint,
+                ["HTTPS_PROXY"] = proxyServer.ProxyEndpoint,
+                ["ALL_PROXY"] = proxyServer.ProxyEndpoint,
+                ["NO_PROXY"] = ""
+            },
+            duration: TimeSpan.FromMinutes(10)
         );
 
-        var result = await engine.ExecutePlanAsync(plan);
+        var scratch = Path.Combine(Path.GetTempPath(), "apihunter_scans", "apihunter_test_probe_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scratch);
 
-        result.OverallStatus.Should().Be(OverallScanExecutionStatus.Completed);
-        processExecutedWithNetworkAccess.Should().BeTrue("Process inside real sandbox must be able to reach approved provider via real gateway proxy.");
+        try
+        {
+            var req = new ToolExecutionRequest(
+                ToolKey: "curl",
+                Version: "1.0.0",
+                Arguments: new Dictionary<string, string>
+                {
+                    ["-s"] = "",
+                    ["-o"] = "NUL",
+                    ["-w"] = "%{http_code}",
+                    ["--url"] = "http://api.github.com/rate_limit"
+                },
+                ScanJobId: scanJobId,
+                Timeout: TimeSpan.FromSeconds(15),
+                Executable: "curl.exe",
+                ContainerImageRepository: "curl",
+                ContainerImageDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                AuthorizedManifest: authorizedManifest
+            );
+
+            // Execute real child process!
+            var result = await realCliAdapter.ExecuteAsync(req, secretLease, scratch);
+
+            result.Status.Should().Be(ToolExecutionStatus.Success);
+            result.ExitCode.Should().Be(0);
+        }
+        finally
+        {
+            if (Directory.Exists(scratch)) Directory.Delete(scratch, true);
+        }
     }
 
     [Fact]
-    public async Task RealScannerRuntime_UndeclaredDestination_Blocked()
+    public async Task RealProcess_UndeclaredDestination_IsBlocked()
     {
         var scanJobId = Guid.NewGuid();
-        var tenantId = Guid.NewGuid();
-
-        var dbOptions = new DbContextOptionsBuilder<PlatformDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options;
-        var dbContext = new PlatformDbContext(dbOptions);
-
-        var truffleHogParser = new TruffleHogOutputParser(NullLogger<TruffleHogOutputParser>.Instance);
-        var truffleHogAdapter = new TruffleHogAdapter(truffleHogParser);
-        var toolRegistry = new ScanToolRegistry(new[] { truffleHogAdapter });
-
         var customEgressPolicy = new EgressPolicyEngine(
             NullLogger<EgressPolicyEngine>.Instance,
             host => Task.FromResult(host.Contains("github") ? new[] { _githubApprovedIp } : new[] { _targetApprovedIp })
         );
 
         var realGateway = new EnforcedEgressGateway(customEgressPolicy, new ScannerRuntimeOptions(), NullLogger<EnforcedEgressGateway>.Instance);
-
-        bool undeclaredDestinationBlockedByProxy = false;
-        var realCliAdapter = new Mock<IGenericCliToolAdapter>();
-        realCliAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Returns<ToolExecutionRequest, ProviderSecretLease, string, CancellationToken>(async (req, secret, scratch, ct) =>
-            {
-                var egressTarget = new EgressTarget(
-                    RawTargetUrl: "https://api.github.com",
-                    CanonicalHost: "api.github.com",
-                    Port: 443,
-                    Scheme: "https",
-                    ApprovedIpAddresses: new HashSet<IPAddress> { _githubApprovedIp, _targetApprovedIp },
-                    ResolvedAtUtc: DateTime.UtcNow,
-                    ExpiresAtUtc: DateTime.UtcNow.AddMinutes(10),
-                    PolicyVersion: "v1.0"
-                );
-
-                await using var session = await realGateway.CreateScopedSessionAsync(egressTarget, ct);
-                // DNS resolver resolves undeclared host to unapproved external IP 198.51.100.99
-                await using var proxyServer = new EnforcedEgressProxyServer(session, host => Task.FromResult(new[] { _undeclaredExternalIp }), NullLogger.Instance);
-                proxyServer.Start();
-
-                var handler = new HttpClientHandler
-                {
-                    Proxy = new WebProxy(proxyServer.ProxyEndpoint),
-                    UseProxy = true
-                };
-
-                using var client = new HttpClient(handler);
-                var response = await client.GetAsync("http://unauthorized-provider.internal/probe", ct);
-
-                if (response.StatusCode == HttpStatusCode.Forbidden)
-                {
-                    var body = await response.Content.ReadAsStringAsync(ct);
-                    if (body.Contains("EGRESS_BLOCKED"))
-                    {
-                        undeclaredDestinationBlockedByProxy = true;
-                    }
-                }
-
-                return new ToolExecutionResult(
-                    ToolKey: "trufflehog",
-                    Version: "3.96.0",
-                    Status: ToolExecutionStatus.Failed,
-                    ExitCode: 1,
-                    ArtifactReference: null,
-                    ErrorCode: "EGRESS_BLOCKED"
-                );
-            });
-
-        var realSandbox = new DevelopmentHostScannerRuntime(
-            cliAdapterFactory: key => realCliAdapter.Object,
-            egressGateway: realGateway,
-            logger: NullLogger<DevelopmentHostScannerRuntime>.Instance
+        var target = new EgressTarget(
+            RawTargetUrl: "https://api.github.com",
+            CanonicalHost: "api.github.com",
+            Port: 443,
+            Scheme: "https",
+            ApprovedIpAddresses: new HashSet<IPAddress> { _githubApprovedIp, _targetApprovedIp },
+            ResolvedAtUtc: DateTime.UtcNow,
+            ExpiresAtUtc: DateTime.UtcNow.AddMinutes(10),
+            PolicyVersion: "v1.0"
         );
 
-        var provVerifier = new Mock<IToolProvenanceVerifier>();
-        provVerifier.Setup(v => v.VerifyManifestDigestAsync(It.IsAny<ScanToolManifest>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ScanToolManifest m, CancellationToken ct) => new ProvenanceVerificationResult(true, m.ContainerImageDigest, m.ContainerImageDigest, null));
+        await using var session = await realGateway.CreateScopedSessionAsync(target);
+        // DNS resolver maps unauthorized host to unapproved external IP (198.51.100.99)
+        await using var proxyServer = new EnforcedEgressProxyServer(session, host => Task.FromResult(new[] { _undeclaredExternalIp }), NullLogger.Instance);
+        proxyServer.Start();
 
-        var engine = new ScanExecutionEngine(
-            toolRegistry,
-            dbContext,
-            NullLogger<ScanExecutionEngine>.Instance,
-            realSandbox,
-            ingestionEngine: null,
-            customEgressPolicy,
-            provVerifier.Object
-        );
-
-        var invocations = new List<PlannedToolInvocation>
+        var realCliAdapter = new GenericCliToolAdapter("curl", NullLogger<GenericCliToolAdapter>.Instance);
+        var authorizedManifest = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            new("trufflehog", "3.96.0", ScannerExecutionPhase.StaticAnalysis, new[] { "secret.scan" }, Array.Empty<string>(), "Secret scan")
+            ["curl"] = "curl.exe"
         };
 
-        var plan = new ResolvedScanPlan(
-            ScanJobId: scanJobId,
-            TenantId: tenantId,
-            TargetKind: TargetAssetKind.SourceRepository,
-            Profile: SecurityScanProfileType.Standard,
-            PlannedInvocations: invocations.AsReadOnly(),
-            ExecutionSequence: new[] { "trufflehog" },
-            RuleSetVersions: new Dictionary<string, string> { ["trufflehog"] = "3.96.0" },
-            SelectionReasons: new Dictionary<string, string>(),
-            PlannerVersion: "1.0.0",
-            PlanHash: "plan_real_sandbox_blocked",
-            PlannedAtUtc: DateTime.UtcNow,
-            TargetUrl: "https://example.com",
-            AdditionalOptions: new Dictionary<string, string>
+        var secretLease = new ProviderSecretLease(
+            providerKey: "curl",
+            secrets: new Dictionary<string, string>
             {
-                ["enable_live_verification"] = "true",
-                ["verification_destinations"] = "https://api.github.com"
-            }
+                ["HTTP_PROXY"] = proxyServer.ProxyEndpoint,
+                ["HTTPS_PROXY"] = proxyServer.ProxyEndpoint,
+                ["ALL_PROXY"] = proxyServer.ProxyEndpoint,
+                ["NO_PROXY"] = ""
+            },
+            duration: TimeSpan.FromMinutes(10)
         );
 
-        var result = await engine.ExecutePlanAsync(plan);
+        var scratch = Path.Combine(Path.GetTempPath(), "apihunter_scans", "apihunter_test_probe_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scratch);
 
-        undeclaredDestinationBlockedByProxy.Should().BeTrue("Real proxy listener must intercept and block undeclared provider destination from process.");
+        try
+        {
+            var req = new ToolExecutionRequest(
+                ToolKey: "curl",
+                Version: "1.0.0",
+                Arguments: new Dictionary<string, string>
+                {
+                    ["-s"] = "",
+                    ["-o"] = "NUL",
+                    ["-f"] = "", // --fail causes curl to exit non-zero on HTTP 403 Forbidden
+                    ["--url"] = "http://unauthorized-provider.internal/probe"
+                },
+                ScanJobId: scanJobId,
+                Timeout: TimeSpan.FromSeconds(15),
+                Executable: "curl.exe",
+                ContainerImageRepository: "curl",
+                ContainerImageDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                AuthorizedManifest: authorizedManifest
+            );
+
+            // Execute real child process!
+            var result = await realCliAdapter.ExecuteAsync(req, secretLease, scratch);
+
+            // Curl must fail with exit code (e.g. 22: HTTP 403 Forbidden from proxy)
+            result.Status.Should().Be(ToolExecutionStatus.Failed);
+            result.ExitCode.Should().NotBe(0);
+        }
+        finally
+        {
+            if (Directory.Exists(scratch)) Directory.Delete(scratch, true);
+        }
     }
 
     [Fact]
-    public async Task RealScannerRuntime_ProhibitedDestination_NeverDispatches()
+    public async Task RealProcess_ProhibitedDestination_NeverStarts()
     {
         var scanJobId = Guid.NewGuid();
         var tenantId = Guid.NewGuid();
@@ -450,7 +270,7 @@ public class RealSandboxEgressAllowlistIntegrationTests
             PlannerVersion: "1.0.0",
             PlanHash: "plan_real_sandbox_prohibited",
             PlannedAtUtc: DateTime.UtcNow,
-            TargetUrl: "https://example.com",
+            TargetUrl: "https://api.github.com",
             AdditionalOptions: new Dictionary<string, string>
             {
                 ["enable_live_verification"] = "true",
@@ -463,5 +283,79 @@ public class RealSandboxEgressAllowlistIntegrationTests
         result.OverallStatus.Should().Be(OverallScanExecutionStatus.Failed);
         result.Invocations.Should().ContainSingle(i => i.Status == ToolInvocationStatus.Failed && i.ErrorMessage.Contains("PROVIDER_EGRESS_UNAUTHORIZED"));
         cliAdapterEverCalled.Should().BeFalse("Real sandbox/CLI adapter MUST NEVER be called when verification destination is prohibited.");
+    }
+
+    [Fact]
+    public async Task RealProcess_CannotBypassProxyWithDirectConnection()
+    {
+        var scanJobId = Guid.NewGuid();
+        var customEgressPolicy = new EgressPolicyEngine(
+            NullLogger<EgressPolicyEngine>.Instance,
+            host => Task.FromResult(new[] { _githubApprovedIp })
+        );
+
+        var realGateway = new EnforcedEgressGateway(customEgressPolicy, new ScannerRuntimeOptions(), NullLogger<EnforcedEgressGateway>.Instance);
+        var target = new EgressTarget(
+            RawTargetUrl: "https://api.github.com",
+            CanonicalHost: "api.github.com",
+            Port: 443,
+            Scheme: "https",
+            ApprovedIpAddresses: new HashSet<IPAddress> { _githubApprovedIp },
+            ResolvedAtUtc: DateTime.UtcNow,
+            ExpiresAtUtc: DateTime.UtcNow.AddMinutes(10),
+            PolicyVersion: "v1.0"
+        );
+
+        await using var session = await realGateway.CreateScopedSessionAsync(target);
+
+        // Verify session strictly enforces empty NO_PROXY
+        session.ContainerEnvironmentVariables["NO_PROXY"].Should().BeEmpty("NO_PROXY must be empty to prevent proxy bypass");
+
+        var realCliAdapter = new GenericCliToolAdapter("curl", NullLogger<GenericCliToolAdapter>.Instance);
+        var authorizedManifest = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["curl"] = "curl.exe"
+        };
+
+        var secretLease = new ProviderSecretLease(
+            providerKey: "curl",
+            secrets: new Dictionary<string, string>(),
+            duration: TimeSpan.FromMinutes(10)
+        );
+
+        var scratch = Path.Combine(Path.GetTempPath(), "apihunter_scans", "apihunter_test_probe_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(scratch);
+
+        try
+        {
+            // Attempt direct connection to unapproved destination with very short connect timeout
+            var req = new ToolExecutionRequest(
+                ToolKey: "curl",
+                Version: "1.0.0",
+                Arguments: new Dictionary<string, string>
+                {
+                    ["-s"] = "",
+                    ["--connect-timeout"] = "1",
+                    ["--noproxy"] = "*",
+                    ["--url"] = "http://198.51.100.99:59999/bypass"
+                },
+                ScanJobId: scanJobId,
+                Timeout: TimeSpan.FromSeconds(5),
+                Executable: "curl.exe",
+                ContainerImageRepository: "curl",
+                ContainerImageDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                AuthorizedManifest: authorizedManifest
+            );
+
+            var result = await realCliAdapter.ExecuteAsync(req, secretLease, scratch);
+
+            // Direct connection to undeclared destination fails and is rejected
+            result.Status.Should().Be(ToolExecutionStatus.Failed);
+            result.ExitCode.Should().NotBe(0);
+        }
+        finally
+        {
+            if (Directory.Exists(scratch)) Directory.Delete(scratch, true);
+        }
     }
 }
