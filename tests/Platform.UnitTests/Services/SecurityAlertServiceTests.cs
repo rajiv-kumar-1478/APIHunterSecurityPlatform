@@ -15,6 +15,7 @@ namespace Platform.UnitTests.Services;
 
 public class SecurityAlertServiceTests : IDisposable
 {
+    private readonly DbContextOptions<PlatformDbContext> _dbOptions;
     private readonly PlatformDbContext _dbContext;
     private readonly Mock<INotificationService> _mockNotificationService;
     private readonly SecurityAlertOptions _options;
@@ -25,6 +26,7 @@ public class SecurityAlertServiceTests : IDisposable
         var dbOptions = new DbContextOptionsBuilder<PlatformDbContext>()
             .UseInMemoryDatabase("AlertServiceDb_" + Guid.NewGuid())
             .Options;
+        _dbOptions = dbOptions;
         _dbContext = new PlatformDbContext(dbOptions);
 
         _mockNotificationService = new Mock<INotificationService>();
@@ -186,9 +188,15 @@ public class SecurityAlertServiceTests : IDisposable
         _dbContext.SecurityFindings.Add(finding);
         await _dbContext.SaveChangesAsync();
 
-        // Run two concurrent tasks evaluating the exact same finding
-        var task1 = _service.EvaluateAndAlertForFindingAsync(finding, "ConcurrentTest");
-        var task2 = _service.EvaluateAndAlertForFindingAsync(finding, "ConcurrentTest");
+        // Run two concurrent tasks evaluating the exact same finding on independent contexts
+        using var db1 = new PlatformDbContext(_dbOptions);
+        using var db2 = new PlatformDbContext(_dbOptions);
+
+        var service1 = new SecurityAlertService(db1, _mockNotificationService.Object, Options.Create(_options), new Mock<ILogger<SecurityAlertService>>().Object);
+        var service2 = new SecurityAlertService(db2, _mockNotificationService.Object, Options.Create(_options), new Mock<ILogger<SecurityAlertService>>().Object);
+
+        var task1 = service1.EvaluateAndAlertForFindingAsync(finding, "ConcurrentTest");
+        var task2 = service2.EvaluateAndAlertForFindingAsync(finding, "ConcurrentTest");
 
         var results = await Task.WhenAll(task1, task2);
 

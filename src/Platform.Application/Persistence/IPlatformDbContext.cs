@@ -63,6 +63,8 @@ public interface IPlatformDbContext
     DbSet<SecurityProviderCredential> SecurityProviderCredentials { get; }
 
 
+    Microsoft.EntityFrameworkCore.ChangeTracking.ChangeTracker ChangeTracker { get; }
+
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
 
 }

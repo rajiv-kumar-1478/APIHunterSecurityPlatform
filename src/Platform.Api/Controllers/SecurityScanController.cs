@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
@@ -84,25 +85,39 @@ public class SecurityScanController : ControllerBase
     [HttpGet("jobs/{id:guid}")]
     public async Task<ActionResult<ScanJobDetailDto>> GetJob(Guid id, CancellationToken ct)
     {
-        var job = await _scanJobService.GetJobDetailAsync(id, ct);
-        if (job == null)
+        try
         {
-            return NotFound(new { message = $"Scan job '{id}' not found." });
-        }
+            var job = await _scanJobService.GetJobDetailAsync(id, ct);
+            if (job == null)
+            {
+                return NotFound(new { message = $"Scan job '{id}' not found." });
+            }
 
-        return Ok(job);
+            return Ok(job);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+        }
     }
 
     [HttpGet("jobs/{id:guid}/receipt")]
     public async Task<ActionResult<ScanExecutionReceipt>> GetJobReceipt(Guid id, CancellationToken ct)
     {
-        var receipt = await _scanJobService.GetJobReceiptAsync(id, ct);
-        if (receipt == null)
+        try
         {
-            return NotFound(new { message = $"Execution receipt for scan job '{id}' not found or scan not completed." });
-        }
+            var receipt = await _scanJobService.GetJobReceiptAsync(id, ct);
+            if (receipt == null)
+            {
+                return NotFound(new { message = $"Execution receipt for scan job '{id}' not found or scan not completed." });
+            }
 
-        return Ok(receipt);
+            return Ok(receipt);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+        }
     }
 
     [HttpPost("jobs")]
@@ -121,6 +136,10 @@ public class SecurityScanController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
+        }
     }
 
     [HttpPost("jobs/{id:guid}/retry")]
@@ -134,6 +153,10 @@ public class SecurityScanController : ControllerBase
         catch (KeyNotFoundException ex)
         {
             return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
         }
         catch (InvalidOperationException ex)
         {
@@ -152,6 +175,10 @@ public class SecurityScanController : ControllerBase
         catch (KeyNotFoundException ex)
         {
             return NotFound(new { message = ex.Message });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = ex.Message });
         }
         catch (InvalidOperationException ex)
         {

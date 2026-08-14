@@ -100,10 +100,17 @@ public class ScanJobService
 
     public async Task<SecurityScanJob?> GetJobByIdAsync(Guid jobId, CancellationToken ct = default)
     {
-        return await _dbContext.SecurityScanJobs
+        var job = await _dbContext.SecurityScanJobs
             .Include(j => j.Target)
             .Include(j => j.Repository)
             .FirstOrDefaultAsync(j => j.Id == jobId, ct);
+
+        if (job != null)
+        {
+            EnsureUserAuthorizedForJob(job);
+        }
+
+        return job;
     }
 
     public async Task<ScanJobDetailDto?> GetJobDetailAsync(Guid jobId, CancellationToken ct = default)
@@ -115,6 +122,7 @@ public class ScanJobService
 
         if (job == null) return null;
 
+        EnsureUserAuthorizedForJob(job);
         return MapToDetailDto(job);
     }
 
@@ -123,7 +131,11 @@ public class ScanJobService
         var job = await _dbContext.SecurityScanJobs.AsNoTracking()
             .FirstOrDefaultAsync(j => j.Id == jobId, ct);
 
-        if (job == null || string.IsNullOrWhiteSpace(job.ExecutionReceiptJson))
+        if (job == null) return null;
+
+        EnsureUserAuthorizedForJob(job);
+
+        if (string.IsNullOrWhiteSpace(job.ExecutionReceiptJson))
         {
             return null;
         }
@@ -143,6 +155,12 @@ public class ScanJobService
     {
         var query = _dbContext.SecurityScanJobs.AsNoTracking();
 
+        if (!_currentUserContext.IsPlatformAdmin)
+        {
+            var userId = _currentUserContext.UserId ?? Guid.Empty;
+            query = query.Where(j => j.RequestedByUserId == userId);
+        }
+
         if (statusFilter.HasValue)
         {
             query = query.Where(j => j.Status == statusFilter.Value);
@@ -161,6 +179,12 @@ public class ScanJobService
             .Include(j => j.Target)
             .Include(j => j.Repository)
             .AsNoTracking();
+
+        if (!_currentUserContext.IsPlatformAdmin)
+        {
+            var userId = _currentUserContext.UserId ?? Guid.Empty;
+            query = query.Where(j => j.RequestedByUserId == userId);
+        }
 
         if (statusFilter.HasValue)
         {
@@ -182,6 +206,8 @@ public class ScanJobService
 
         var job = await _dbContext.SecurityScanJobs.FirstOrDefaultAsync(j => j.Id == jobId, ct)
             ?? throw new KeyNotFoundException($"Scan job '{jobId}' not found.");
+
+        EnsureUserAuthorizedForJob(job);
 
         if (job.Version != expectedVersion)
         {
@@ -221,6 +247,8 @@ public class ScanJobService
 
         var originalJob = await _dbContext.SecurityScanJobs.FirstOrDefaultAsync(j => j.Id == jobId, ct)
             ?? throw new KeyNotFoundException($"Scan job '{jobId}' not found.");
+
+        EnsureUserAuthorizedForJob(originalJob);
 
         if (originalJob.Status is not (SecurityScanJobStatus.Failed or SecurityScanJobStatus.Cancelled or SecurityScanJobStatus.CompletedWithWarnings))
         {
@@ -278,6 +306,18 @@ public class ScanJobService
         _logger.LogInformation("Security scan job '{OriginalJobId}' retried as new job '{NewJobId}'.", originalJob.Id, retriedJob.Id);
 
         return retriedJob;
+    }
+
+    private void EnsureUserAuthorizedForJob(SecurityScanJob job)
+    {
+        if (_currentUserContext.IsPlatformAdmin) return;
+
+        var currentUserId = _currentUserContext.UserId;
+        if (!currentUserId.HasValue || job.RequestedByUserId != currentUserId.Value)
+        {
+            _logger.LogWarning("Access denied for user '{UserId}' to scan job '{JobId}' owned by '{OwnerId}'.", currentUserId, job.Id, job.RequestedByUserId);
+            throw new UnauthorizedAccessException("You are not authorized to access or modify this security scan job.");
+        }
     }
 
     private static ScanJobDetailDto MapToDetailDto(SecurityScanJob job)

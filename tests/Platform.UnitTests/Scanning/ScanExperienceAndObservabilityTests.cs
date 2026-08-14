@@ -248,6 +248,82 @@ public class ScanExperienceAndObservabilityTests : IDisposable
         progressUpdates.Last().Progress.Should().Be(100);
     }
 
+    [Fact]
+    public async Task CrossTenant_Access_IsStrictlyForbidden_ForNonAdminUsers()
+    {
+        var tenantAUser = Guid.NewGuid();
+        var tenantBUser = Guid.NewGuid();
+
+        var job = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            RepositoryId = _repoId,
+            TargetId = _targetId,
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Standard,
+            Status = SecurityScanJobStatus.Running,
+            RequestedByUserId = tenantAUser,
+            Version = 1
+        };
+
+        _dbContext.SecurityScanJobs.Add(job);
+        await _dbContext.SaveChangesAsync();
+
+        // Switch user context to Tenant B (non-admin)
+        _userContext.UserId = tenantBUser;
+        _userContext.IsPlatformAdmin = false;
+
+        // 1. GetJobById
+        Func<Task> getAct = async () => await _scanJobService.GetJobByIdAsync(job.Id);
+        await getAct.Should().ThrowAsync<UnauthorizedAccessException>()
+            .WithMessage("*not authorized to access or modify this security scan job*");
+
+        // 2. GetJobDetail
+        Func<Task> getDetailAct = async () => await _scanJobService.GetJobDetailAsync(job.Id);
+        await getDetailAct.Should().ThrowAsync<UnauthorizedAccessException>();
+
+        // 3. Cancel
+        Func<Task> cancelAct = async () => await _scanJobService.CancelScanJobAsync(job.Id, "Malicious cancel", 1);
+        await cancelAct.Should().ThrowAsync<UnauthorizedAccessException>();
+
+        // 4. Retry
+        Func<Task> retryAct = async () => await _scanJobService.RetryScanJobAsync(job.Id);
+        await retryAct.Should().ThrowAsync<UnauthorizedAccessException>();
+
+        // 5. ListJobs
+        var list = await _scanJobService.ListJobsAsync();
+        list.Should().NotContain(j => j.Id == job.Id, "Tenant B must not see Tenant A's jobs in list");
+    }
+
+    [Fact]
+    public async Task Retry_RevalidatesTargetScope_FailsClosedIfTargetDisabled()
+    {
+        var target = await _dbContext.SecurityTargets.FirstAsync(t => t.Id == _targetId);
+
+        var failedJob = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            RepositoryId = _repoId,
+            TargetId = _targetId,
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Standard,
+            Status = SecurityScanJobStatus.Failed,
+            RequestedByUserId = _userContext.UserId!.Value
+        };
+
+        _dbContext.SecurityScanJobs.Add(failedJob);
+        await _dbContext.SaveChangesAsync();
+
+        // Admin disables the target
+        target.Enabled = false;
+        await _dbContext.SaveChangesAsync();
+
+        // Attempting to retry now must fail closed
+        Func<Task> retryAct = async () => await _scanJobService.RetryScanJobAsync(failedJob.Id);
+        await retryAct.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("*is disabled*");
+    }
+
     private class MockScannerRuntimeSandbox : IScannerRuntimeSandbox
     {
         private readonly Dictionary<string, (ToolExecutionStatus Status, string? Output, string? ErrorCode, ToolFailureClassification FailureClassification)> _configured = new(StringComparer.OrdinalIgnoreCase);

@@ -286,6 +286,8 @@ public class ScanFindingIngestionEngine
         ParserResourceBounds bounds,
         CancellationToken ct)
     {
+        _dbContext.ChangeTracker.Clear();
+
         foreach (var candidate in candidates)
         {
             if (string.IsNullOrWhiteSpace(candidate.Title) || string.IsNullOrWhiteSpace(candidate.TargetUrl))

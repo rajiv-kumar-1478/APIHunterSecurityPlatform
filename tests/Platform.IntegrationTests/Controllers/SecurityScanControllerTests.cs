@@ -239,4 +239,43 @@ public class SecurityScanControllerTests : IDisposable
 
         jobs.Should().NotBeNull();
     }
+
+    [Fact]
+    public async Task Test10_TenantB_Cannot_Access_TenantA_Job_Returns403()
+    {
+        var tenantAUserId = Guid.NewGuid();
+        var tenantBUserId = Guid.NewGuid();
+
+        var job = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Standard,
+            Status = SecurityScanJobStatus.Running,
+            RequestedByUserId = tenantAUserId,
+            Version = 1
+        };
+
+        _dbContext.SecurityScanJobs.Add(job);
+        await _dbContext.SaveChangesAsync();
+
+        // Switch to Tenant B (non-admin)
+        _mockUser.Setup(u => u.UserId).Returns(tenantBUserId);
+        _mockUser.Setup(u => u.IsPlatformAdmin).Returns(false);
+
+        // 1. GetJob returns 403
+        var getResult = await _controller.GetJob(job.Id, default);
+        var getObjResult = getResult.Result.Should().BeOfType<ObjectResult>().Subject;
+        getObjResult.StatusCode.Should().Be(403);
+
+        // 2. CancelJob returns 403
+        var cancelResult = await _controller.CancelJob(job.Id, new CancelScanJobApiRequest("Malicious cancel", 1), default);
+        var cancelObjResult = cancelResult.Result.Should().BeOfType<ObjectResult>().Subject;
+        cancelObjResult.StatusCode.Should().Be(403);
+
+        // 3. RetryJob returns 403
+        var retryResult = await _controller.RetryJob(job.Id, default);
+        var retryObjResult = retryResult.Result.Should().BeOfType<ObjectResult>().Subject;
+        retryObjResult.StatusCode.Should().Be(403);
+    }
 }
