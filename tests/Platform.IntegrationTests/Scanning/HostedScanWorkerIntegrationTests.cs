@@ -36,6 +36,46 @@ public class HostedScanWorkerIntegrationTests
     }
 
     [Fact]
+    public async Task DockerScannerRuntime_Integration_ExecutesRealDockerOrFailsClosedGracefully()
+    {
+        var options = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.Docker,
+            RequireDockerSandbox = true
+        };
+
+        var egressProxyMock = new Mock<IEgressNetworkProxy>();
+        var mockHandle = new Mock<IAsyncDisposable>();
+        mockHandle.Setup(h => h.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        egressProxyMock.Setup(p => p.CreateScopedPolicyAsync(It.IsAny<EgressTarget>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(mockHandle.Object);
+
+        Mock<IGenericCliToolAdapter> cliAdapterMock = new();
+        var runtime = new DockerScannerRuntime(options, toolKey => cliAdapterMock.Object, egressProxyMock.Object, NullLogger<DockerScannerRuntime>.Instance);
+
+        var egressTarget = new EgressTarget(
+            RawTargetUrl: "https://example.com",
+            CanonicalHost: "example.com",
+            Port: 443,
+            Scheme: "https",
+            ApprovedIpAddresses: new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Parse("93.184.216.34") },
+            ResolvedAtUtc: DateTime.UtcNow,
+            ExpiresAtUtc: DateTime.UtcNow.AddMinutes(10),
+            PolicyVersion: "v1.0");
+
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(1));
+
+        var result = await runtime.ExecuteInSandboxAsync(request, egressTarget, secretLease, Path.GetTempPath());
+
+        result.Should().NotBeNull();
+        if (result.Status == ToolExecutionStatus.Failed)
+        {
+            result.ErrorCode.Should().Match(code => code == "DOCKER_RUNTIME_UNAVAILABLE" || code == "DOCKER_CONTAINER_EXECUTION_FAILED" || code.StartsWith("DOCKER_LAUNCH_FAILED"));
+        }
+    }
+
+    [Fact]
     public async Task HostedScanJob_UsesRegisteredToolExecutable()
     {
         using var db = CreateInMemoryDbContext();

@@ -16,6 +16,7 @@ namespace Platform.Infrastructure.Scanning;
 /// <summary>
 /// Containerized OCI/Docker Scanner Runtime Sandbox.
 /// Enforces strong container isolation (CPU, Memory, PIDs, read-only root, dropped capabilities, no-new-privileges, scratch volume mount).
+/// Executes real `docker run` container processes when Docker daemon is available.
 /// Fails closed with DOCKER_RUNTIME_UNAVAILABLE when RuntimeMode is Docker or RequireDockerSandbox is true and Docker daemon is absent.
 /// </summary>
 public class DockerScannerRuntime : IScannerRuntimeSandbox
@@ -67,8 +68,8 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         // 3. Build Docker Container Isolation Arguments deterministically from ScannerRuntimeOptions
         var dockerArgs = BuildDockerIsolationArguments(request, egressTarget, scratchDirectory);
 
-        // 4. Verify Docker Executable Availability when Docker RuntimeMode or RequireDockerSandbox is Enforced
-        var isDockerAvailable = IsDockerCliAvailable();
+        // 4. Verify Docker Daemon Availability when Docker RuntimeMode or RequireDockerSandbox is Enforced
+        var isDockerAvailable = IsDockerDaemonAvailable();
         if ((_options.RuntimeMode == ScannerRuntimeMode.Docker || _options.RequireDockerSandbox) && !isDockerAvailable)
         {
             _logger.LogError("DockerScannerRuntime execution rejected: Docker runtime is required (RuntimeMode: {Mode}) but Docker daemon is unavailable.", _options.RuntimeMode);
@@ -78,12 +79,15 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         _logger.LogInformation("DockerScannerRuntime launching execution for tool '{ToolKey}' (v{Version}) with limits [CPU: {Cpu}, Memory: {Mem}B, PIDs: {Pids}].",
             request.ToolKey, request.Version, _options.MaxCpuCores, _options.MaxMemoryBytes, _options.MaxPids);
 
-        if (!isDockerAvailable)
+        // 5. Execute real `docker run` container if Docker daemon is active
+        if (isDockerAvailable)
         {
-            _logger.LogWarning("DEVELOPMENT_MODE_REDUCED_ISOLATION: Docker daemon is unavailable on host. Running local process execution fallback.");
+            return await ExecuteDockerContainerAsync(request, egressTarget, dockerArgs, scratchDirectory, cancellationToken);
         }
 
-        // 5. Delegate execution to CLI adapter context
+        _logger.LogWarning("DEVELOPMENT_MODE_REDUCED_ISOLATION: Docker daemon is unavailable on host. Running local process execution fallback.");
+
+        // 6. Local Process Fallback (strictly in UnsafeLocalProcessFallback mode)
         var cliAdapter = _cliAdapterFactory(request.ToolKey);
         return await cliAdapter.ExecuteAsync(request, secretLease, scratchDirectory, cancellationToken);
     }
@@ -122,7 +126,107 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         return args.AsReadOnly();
     }
 
-    private static bool IsDockerCliAvailable()
+    private async Task<ToolExecutionResult> ExecuteDockerContainerAsync(
+        ToolExecutionRequest request,
+        EgressTarget egressTarget,
+        IReadOnlyList<string> isolationArgs,
+        string scratchDirectory,
+        CancellationToken cancellationToken)
+    {
+        var containerName = $"apihunter-{request.ToolKey}-{request.ScanJobId:N}";
+        var fullArgs = new List<string>(isolationArgs)
+        {
+            $"--name={containerName}",
+            $"apihunter/{request.ToolKey}:{request.Version}",
+            request.Executable ?? request.ToolKey
+        };
+
+        if (request.Arguments != null)
+        {
+            foreach (var kvp in request.Arguments)
+            {
+                fullArgs.Add($"--{kvp.Key}");
+                if (!string.IsNullOrWhiteSpace(kvp.Value))
+                {
+                    fullArgs.Add(kvp.Value);
+                }
+            }
+        }
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "docker",
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        foreach (var arg in fullArgs)
+        {
+            psi.ArgumentList.Add(arg);
+        }
+
+        using var process = new Process { StartInfo = psi };
+
+        try
+        {
+            process.Start();
+
+            using var timeoutCts = new CancellationTokenSource(_options.ExecutionTimeout);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(linkedCts.Token);
+            var stderrTask = process.StandardError.ReadToEndAsync(linkedCts.Token);
+
+            await process.WaitForExitAsync(linkedCts.Token);
+
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
+
+            if (process.ExitCode == 0)
+            {
+                _logger.LogInformation("Docker container execution for tool '{ToolKey}' completed successfully.", request.ToolKey);
+                return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Success, 0, scratchDirectory, null);
+            }
+
+            _logger.LogWarning("Docker container execution for tool '{ToolKey}' failed with exit code {ExitCode}. Stderr: {Stderr}",
+                request.ToolKey, process.ExitCode, stderr);
+            return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, process.ExitCode, null, "DOCKER_CONTAINER_EXECUTION_FAILED");
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("Docker container execution for tool '{ToolKey}' timed out or was cancelled. Force killing container '{Container}'.", request.ToolKey, containerName);
+            TryKillContainer(containerName);
+            return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.TimedOut, -1, null, "DOCKER_CONTAINER_TIMEOUT");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to launch Docker container for tool '{ToolKey}'.", request.ToolKey);
+            return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, $"DOCKER_LAUNCH_FAILED: {ex.Message}");
+        }
+    }
+
+    private static void TryKillContainer(string containerName)
+    {
+        try
+        {
+            using var killProc = Process.Start(new ProcessStartInfo
+            {
+                FileName = "docker",
+                Arguments = $"kill {containerName}",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            killProc?.WaitForExit(3000);
+        }
+        catch
+        {
+            // Suppress secondary cleanup exceptions on cancellation
+        }
+    }
+
+    private static bool IsDockerDaemonAvailable()
     {
         try
         {
@@ -131,7 +235,7 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = "docker",
-                    Arguments = "--version",
+                    Arguments = "info",
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -140,7 +244,7 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
             };
 
             proc.Start();
-            return proc.WaitForExit(2000) && proc.ExitCode == 0;
+            return proc.WaitForExit(3000) && proc.ExitCode == 0;
         }
         catch
         {
