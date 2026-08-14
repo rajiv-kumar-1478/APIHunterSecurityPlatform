@@ -18,7 +18,7 @@ namespace Platform.Infrastructure.Scanning;
 
 public class ScanToolHealthService : IScanToolHealthService
 {
-    private readonly ScanToolRegistryService _registryService;
+    private readonly ScanToolRegistryService? _registryService;
     private readonly IPlatformDbContext _dbContext;
     private readonly IToolRuntimeVerifier _runtimeVerifier;
     private readonly ScannerRuntimeOptions _options;
@@ -26,15 +26,15 @@ public class ScanToolHealthService : IScanToolHealthService
     private readonly ILogger<ScanToolHealthService> _logger;
 
     public ScanToolHealthService(
-        ScanToolRegistryService registryService,
-        ILogger<ScanToolHealthService> logger,
+        ScanToolRegistryService? registryService = null,
+        ILogger<ScanToolHealthService>? logger = null,
         IPlatformDbContext? dbContext = null,
         IToolRuntimeVerifier? runtimeVerifier = null,
         ScannerRuntimeOptions? options = null,
         IEnforcedEgressGateway? egressGateway = null)
     {
         _registryService = registryService;
-        _logger = logger;
+        _logger = logger ?? NullLogger<ScanToolHealthService>.Instance;
         _dbContext = dbContext!;
         _runtimeVerifier = runtimeVerifier ?? new ToolRuntimeVerifier(NullLogger<ToolRuntimeVerifier>.Instance);
         _options = options ?? new ScannerRuntimeOptions();
@@ -47,9 +47,12 @@ public class ScanToolHealthService : IScanToolHealthService
 
         if (_dbContext == null)
         {
-            var allTools = await _registryService.GetAllToolsAsync(ct);
-            var existingDto = allTools.FirstOrDefault(t => string.Equals(t.ToolKey, toolKey, StringComparison.OrdinalIgnoreCase));
-            if (existingDto != null) return existingDto;
+            if (_registryService != null)
+            {
+                var allTools = await _registryService.GetAllToolsAsync(ct);
+                var existingDto = allTools.FirstOrDefault(t => string.Equals(t.ToolKey, toolKey, StringComparison.OrdinalIgnoreCase));
+                if (existingDto != null) return existingDto;
+            }
 
             return new ScanToolDto(
                 Id: Guid.Empty,
@@ -105,7 +108,7 @@ public class ScanToolHealthService : IScanToolHealthService
 
     public async Task<IReadOnlyList<ScanToolDto>> GetAllToolStatusAsync(CancellationToken ct = default)
     {
-        return await _registryService.GetAllToolsAsync(ct);
+        return _registryService != null ? await _registryService.GetAllToolsAsync(ct) : Array.Empty<ScanToolDto>();
     }
 
     public async Task<ScannerRuntimeHealthDto> GetScannerRuntimeHealthAsync(CancellationToken ct = default)
@@ -130,9 +133,17 @@ public class ScanToolHealthService : IScanToolHealthService
         var isRuntimeAvailable = _options.RuntimeMode switch
         {
             ScannerRuntimeMode.LocalDocker => dockerAvailable,
-            ScannerRuntimeMode.CloudManagedContainer => true,
-            ScannerRuntimeMode.UnsafeLocalProcessFallback => true,
+            ScannerRuntimeMode.CloudManagedContainer => !string.IsNullOrWhiteSpace(_options.HostedScannerServiceEndpoint) && !string.IsNullOrWhiteSpace(_options.HostedScannerServiceKey),
+            ScannerRuntimeMode.UnsafeLocalProcessFallback => _options.AllowUnsafeProcessFallback,
             _ => dockerAvailable
+        };
+
+        var runtimeVersion = _options.RuntimeMode switch
+        {
+            ScannerRuntimeMode.LocalDocker => dockerVersion,
+            ScannerRuntimeMode.CloudManagedContainer => isRuntimeAvailable ? "Cloud Managed Scanner Service Active" : "Cloud Scanner Service Unconfigured",
+            ScannerRuntimeMode.UnsafeLocalProcessFallback => "Unsafe Local Process (Dev Only)",
+            _ => dockerVersion
         };
 
         var readyForScans = isRuntimeAvailable && gatewayHealthy && _options.EnforceImageProvenance;
@@ -141,7 +152,7 @@ public class ScanToolHealthService : IScanToolHealthService
             Runtime: new RuntimeHealthInfo(
                 Mode: _options.RuntimeMode.ToString(),
                 Available: isRuntimeAvailable,
-                Version: dockerVersion
+                Version: runtimeVersion
             ),
             Provenance: new ProvenanceHealthInfo(
                 ImageDigestRequired: _options.EnforceImageProvenance,
@@ -175,7 +186,7 @@ public class ScanToolHealthService : IScanToolHealthService
                 StartInfo = new ProcessStartInfo
                 {
                     FileName = "docker",
-                    Arguments = "--version",
+                    Arguments = "info",
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -189,14 +200,14 @@ public class ScanToolHealthService : IScanToolHealthService
 
             if (exited && proc.ExitCode == 0)
             {
-                return (true, string.IsNullOrWhiteSpace(output) ? "Docker CLI Active" : output.Trim());
+                return (true, "Docker Daemon Active");
             }
 
-            return (false, "Docker Daemon Offline / Unavailable");
+            return (false, "Docker Daemon Offline / Socket Unavailable");
         }
         catch
         {
-            return (false, "Docker CLI Not Installed / Unavailable");
+            return (false, "Docker CLI Not Installed / Socket Unavailable");
         }
     }
 

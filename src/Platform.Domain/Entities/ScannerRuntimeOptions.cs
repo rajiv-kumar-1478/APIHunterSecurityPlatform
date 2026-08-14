@@ -40,5 +40,11 @@ public sealed record ScannerRuntimeOptions
         "quay.io/apihunter"
     };
 
+    public bool AllowUnsafeProcessFallback { get; init; } = false;
+
+    public string? HostedScannerServiceEndpoint { get; init; }
+
+    public string? HostedScannerServiceKey { get; init; }
+
     public string PlatformScratchRoot { get; init; } = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "apihunter_scans");
 }

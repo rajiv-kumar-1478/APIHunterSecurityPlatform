@@ -88,6 +88,15 @@ public class ScannerRuntimeSandboxTests
     }
 
     [Fact]
+    public void DockerScannerRuntime_UnsafeFallback_DefaultConfiguration_IsDisabled()
+    {
+        var defaultOptions = new ScannerRuntimeOptions();
+        defaultOptions.AllowUnsafeProcessFallback.Should().BeFalse("Unsafe host process fallback must be strictly disabled by default");
+        defaultOptions.RuntimeMode.Should().Be(ScannerRuntimeMode.LocalDocker);
+        defaultOptions.EnforceImageProvenance.Should().BeTrue();
+    }
+
+    [Fact]
     public void DockerScannerRuntime_BuildsRequiredIsolationArguments_WithEnforcedGatewayAndNoProxyEmpty()
     {
         var options = new ScannerRuntimeOptions
@@ -142,6 +151,75 @@ public class ScannerRuntimeSandboxTests
     }
 
     [Fact]
+    public async Task DockerScannerRuntime_LocalDockerMode_FailsClosed_WithoutHostProcessFallback_WhenDockerUnavailable()
+    {
+        var options = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.LocalDocker,
+            RequireDockerSandbox = true,
+            AllowUnsafeProcessFallback = false
+        };
+
+        var mockAdapter = new Mock<IGenericCliToolAdapter>();
+        mockAdapter.Setup(a => a.ToolKey).Returns("subfinder");
+        mockAdapter.Setup(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                   .ReturnsAsync(new ToolExecutionResult("subfinder", "v2.6.6", ToolExecutionStatus.Success, 0, null, null));
+
+        var runtime = new DockerScannerRuntime(options, toolKey => mockAdapter.Object, _mockEgressGateway.Object, NullLogger<DockerScannerRuntime>.Instance);
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+
+        var request = new ToolExecutionRequest(
+            ToolKey: "subfinder",
+            Version: "v2.6.6",
+            Arguments: new Dictionary<string, string>(),
+            ScanJobId: Guid.NewGuid(),
+            Timeout: TimeSpan.FromMinutes(10),
+            Executable: "subfinder",
+            ContainerImageRepository: "ghcr.io/apihunter-security/subfinder",
+            ContainerImageDigest: "sha256:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd46059d33ef0"
+        );
+
+        var scratchDir = Path.Combine(options.PlatformScratchRoot, request.ScanJobId.ToString("N"));
+        var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, scratchDir);
+
+        result.Status.Should().Be(ToolExecutionStatus.Failed);
+        result.ErrorCode.Should().Match(code => code == "DOCKER_RUNTIME_UNAVAILABLE" || code!.StartsWith("DOCKER_CONTAINER_EXECUTION_FAILED") || code!.StartsWith("DOCKER_LAUNCH_FAILED"));
+
+        // PROOF: Host CLI process adapter was NEVER invoked on Docker failure
+        if (result.ErrorCode == "DOCKER_RUNTIME_UNAVAILABLE")
+        {
+            mockAdapter.Verify(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+    }
+
+    [Fact]
+    public async Task DockerScannerRuntime_NeverConstructsLatestImageTag_AndFailsClosed_WhenImageDigestMissing()
+    {
+        var options = new ScannerRuntimeOptions { EnforceImageProvenance = true };
+        Mock<IGenericCliToolAdapter> mockAdapter = new();
+        var runtime = new DockerScannerRuntime(options, toolKey => mockAdapter.Object, _mockEgressGateway.Object, NullLogger<DockerScannerRuntime>.Instance);
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+
+        var request = new ToolExecutionRequest(
+            ToolKey: "subfinder",
+            Version: "v2.6.6",
+            Arguments: new Dictionary<string, string>(),
+            ScanJobId: Guid.NewGuid(),
+            Timeout: TimeSpan.FromMinutes(10),
+            Executable: "subfinder",
+            ContainerImageRepository: "ghcr.io/apihunter-security/subfinder",
+            ContainerImageDigest: null // Missing digest: must fail closed, no :latest tag
+        );
+
+        var scratchDir = Path.Combine(options.PlatformScratchRoot, request.ScanJobId.ToString("N"));
+        var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, scratchDir);
+
+        result.Status.Should().Be(ToolExecutionStatus.Failed);
+        result.ErrorCode.Should().StartWith("TOOL_PROVENANCE_NOT_VERIFIED");
+        mockAdapter.Verify(a => a.ExecuteAsync(It.IsAny<ToolExecutionRequest>(), It.IsAny<ProviderSecretLease>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task DockerScannerRuntime_FailsClosed_WhenExecutableIsMissing_NoFallback()
     {
         var options = new ScannerRuntimeOptions();
@@ -165,32 +243,6 @@ public class ScannerRuntimeSandboxTests
 
         result.Status.Should().Be(ToolExecutionStatus.Failed);
         result.ErrorCode.Should().Be("TOOL_EXECUTABLE_NOT_CONFIGURED");
-    }
-
-    [Fact]
-    public async Task DockerScannerRuntime_FailsClosed_WhenContainerImageDigestIsMissing_NoFallbackToSha256()
-    {
-        var options = new ScannerRuntimeOptions { EnforceImageProvenance = true };
-        Mock<IGenericCliToolAdapter> mockAdapter = new();
-        var runtime = new DockerScannerRuntime(options, toolKey => mockAdapter.Object, _mockEgressGateway.Object, NullLogger<DockerScannerRuntime>.Instance);
-        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
-
-        var request = new ToolExecutionRequest(
-            ToolKey: "subfinder",
-            Version: "v2.6.6",
-            Arguments: new Dictionary<string, string>(),
-            ScanJobId: Guid.NewGuid(),
-            Timeout: TimeSpan.FromMinutes(10),
-            Executable: "subfinder",
-            ContainerImageRepository: "ghcr.io/apihunter-security/subfinder",
-            ContainerImageDigest: null // Missing digest: must fail closed, no fallback to ArtifactSha256
-        );
-
-        var scratchDir = Path.Combine(options.PlatformScratchRoot, request.ScanJobId.ToString("N"));
-        var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, scratchDir);
-
-        result.Status.Should().Be(ToolExecutionStatus.Failed);
-        result.ErrorCode.Should().StartWith("TOOL_PROVENANCE_NOT_VERIFIED");
     }
 
     [Fact]
@@ -361,6 +413,46 @@ public class ScannerRuntimeSandboxTests
         result.Status.Should().Be(ToolExecutionStatus.Success);
         result.ToolKey.Should().Be("subfinder");
         result.ExitCode.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task ScanToolHealthService_RequiresCloudConfig_InCloudManagedContainerMode()
+    {
+        // 1. Unconfigured Cloud Mode -> ReadyForScans = False
+        var unconfiguredOptions = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
+            HostedScannerServiceEndpoint = null,
+            HostedScannerServiceKey = null
+        };
+
+        var unconfiguredHealthService = new ScanToolHealthService(
+            registryService: null,
+            logger: NullLogger<ScanToolHealthService>.Instance,
+            options: unconfiguredOptions,
+            egressGateway: _mockEgressGateway.Object);
+
+        var unconfiguredHealth = await unconfiguredHealthService.GetScannerRuntimeHealthAsync();
+        unconfiguredHealth.Runtime.Available.Should().BeFalse();
+        unconfiguredHealth.ReadyForScans.Should().BeFalse();
+
+        // 2. Properly Configured Cloud Mode -> ReadyForScans = True
+        var configuredOptions = new ScannerRuntimeOptions
+        {
+            RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
+            HostedScannerServiceEndpoint = "https://scanner.internal",
+            HostedScannerServiceKey = "SECRET_KEY_123"
+        };
+
+        var configuredHealthService = new ScanToolHealthService(
+            registryService: null,
+            logger: NullLogger<ScanToolHealthService>.Instance,
+            options: configuredOptions,
+            egressGateway: _mockEgressGateway.Object);
+
+        var configuredHealth = await configuredHealthService.GetScannerRuntimeHealthAsync();
+        configuredHealth.Runtime.Available.Should().BeTrue();
+        configuredHealth.ReadyForScans.Should().BeTrue();
     }
 
     private class FakeHttpMessageHandler : HttpMessageHandler

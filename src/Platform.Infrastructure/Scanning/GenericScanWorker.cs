@@ -31,7 +31,7 @@ public class GenericScanWorker : IScanWorker
         IEgressPolicyEngine egressPolicyEngine,
         ILogger<GenericScanWorker> logger,
         IScannerRuntimeSandbox? runtimeSandbox = null,
-        bool allowUnsafeProcessFallback = true)
+        bool allowUnsafeProcessFallback = false)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _secretStore = secretStore ?? throw new ArgumentNullException(nameof(secretStore));

@@ -122,11 +122,16 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
             return await ExecuteDockerContainerAsync(request, egressTarget, dockerArgs, scratchDirectory, cancellationToken);
         }
 
-        _logger.LogWarning("DEVELOPMENT_MODE_REDUCED_ISOLATION: Docker daemon is unavailable on host. Running local process execution fallback.");
+        // 9. Fail Closed if Docker is unavailable (No host execution for LocalDocker or CloudManagedContainer)
+        if (_options.RuntimeMode == ScannerRuntimeMode.UnsafeLocalProcessFallback && _options.AllowUnsafeProcessFallback)
+        {
+            _logger.LogWarning("DEVELOPMENT_MODE_REDUCED_ISOLATION: Running explicitly configured local process execution fallback.");
+            var cliAdapter = _cliAdapterFactory(request.ToolKey);
+            return await cliAdapter.ExecuteAsync(request, secretLease, scratchDirectory, cancellationToken);
+        }
 
-        // 9. Local Process Fallback (strictly in UnsafeLocalProcessFallback mode)
-        var cliAdapter = _cliAdapterFactory(request.ToolKey);
-        return await cliAdapter.ExecuteAsync(request, secretLease, scratchDirectory, cancellationToken);
+        _logger.LogError("DockerScannerRuntime execution rejected: Docker daemon is unavailable and host process fallback is disabled.");
+        return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "DOCKER_RUNTIME_UNAVAILABLE");
     }
 
     public IReadOnlyList<string> BuildDockerIsolationArguments(
@@ -231,9 +236,13 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
             return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "INVALID_CONTAINER_NAME");
         }
 
-        var imageSpec = !string.IsNullOrWhiteSpace(request.ContainerImageRepository) && !string.IsNullOrWhiteSpace(request.ContainerImageDigest)
-            ? $"{request.ContainerImageRepository}@{request.ContainerImageDigest}"
-            : $"ghcr.io/apihunter-security/{request.ToolKey}:latest";
+        if (string.IsNullOrWhiteSpace(request.ContainerImageRepository) || string.IsNullOrWhiteSpace(request.ContainerImageDigest))
+        {
+            _logger.LogError("DockerScannerRuntime container execution rejected: ContainerImageRepository and ContainerImageDigest are required (No fallback).");
+            return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "TOOL_PROVENANCE_NOT_VERIFIED");
+        }
+
+        var imageSpec = $"{request.ContainerImageRepository.Trim()}@{request.ContainerImageDigest.Trim()}";
 
         var fullArgs = new List<string>(isolationArgs)
         {

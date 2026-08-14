@@ -320,7 +320,9 @@ public class GenericCliToolAdapterSecurityTests
             registry,
             factory,
             new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance),
-            NullLogger<GenericScanWorker>.Instance
+            NullLogger<GenericScanWorker>.Instance,
+            runtimeSandbox: null,
+            allowUnsafeProcessFallback: true
         );
 
         var result = await worker.ExecuteScanJobAsync(db.SecurityScanJobs.First().Id);

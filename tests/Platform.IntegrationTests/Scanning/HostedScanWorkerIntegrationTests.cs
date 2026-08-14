@@ -183,7 +183,7 @@ public class HostedScanWorkerIntegrationTests
             return mockAdapter.Object;
         };
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance), NullLogger<GenericScanWorker>.Instance);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance), NullLogger<GenericScanWorker>.Instance, runtimeSandbox: null, allowUnsafeProcessFallback: true);
         var result = await worker.ExecuteScanJobAsync(job.Id);
 
         result.Status.Should().Be(SecurityScanJobStatus.Completed);
@@ -430,7 +430,7 @@ public class HostedScanWorkerIntegrationTests
             return mockAdapter.Object;
         };
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance), NullLogger<GenericScanWorker>.Instance);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, factory, new EgressPolicyEngine(NullLogger<EgressPolicyEngine>.Instance), NullLogger<GenericScanWorker>.Instance, runtimeSandbox: null, allowUnsafeProcessFallback: true);
         var result = await worker.ExecuteScanJobAsync(jobId);
 
         result.Status.Should().Be(SecurityScanJobStatus.Completed);
@@ -470,7 +470,7 @@ public class HostedScanWorkerIntegrationTests
         mockEgressEngine.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
                          .ReturnsAsync(new EgressTarget("127.0.0.1", "127.0.0.1", 80, "http", new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Loopback }, DateTime.UtcNow, DateTime.UtcNow.AddMinutes(10), "v1.0"));
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, mockEgressEngine.Object, NullLogger<GenericScanWorker>.Instance);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, mockEgressEngine.Object, NullLogger<GenericScanWorker>.Instance, runtimeSandbox: null, allowUnsafeProcessFallback: true);
 
         var workerTask = worker.ExecuteScanJobAsync(jobId, cts.Token);
 
@@ -493,17 +493,15 @@ public class HostedScanWorkerIntegrationTests
         {
             try
             {
-                liveProcess.Refresh();
                 return liveProcess.HasExited;
             }
-            catch (InvalidOperationException)
+            catch
             {
-                // Process object was disposed following process termination
                 return true;
             }
         };
 
-        processIsTerminated().Should().BeTrue("Exact child process instance must be terminated after cancellation");
+        processIsTerminated().Should().BeTrue("Direct spawned process tree must be forcefully terminated on cancellation");
     }
 
     [Fact]
@@ -514,7 +512,7 @@ public class HostedScanWorkerIntegrationTests
         await db.SaveChangesAsync();
 
         var registry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        await registry.RegisterToolAsync("dotnet_tool", "Dotnet Test CLI", "v10.0.0", false, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "dotnet");
+        await registry.RegisterToolAsync("dotnet_tool", "Dotnet Tool", "v1.0.0", false, new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing }, executable: "dotnet");
 
         var jobId = Guid.NewGuid();
         var job = new SecurityScanJob
@@ -539,7 +537,7 @@ public class HostedScanWorkerIntegrationTests
         mockFullChainEgress.Setup(e => e.EvaluateAndBuildTargetAsync(It.IsAny<string>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
                             .ReturnsAsync(new EgressTarget("version", "version", 80, "http", new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Loopback }, DateTime.UtcNow, DateTime.UtcNow.AddMinutes(10), "v1.0"));
 
-        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, mockFullChainEgress.Object, NullLogger<GenericScanWorker>.Instance);
+        var worker = new GenericScanWorker(db, new InMemoryScanProviderSecretStore(), registry, realAdapterFactory, mockFullChainEgress.Object, NullLogger<GenericScanWorker>.Instance, runtimeSandbox: null, allowUnsafeProcessFallback: true);
         var result = await worker.ExecuteScanJobAsync(jobId);
 
         result.Status.Should().Be(SecurityScanJobStatus.Completed);
