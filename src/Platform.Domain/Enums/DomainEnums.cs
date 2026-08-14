@@ -421,6 +421,7 @@ public enum FindingConfidence
 
 public enum RiskSeverity
 {
+    Info,
     Low,
     Medium,
     High,
