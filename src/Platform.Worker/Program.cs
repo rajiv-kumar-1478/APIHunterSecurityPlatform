@@ -89,12 +89,14 @@ builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.SubfinderOut
 builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.JsMinerOutputParser>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.BugHunterOutputParser>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.SemgrepOutputParser>();
+builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.TruffleHogOutputParser>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.HttpxAdapter>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.NucleiAdapter>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.SubfinderAdapter>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.JsMinerAdapter>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.BugHunterAdapter>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.SemgrepAdapter>();
+builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.TruffleHogAdapter>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolRegistry, Platform.Application.Scanning.Adapters.ScanToolRegistry>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Planning.IScanPlanningEngine, Platform.Application.Scanning.Planning.ScanPlanningEngine>();
 builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsDiscoveryEngine, Platform.Application.Scanning.JavaScript.JsDiscoveryEngine>();
