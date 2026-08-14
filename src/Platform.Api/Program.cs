@@ -335,9 +335,11 @@ try
     builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.HttpxOutputParser>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.NucleiOutputParser>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.SubfinderOutputParser>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Parsers.JsMinerOutputParser>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.HttpxAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.NucleiAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.SubfinderAdapter>();
+    builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.JsMinerAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolRegistry, Platform.Application.Scanning.Adapters.ScanToolRegistry>();
 
 

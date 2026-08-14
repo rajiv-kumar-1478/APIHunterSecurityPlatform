@@ -11,6 +11,9 @@ public sealed record ScannerCoverage(
     int AssetsProbed,
     int JavaScriptFilesDiscovered,
     bool CoverageTruncated,
+    string? CoverageTruncationReason = null,
+    int MalformedRecordCount = 0,
+    bool OutputTruncated = false,
     string? CoverageArtifactReference = null,
     IReadOnlyDictionary<string, object>? CoverageDetails = null
 );
