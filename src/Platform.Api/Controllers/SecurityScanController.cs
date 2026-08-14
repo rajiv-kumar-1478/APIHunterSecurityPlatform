@@ -27,6 +27,7 @@ public class SecurityScanController : ControllerBase
     private readonly ScanPostExecutionProcessor _postProcessor;
     private readonly ScanReportBuilderService _reportBuilder;
     private readonly SecurityReportFormatterRegistry _formatterRegistry;
+    private readonly Platform.Application.Scanning.Audit.IScanPlanAuditService _auditService;
 
     public SecurityScanController(
         ScanJobService scanJobService,
@@ -35,6 +36,7 @@ public class SecurityScanController : ControllerBase
         IScanProviderSecretStore secretStore,
         ScanPostExecutionProcessor postProcessor,
         ScanReportBuilderService reportBuilder,
+        Platform.Application.Scanning.Audit.IScanPlanAuditService? auditService = null,
         SecurityReportFormatterRegistry? formatterRegistry = null)
     {
         _scanJobService = scanJobService;
@@ -43,6 +45,7 @@ public class SecurityScanController : ControllerBase
         _secretStore = secretStore;
         _postProcessor = postProcessor;
         _reportBuilder = reportBuilder;
+        _auditService = auditService!;
         _formatterRegistry = formatterRegistry ?? new SecurityReportFormatterRegistry();
     }
 
@@ -279,6 +282,40 @@ public class SecurityScanController : ControllerBase
         {
             return BadRequest(new { message = ex.Message });
         }
+    }
+
+    [HttpGet("jobs/{id:guid}/provenance")]
+    public async Task<ActionResult<Platform.Application.Scanning.Audit.Contracts.ScanProvenanceResponse>> GetProvenance(Guid id, CancellationToken ct)
+    {
+        var tenantId = ResolveTenantId();
+        var provenance = await _auditService.GetProvenanceAsync(id, tenantId, ct);
+        if (provenance == null)
+        {
+            return NotFound(new { message = $"Scan provenance for job '{id}' was not found for current tenant." });
+        }
+
+        return Ok(provenance);
+    }
+
+    private Guid ResolveTenantId()
+    {
+        if (User.IsInRole("Admin") &&
+            Request.Headers.TryGetValue("X-Tenant-ID", out var tenantHeader) &&
+            Guid.TryParse(tenantHeader.ToString(), out var headerTenantId))
+        {
+            return headerTenantId;
+        }
+
+        var claim = User.FindFirst("tenant_id")?.Value
+            ?? User.FindFirst("TenantId")?.Value
+            ?? User.FindFirst(System.Security.Claims.ClaimTypes.GroupSid)?.Value;
+
+        if (Guid.TryParse(claim, out var parsedTenantId))
+        {
+            return parsedTenantId;
+        }
+
+        return Guid.Empty;
     }
 }
 

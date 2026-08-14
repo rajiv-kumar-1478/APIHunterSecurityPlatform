@@ -67,6 +67,9 @@ public interface IPlatformDbContext
     DbSet<ScanCampaign> ScanCampaigns { get; }
     DbSet<CampaignExecutionAuditLog> CampaignExecutionAuditLogs { get; }
 
+    // SPEC-008.9 Scan Plan Audit DbSets
+    DbSet<ScanPlanAuditRecord> ScanPlanAudits { get; }
+
     Microsoft.EntityFrameworkCore.ChangeTracking.ChangeTracker ChangeTracker { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);

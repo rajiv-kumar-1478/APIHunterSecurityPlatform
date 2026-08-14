@@ -66,6 +66,9 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
     public DbSet<ScanCampaign> ScanCampaigns => Set<ScanCampaign>();
     public DbSet<CampaignExecutionAuditLog> CampaignExecutionAuditLogs => Set<CampaignExecutionAuditLog>();
 
+    // SPEC-008.9 Scan Plan Audit DbSets
+    public DbSet<ScanPlanAuditRecord> ScanPlanAudits => Set<ScanPlanAuditRecord>();
+
 
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -901,6 +904,23 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
              .WithMany(c => c.AuditLogs)
              .HasForeignKey(a => a.CampaignId)
              .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        // SPEC-008.9 ScanPlanAuditRecord
+        modelBuilder.Entity<ScanPlanAuditRecord>(e =>
+        {
+            e.ToTable("scan_plan_audits");
+            e.HasKey(a => a.Id);
+            e.HasIndex(a => a.ScanJobId).IsUnique();
+            e.HasIndex(a => a.PlanHash);
+            e.HasIndex(a => new { a.TenantId, a.PlannedAtUtc });
+            e.Property(a => a.PlanHash).HasMaxLength(128).IsRequired();
+            e.Property(a => a.RegistrySnapshotHash).HasMaxLength(128).IsRequired();
+            e.Property(a => a.RecordHash).HasMaxLength(128).IsRequired();
+            e.Property(a => a.PreviousAuditHash).HasMaxLength(128).IsRequired();
+            e.Property(a => a.PlannerVersion).HasMaxLength(50).IsRequired();
+            e.Property(a => a.TargetKind).HasMaxLength(50).IsRequired();
+            e.Property(a => a.Profile).HasMaxLength(50).IsRequired();
         });
     }
 
