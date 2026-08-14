@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Platform.Application.Scanning.Adapters;
+using Platform.Application.Scanning.Contracts;
 using Platform.Application.Scanning.Execution;
 using Platform.Application.Scanning.Execution.Contracts;
 using Platform.Application.Scanning.Parsers;
@@ -38,13 +39,15 @@ public class ScanExecutionEngineTests
         var nucleiParser = new NucleiOutputParser();
         var bugHunterParser = new BugHunterOutputParser(NullLogger<BugHunterOutputParser>.Instance);
         var semgrepParser = new SemgrepOutputParser(NullLogger<SemgrepOutputParser>.Instance);
+        var truffleHogParser = new TruffleHogOutputParser(NullLogger<TruffleHogOutputParser>.Instance);
 
         var adapters = new IScanToolAdapter[]
         {
             new HttpxAdapter(httpxParser),
             new NucleiAdapter(nucleiParser),
             new BugHunterAdapter(bugHunterParser),
-            new SemgrepAdapter(semgrepParser)
+            new SemgrepAdapter(semgrepParser),
+            new TruffleHogAdapter(truffleHogParser)
         };
 
         _defaultSandbox = new MockScannerRuntimeSandbox((req, egress, secret, scratch, ct) =>
@@ -659,6 +662,259 @@ public class ScanExecutionEngineTests
         Assert.Equal(ToolInvocationStatus.Failed, result.Invocations[0].Status);
         Assert.Contains("PROVENANCE_SNAPSHOT_MISMATCH", result.Invocations[0].ErrorMessage);
     }
+
+    [Fact]
+    public async Task ExecutePlan_LiveVerificationWithoutEgressAuthorization_FailsClosed()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+
+        // Custom adapter declaring CredentialVerification without required egress authorization
+        var customManifest = new ScanToolManifest(
+            ToolKey: "rogue-verifier",
+            Version: "1.0.0",
+            Description: "Rogue verifier tool",
+            ContainerImageRepository: "docker.io/test/verifier",
+            ContainerImageReference: "test/verifier:1.0.0",
+            ContainerImageDigest: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            SupportedProfiles: new HashSet<SecurityScanProfileType> { SecurityScanProfileType.Standard },
+            Capabilities: new HashSet<string> { "secret.scan" },
+            DiscoveredAssetTypes: new[] { "credential" },
+            ParserVersion: "1.0",
+            ManifestVersion: "1.0"
+        );
+
+        var rogueAdapter = new MockScanToolAdapter(
+            customManifest,
+            prepareExecution: ctx => new ToolExecutionPlan(
+                ToolKey: "rogue-verifier",
+                Version: "1.0.0",
+                CommandLineArguments: new[] { "verify", "--live" },
+                EnvironmentVariables: new Dictionary<string, string>(),
+                AdditionalMetadata: new Dictionary<string, string>
+                {
+                    ["NetworkBehavior"] = "CredentialVerification",
+                    ["RequiresEgressAuthorization"] = "false" // Illegal state: credential verification without egress auth
+                }
+            ),
+            parseOutput: (ctx, raw, ct) => Task.FromResult(new ToolParsedOutputResult("rogue-verifier", "1.0.0", Array.Empty<FindingCandidate>(), null))
+        );
+
+        var toolRegistry = new ScanToolRegistry(new[] { rogueAdapter });
+        var provVerifier = new MockProvenanceVerifier(m => Task.FromResult(new ProvenanceVerificationResult(true, m.ContainerImageDigest, m.ContainerImageDigest, null)));
+        var engine = new ScanExecutionEngine(
+            toolRegistry,
+            _dbContext,
+            NullLogger<ScanExecutionEngine>.Instance,
+            _defaultSandbox,
+            ingestionEngine: null,
+            _defaultEgressPolicy,
+            provVerifier
+        );
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("rogue-verifier", "1.0.0", ScannerExecutionPhase.StaticAnalysis, new[] { "secret.scan" }, Array.Empty<string>(), "Secret scan")
+        };
+
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.SourceRepository,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "rogue-verifier" },
+            RuleSetVersions: new Dictionary<string, string> { ["rogue-verifier"] = "1.0.0" },
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_rogue_egress",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://example.com"
+        );
+
+        var result = await engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Failed, result.OverallStatus);
+        Assert.Single(result.Invocations);
+        Assert.Equal(ToolInvocationStatus.Failed, result.Invocations[0].Status);
+        Assert.Contains("EGRESS_AUTHORIZATION_INVALID", result.Invocations[0].ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ExecutePlan_LiveVerificationWithUnauthorizedProvider_FailsClosed()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("trufflehog", "3.96.0", ScannerExecutionPhase.StaticAnalysis, new[] { "secret.scan" }, Array.Empty<string>(), "Secret scan")
+        };
+
+        // Target pointing to prohibited metadata service (169.254.169.254)
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.SourceRepository,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "trufflehog" },
+            RuleSetVersions: new Dictionary<string, string> { ["trufflehog"] = "3.96.0" },
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_trufflehog_prohibited",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "http://169.254.169.254/latest/meta-data"
+        );
+
+        var result = await _engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Failed, result.OverallStatus);
+        Assert.Single(result.Invocations);
+        Assert.Equal(ToolInvocationStatus.Failed, result.Invocations[0].Status);
+        Assert.Contains("EGRESS_POLICY_VIOLATION", result.Invocations[0].ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ExecutePlan_OfflineTruffleHog_DisablesNetworkVerification()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        bool receivedNoVerificationArg = false;
+
+        var sandbox = new MockScannerRuntimeSandbox((req, egress, secret, scratch, ct) =>
+        {
+            if (req.ToolKey == "trufflehog")
+            {
+                receivedNoVerificationArg = req.Arguments.Values.Contains("--no-verification");
+            }
+
+            return Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(
+                ToolKey: req.ToolKey,
+                Version: req.Version,
+                Status: Platform.Domain.Enums.ToolExecutionStatus.Success,
+                ExitCode: 0,
+                ArtifactReference: "{}",
+                ErrorCode: null
+            ));
+        });
+
+        var engine = new ScanExecutionEngine(
+            _toolRegistry,
+            _dbContext,
+            NullLogger<ScanExecutionEngine>.Instance,
+            sandbox,
+            ingestionEngine: null,
+            _defaultEgressPolicy,
+            _defaultProvenanceVerifier
+        );
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("trufflehog", "3.96.0", ScannerExecutionPhase.StaticAnalysis, new[] { "secret.scan" }, Array.Empty<string>(), "Secret scan")
+        };
+
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.SourceRepository,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "trufflehog" },
+            RuleSetVersions: new Dictionary<string, string> { ["trufflehog"] = "3.96.0" },
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_trufflehog_offline",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://example.com"
+        );
+
+        var result = await engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Completed, result.OverallStatus);
+        Assert.True(receivedNoVerificationArg);
+    }
+
+    [Fact]
+    public async Task ExecutePlan_LiveVerificationWithAuthorizedProvider_AllowsSandboxExecution()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+        bool sandboxDispatched = false;
+
+        var sandbox = new MockScannerRuntimeSandbox((req, egress, secret, scratch, ct) =>
+        {
+            sandboxDispatched = true;
+            return Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(
+                ToolKey: req.ToolKey,
+                Version: req.Version,
+                Status: Platform.Domain.Enums.ToolExecutionStatus.Success,
+                ExitCode: 0,
+                ArtifactReference: "{}",
+                ErrorCode: null
+            ));
+        });
+
+        var engine = new ScanExecutionEngine(
+            _toolRegistry,
+            _dbContext,
+            NullLogger<ScanExecutionEngine>.Instance,
+            sandbox,
+            ingestionEngine: null,
+            _defaultEgressPolicy,
+            _defaultProvenanceVerifier
+        );
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("trufflehog", "3.96.0", ScannerExecutionPhase.StaticAnalysis, new[] { "secret.scan" }, Array.Empty<string>(), "Secret scan")
+        };
+
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.SourceRepository,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "trufflehog" },
+            RuleSetVersions: new Dictionary<string, string> { ["trufflehog"] = "3.96.0" },
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_trufflehog_live",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://example.com"
+        );
+
+        var result = await engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Completed, result.OverallStatus);
+        Assert.True(sandboxDispatched);
+    }
+}
+
+public class MockScanToolAdapter : IScanToolAdapter
+{
+    private readonly Func<ScanExecutionContext, ToolExecutionPlan> _prepareExecution;
+    private readonly Func<ScanExecutionContext, ToolExecutionRawOutput, System.Threading.CancellationToken, Task<ToolParsedOutputResult>> _parseOutput;
+
+    public ScanToolManifest Manifest { get; }
+
+    public MockScanToolAdapter(
+        ScanToolManifest manifest,
+        Func<ScanExecutionContext, ToolExecutionPlan> prepareExecution,
+        Func<ScanExecutionContext, ToolExecutionRawOutput, System.Threading.CancellationToken, Task<ToolParsedOutputResult>> parseOutput)
+    {
+        Manifest = manifest;
+        _prepareExecution = prepareExecution;
+        _parseOutput = parseOutput;
+    }
+
+    public ToolExecutionPlan PrepareExecution(ScanExecutionContext context) => _prepareExecution(context);
+
+    public Task<ToolParsedOutputResult> ParseOutputAsync(
+        ScanExecutionContext context,
+        ToolExecutionRawOutput rawOutput,
+        System.Threading.CancellationToken ct = default) => _parseOutput(context, rawOutput, ct);
 }
 
 public class MockProvenanceVerifier : IToolProvenanceVerifier

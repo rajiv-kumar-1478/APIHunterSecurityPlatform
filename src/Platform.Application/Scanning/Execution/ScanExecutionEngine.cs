@@ -228,7 +228,26 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                 // 7. Prepare execution in sandbox contract
                 var planResult = adapter.PrepareExecution(execContext);
 
-                // 8. Authoritative Target URL & DNS Egress Resolution via IEgressPolicyEngine
+                // 8. Egress Capability & Network Behavior Enforcement
+                var networkBehavior = planResult.AdditionalMetadata != null && planResult.AdditionalMetadata.TryGetValue("NetworkBehavior", out var nb) ? nb : null;
+                var requiresEgressAuth = planResult.AdditionalMetadata != null && planResult.AdditionalMetadata.TryGetValue("RequiresEgressAuthorization", out var req) && string.Equals(req, "true", StringComparison.OrdinalIgnoreCase);
+
+                // Fail closed if tool attempts CredentialVerification network operations without declaring required egress authorization
+                if (string.Equals(networkBehavior, "CredentialVerification", StringComparison.OrdinalIgnoreCase) && !requiresEgressAuth)
+                {
+                    invStopwatch.Stop();
+                    invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                    invocationRecord.ErrorMessage = "EGRESS_AUTHORIZATION_INVALID: Adapter requested CredentialVerification network behavior without declaring required egress authorization.";
+                    invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                    invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                    await _dbContext.SaveChangesAsync(ct);
+
+                    toolsFailed++;
+                    invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                    continue;
+                }
+
+                // 9. Authoritative Target URL & DNS Egress Resolution via IEgressPolicyEngine
                 EgressTarget egressTarget;
                 try
                 {
