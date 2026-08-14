@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -112,6 +114,28 @@ public class ScannerRuntimeSandboxTests
     }
 
     [Fact]
+    public async Task HostedScannerRuntime_DeserializesRemoteToolExecutionResult()
+    {
+        var expectedReceipt = new ToolExecutionResult("subfinder", "v2.6.6", ToolExecutionStatus.Success, 0, "/tmp/scratch", null);
+        var messageHandler = new FakeHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(expectedReceipt))
+        });
+
+        using var httpClient = new HttpClient(messageHandler) { BaseAddress = new Uri("https://scanner.internal") };
+        Mock<IGenericCliToolAdapter> mockAdapter = new();
+        var runtime = new HostedScannerRuntime(httpClient, serviceKey: "SECRET_KEY_123", toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<HostedScannerRuntime>.Instance);
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10));
+        var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, Path.GetTempPath());
+
+        result.Status.Should().Be(ToolExecutionStatus.Success);
+        result.ToolKey.Should().Be("subfinder");
+        result.ExitCode.Should().Be(0);
+    }
+
+    [Fact]
     public async Task EgressNetworkProxy_ThrowsException_WhenTargetIsExpired()
     {
         var proxy = new EgressNetworkProxy(_mockEgressEngine.Object, NullLogger<EgressNetworkProxy>.Instance);
@@ -127,5 +151,20 @@ public class ScannerRuntimeSandboxTests
         await using var handle = await proxy.CreateScopedPolicyAsync(_validEgressTarget);
 
         handle.Should().NotBeNull();
+    }
+
+    private class FakeHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly HttpResponseMessage _response;
+
+        public FakeHttpMessageHandler(HttpResponseMessage response)
+        {
+            _response = response;
+        }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, System.Threading.CancellationToken cancellationToken)
+        {
+            return Task.FromResult(_response);
+        }
     }
 }

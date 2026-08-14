@@ -20,6 +20,7 @@ public class GenericScanWorker : IScanWorker
     private readonly Func<string, IGenericCliToolAdapter> _cliAdapterFactory;
     private readonly IEgressPolicyEngine _egressPolicyEngine;
     private readonly IScannerRuntimeSandbox? _runtimeSandbox;
+    private readonly bool _allowUnsafeProcessFallback;
     private readonly ILogger<GenericScanWorker> _logger;
 
     public GenericScanWorker(
@@ -29,7 +30,8 @@ public class GenericScanWorker : IScanWorker
         Func<string, IGenericCliToolAdapter> cliAdapterFactory,
         IEgressPolicyEngine egressPolicyEngine,
         ILogger<GenericScanWorker> logger,
-        IScannerRuntimeSandbox? runtimeSandbox = null)
+        IScannerRuntimeSandbox? runtimeSandbox = null,
+        bool allowUnsafeProcessFallback = true)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _secretStore = secretStore ?? throw new ArgumentNullException(nameof(secretStore));
@@ -38,6 +40,7 @@ public class GenericScanWorker : IScanWorker
         _egressPolicyEngine = egressPolicyEngine ?? throw new ArgumentNullException(nameof(egressPolicyEngine));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _runtimeSandbox = runtimeSandbox;
+        _allowUnsafeProcessFallback = allowUnsafeProcessFallback;
     }
 
     public async Task<ScanExecutionResult> ExecuteScanJobAsync(Guid scanJobId, CancellationToken ct = default)
@@ -61,6 +64,18 @@ public class GenericScanWorker : IScanWorker
             _logger.LogError(ex, "Fail-closed egress policy evaluation failed for target '{TargetUrl}' (Job: {ScanJobId}).", job.TargetUrl, scanJobId);
             job.Status = SecurityScanJobStatus.Failed;
             job.FailureReason = $"EGRESS_POLICY_UNAVAILABLE: {ex.Message}";
+            job.CompletedAtUtc = DateTime.UtcNow;
+            await _dbContext.SaveChangesAsync(ct);
+
+            return new ScanExecutionResult(job.Id, job.Status, null, null, job.FailureReason, DateTime.UtcNow);
+        }
+
+        // 2. Production Security Check: Require Sandbox unless explicit unsafe fallback is allowed
+        if (_runtimeSandbox == null && !_allowUnsafeProcessFallback)
+        {
+            _logger.LogError("GenericScanWorker rejected job '{ScanJobId}': Production environment requires active IScannerRuntimeSandbox.", scanJobId);
+            job.Status = SecurityScanJobStatus.Failed;
+            job.FailureReason = "SECURITY_SANDBOX_REQUIRED: Production environment requires an active IScannerRuntimeSandbox.";
             job.CompletedAtUtc = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
 

@@ -16,6 +16,7 @@ namespace Platform.Infrastructure.Scanning;
 /// <summary>
 /// Hosted Scanner Runtime Sandbox for Render Private Services / Railway Internal Mesh.
 /// Communicates with dedicated scanner services over internal private networks using X-Scanner-Service-Key authentication.
+/// Deserializes actual ToolExecutionResult receipts returned by remote scanner endpoints.
 /// </summary>
 public class HostedScannerRuntime : IScannerRuntimeSandbox
 {
@@ -97,6 +98,15 @@ public class HostedScannerRuntime : IScannerRuntimeSandbox
                 {
                     _logger.LogError("Hosted scanner service returned non-success HTTP status code {StatusCode}.", response.StatusCode);
                     return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, (int)response.StatusCode, null, "HOSTED_SERVICE_HTTP_ERROR");
+                }
+
+                var responseJson = await response.Content.ReadAsStringAsync(cancellationToken);
+                var remoteResult = JsonSerializer.Deserialize<ToolExecutionResult>(responseJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (remoteResult != null)
+                {
+                    _logger.LogInformation("HostedScannerRuntime received remote execution receipt for tool '{ToolKey}' (Status: {Status}, ExitCode: {Code}).",
+                        remoteResult.ToolKey, remoteResult.Status, remoteResult.ExitCode);
+                    return remoteResult;
                 }
 
                 return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Success, 0, scratchDirectory, null);

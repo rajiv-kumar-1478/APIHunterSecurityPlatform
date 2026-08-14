@@ -19,4 +19,6 @@ public sealed record ScannerRuntimeOptions
     public bool DropAllCapabilities { get; init; } = true;
 
     public bool NoNewPrivileges { get; init; } = true;
+
+    public bool RequireDockerSandbox { get; init; } = false;
 }
