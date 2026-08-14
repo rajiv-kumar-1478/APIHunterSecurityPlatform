@@ -81,7 +81,8 @@ public class ScanExecutionEngineTests
             SelectionReasons: new Dictionary<string, string>(),
             PlannerVersion: "1.0.0",
             PlanHash: "hash_success_123",
-            PlannedAtUtc: DateTime.UtcNow
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://127.0.0.1"
         );
 
         var result = await _engine.ExecutePlanAsync(plan);
@@ -127,7 +128,8 @@ public class ScanExecutionEngineTests
             SelectionReasons: new Dictionary<string, string>(),
             PlannerVersion: "1.0.0",
             PlanHash: "hash_partial_123",
-            PlannedAtUtc: DateTime.UtcNow
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://127.0.0.1"
         );
 
         var result = await _engine.ExecutePlanAsync(plan);
@@ -162,7 +164,8 @@ public class ScanExecutionEngineTests
             SelectionReasons: new Dictionary<string, string>(),
             PlannerVersion: "1.0.0",
             PlanHash: "plan_timeline_123",
-            PlannedAtUtc: DateTime.UtcNow
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://127.0.0.1"
         );
 
         await _engine.ExecutePlanAsync(plan);
@@ -204,7 +207,8 @@ public class ScanExecutionEngineTests
             SelectionReasons: new Dictionary<string, string>(),
             PlannerVersion: "1.0.0",
             PlanHash: "plan_tenant_isolation",
-            PlannedAtUtc: DateTime.UtcNow
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://127.0.0.1"
         );
 
         await _engine.ExecutePlanAsync(plan);
@@ -251,7 +255,8 @@ public class ScanExecutionEngineTests
             SelectionReasons: new Dictionary<string, string>(),
             PlannerVersion: "1.0.0",
             PlanHash: "plan_sandbox_test",
-            PlannedAtUtc: DateTime.UtcNow
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://127.0.0.1"
         );
 
         var result = await engineWithSandbox.ExecutePlanAsync(plan);
@@ -287,7 +292,8 @@ public class ScanExecutionEngineTests
             SelectionReasons: new Dictionary<string, string>(),
             PlannerVersion: "1.0.0",
             PlanHash: "plan_fail_closed",
-            PlannedAtUtc: DateTime.UtcNow
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://127.0.0.1"
         );
 
         var result = await engineWithoutSandbox.ExecutePlanAsync(plan);
@@ -299,11 +305,81 @@ public class ScanExecutionEngineTests
     }
 
     [Fact]
+    public async Task ExecutePlan_MissingTarget_FailsClosed()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("httpx", "1.6.8", ScannerExecutionPhase.Discovery, new[] { "http.probe" }, Array.Empty<string>(), "Discovery")
+        };
+
+        // Empty TargetUrl
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.WebEndpoint,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "httpx" },
+            RuleSetVersions: new Dictionary<string, string>(),
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_empty_target",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: ""
+        );
+
+        var result = await _engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Failed, result.OverallStatus);
+        Assert.Single(result.Invocations);
+        Assert.Equal(ToolInvocationStatus.Failed, result.Invocations[0].Status);
+        Assert.Contains("TARGET_BINDING_UNAVAILABLE", result.Invocations[0].ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ExecutePlan_TargetResolutionFailure_FailsClosed()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("httpx", "1.6.8", ScannerExecutionPhase.Discovery, new[] { "http.probe" }, Array.Empty<string>(), "Discovery")
+        };
+
+        // Non-existent invalid host that fails DNS resolution
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.WebEndpoint,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "httpx" },
+            RuleSetVersions: new Dictionary<string, string>(),
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_invalid_host",
+            PlannedAtUtc: DateTime.UtcNow,
+            TargetUrl: "https://nonexistent-host-987654321.invalid"
+        );
+
+        var result = await _engine.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Failed, result.OverallStatus);
+        Assert.Single(result.Invocations);
+        Assert.Equal(ToolInvocationStatus.Failed, result.Invocations[0].Status);
+        Assert.Contains("TARGET_RESOLUTION_FAILED", result.Invocations[0].ErrorMessage);
+    }
+
+    [Fact]
     public async Task ExecutePlan_PassesAuthorizedTargetAndValidatedManifestToSandbox()
     {
         var scanJobId = Guid.NewGuid();
         var tenantId = Guid.NewGuid();
-        var authorizedTargetUrl = "https://staging-api.example.corp/v2";
+        var authorizedTargetUrl = "https://127.0.0.1:8443/api/v1";
 
         Platform.Application.Scanning.Contracts.ToolExecutionRequest? capturedRequest = null;
         Platform.Application.Scanning.Contracts.EgressTarget? capturedEgress = null;
@@ -352,7 +428,9 @@ public class ScanExecutionEngineTests
 
         // Verify target binding
         Assert.Equal(authorizedTargetUrl, capturedEgress.RawTargetUrl);
-        Assert.Equal("staging-api.example.corp", capturedEgress.CanonicalHost);
+        Assert.Equal("127.0.0.1", capturedEgress.CanonicalHost);
+        Assert.Equal(8443, capturedEgress.Port);
+        Assert.NotEmpty(capturedEgress.ApprovedIpAddresses);
 
         // Verify validated manifest map is passed
         Assert.NotNull(capturedRequest.AuthorizedManifest);

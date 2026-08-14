@@ -114,46 +114,113 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                 continue;
             }
 
+            // 2. Fail Closed if TargetUrl is missing or un-bound
+            if (string.IsNullOrWhiteSpace(plan.TargetUrl))
+            {
+                invStopwatch.Stop();
+                invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                invocationRecord.ErrorMessage = "TARGET_BINDING_UNAVAILABLE: No server-authorized target is bound to this scan plan (Fail-Closed).";
+                invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                await _dbContext.SaveChangesAsync(ct);
+
+                toolsFailed++;
+                invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                continue;
+            }
+
+            // 3. Provenance Integrity Check on Adapter Manifest
+            if (string.IsNullOrWhiteSpace(adapter.Manifest.ContainerImageDigest) ||
+                !adapter.Manifest.ContainerImageDigest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase))
+            {
+                invStopwatch.Stop();
+                invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                invocationRecord.ErrorMessage = $"PROVENANCE_INTEGRITY_VIOLATION: Adapter '{plannedInv.ToolKey}' does not have a valid immutable container image digest.";
+                invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                await _dbContext.SaveChangesAsync(ct);
+
+                toolsFailed++;
+                invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                continue;
+            }
+
             using var toolCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             toolCts.CancelAfter(DefaultPerToolTimeout);
 
             try
             {
-                var effectiveTargetUrl = !string.IsNullOrWhiteSpace(plan.TargetUrl)
-                    ? plan.TargetUrl
-                    : $"https://target-{plan.TenantId:N}.internal";
-
                 var execContext = new ScanExecutionContext(
                     ScanJobId: plan.ScanJobId,
-                    TargetUrl: effectiveTargetUrl,
+                    TargetUrl: plan.TargetUrl,
                     Profile: plan.Profile,
                     TenantId: plan.TenantId
                 );
 
-                // 2. Prepare execution in sandbox contract
+                // 4. Prepare execution in sandbox contract
                 var planResult = adapter.PrepareExecution(execContext);
 
-                // 3. Resolve Target URL and Egress Details
+                // 5. Authoritative Target URL & DNS Egress Resolution
                 Uri targetUri;
                 try
                 {
-                    targetUri = new Uri(effectiveTargetUrl);
+                    targetUri = new Uri(plan.TargetUrl);
                 }
                 catch
                 {
-                    targetUri = new Uri("https://" + effectiveTargetUrl.TrimStart('/'));
+                    targetUri = new Uri("https://" + plan.TargetUrl.TrimStart('/'));
                 }
 
                 var targetHost = targetUri.Host;
                 var targetPort = targetUri.Port > 0 ? targetUri.Port : (targetUri.Scheme == "http" ? 80 : 443);
                 var targetScheme = targetUri.Scheme;
 
+                HashSet<System.Net.IPAddress> approvedIps;
+                if (System.Net.IPAddress.TryParse(targetHost, out var directIp))
+                {
+                    approvedIps = new HashSet<System.Net.IPAddress> { directIp };
+                }
+                else
+                {
+                    try
+                    {
+                        var resolved = System.Net.Dns.GetHostAddresses(targetHost);
+                        if (resolved == null || resolved.Length == 0)
+                        {
+                            invStopwatch.Stop();
+                            invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                            invocationRecord.ErrorMessage = $"TARGET_RESOLUTION_FAILED: Failed to resolve authoritative IP address for host '{targetHost}'.";
+                            invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                            invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                            await _dbContext.SaveChangesAsync(ct);
+
+                            toolsFailed++;
+                            invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                            continue;
+                        }
+                        approvedIps = new HashSet<System.Net.IPAddress>(resolved);
+                    }
+                    catch (Exception ex)
+                    {
+                        invStopwatch.Stop();
+                        invocationRecord.Status = ToolInvocationStatus.Failed.ToString();
+                        invocationRecord.ErrorMessage = $"TARGET_RESOLUTION_FAILED: DNS resolution failed for host '{targetHost}': {ex.Message}";
+                        invocationRecord.CompletedAtUtc = DateTime.UtcNow;
+                        invocationRecord.DurationMs = invStopwatch.ElapsedMilliseconds;
+                        await _dbContext.SaveChangesAsync(ct);
+
+                        toolsFailed++;
+                        invocationDetails.Add(MapToDto(invocationRecord, ToolInvocationStatus.Failed, null));
+                        continue;
+                    }
+                }
+
                 var egressTarget = new EgressTarget(
-                    RawTargetUrl: effectiveTargetUrl,
+                    RawTargetUrl: plan.TargetUrl,
                     CanonicalHost: targetHost,
                     Port: targetPort,
                     Scheme: targetScheme,
-                    ApprovedIpAddresses: new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Loopback },
+                    ApprovedIpAddresses: approvedIps,
                     ResolvedAtUtc: DateTime.UtcNow,
                     ExpiresAtUtc: DateTime.UtcNow.AddMinutes(30),
                     PolicyVersion: "v1.0-strict"
