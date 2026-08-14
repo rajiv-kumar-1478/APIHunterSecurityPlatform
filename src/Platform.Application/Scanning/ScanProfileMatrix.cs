@@ -93,11 +93,23 @@ public static class ScanProfileMatrix
     };
 
     /// <summary>
+    /// Resolves any compatibility alias to its canonical profile enum value.
+    /// WebAssessment -> Standard, FullAssessment -> Deep.
+    /// </summary>
+    public static SecurityScanProfileType CanonicalizeProfile(SecurityScanProfileType profile) => profile switch
+    {
+        SecurityScanProfileType.WebAssessment => SecurityScanProfileType.Standard,
+        SecurityScanProfileType.FullAssessment => SecurityScanProfileType.Deep,
+        _ => profile
+    };
+
+    /// <summary>
     /// Returns the canonical profile definition for a given profile type.
     /// </summary>
     public static ScanProfileDefinition GetProfileDefinition(SecurityScanProfileType profile)
     {
-        return Profiles.TryGetValue(profile, out var def) ? def : StandardProfile;
+        var canonical = CanonicalizeProfile(profile);
+        return Profiles.TryGetValue(canonical, out var def) ? def : StandardProfile;
     }
 
     /// <summary>
@@ -120,7 +132,8 @@ public static class ScanProfileMatrix
 
     /// <summary>
     /// Pure deterministic compatibility evaluation between a tool capability contract and a target scan profile.
-    /// Fails closed if the tool exceeds profile resource limits or does not support the profile.
+    /// Invariant: Must declare profile support, provide ALL required capabilities of the profile,
+    /// support structured machine-parseable output, and strictly satisfy resource limits.
     /// </summary>
     public static ToolCompatibilityEvaluation EvaluateCompatibility(
         ScanToolCapabilityContract toolContract,
@@ -128,44 +141,47 @@ public static class ScanProfileMatrix
     {
         if (toolContract == null) throw new ArgumentNullException(nameof(toolContract));
 
-        var profileDef = GetProfileDefinition(profile);
+        var canonicalProfile = CanonicalizeProfile(profile);
+        var profileDef = GetProfileDefinition(canonicalProfile);
 
-        // 1. Profile Support Check
-        if (!toolContract.SupportedProfiles.Contains(profile))
+        // 1. Profile Support Check (Canonicalized)
+        var canonicalSupportedProfiles = toolContract.SupportedProfiles.Select(CanonicalizeProfile).ToHashSet();
+        if (!canonicalSupportedProfiles.Contains(canonicalProfile))
         {
             return new ToolCompatibilityEvaluation(
                 toolContract.ToolKey,
-                profile,
+                canonicalProfile,
                 IsCompatible: false,
                 Code: ToolProfileCompatibilityResult.ProfileNotSupported,
                 Reason: $"Tool '{toolContract.ToolKey}' does not declare support for profile '{profileDef.CanonicalName}'."
             );
         }
 
-        // 2. Machine-Parseable Output Format Check
+        // 2. Strict Required Capabilities Check (Must satisfy ALL required capabilities of the profile)
+        var toolCaps = toolContract.Capabilities.ToHashSet();
+        var missingRequired = profileDef.RequiredCapabilities.Where(c => !toolCaps.Contains(c)).ToList();
+        if (missingRequired.Count > 0)
+        {
+            var missingStr = string.Join(", ", missingRequired);
+            return new ToolCompatibilityEvaluation(
+                toolContract.ToolKey,
+                canonicalProfile,
+                IsCompatible: false,
+                Code: ToolProfileCompatibilityResult.MissingRequiredCapability,
+                Reason: $"Tool '{toolContract.ToolKey}' is missing required capability/capabilities for profile '{profileDef.CanonicalName}': {missingStr}."
+            );
+        }
+
+        // 3. Machine-Parseable Output Format Check
         var hasParseableFormat = toolContract.OutputFormats.Any(IsOutputFormatMachineParseable);
         if (!hasParseableFormat)
         {
             return new ToolCompatibilityEvaluation(
                 toolContract.ToolKey,
-                profile,
+                canonicalProfile,
                 IsCompatible: false,
                 Code: ToolProfileCompatibilityResult.MissingMachineParseableOutputFormat,
                 Reason: $"Tool '{toolContract.ToolKey}' does not support any structured machine-parseable output format (e.g. JSON, JSONL, SARIF)."
-            );
-        }
-
-        // 3. Relevant Capability Check (must provide at least one required or optional capability for profile)
-        var allProfileCaps = profileDef.RequiredCapabilities.Concat(profileDef.OptionalCapabilities).ToHashSet();
-        var matchingCaps = toolContract.Capabilities.Where(c => allProfileCaps.Contains(c)).ToList();
-        if (matchingCaps.Count == 0)
-        {
-            return new ToolCompatibilityEvaluation(
-                toolContract.ToolKey,
-                profile,
-                IsCompatible: false,
-                Code: ToolProfileCompatibilityResult.MissingRequiredCapability,
-                Reason: $"Tool '{toolContract.ToolKey}' provides zero relevant capabilities for profile '{profileDef.CanonicalName}'."
             );
         }
 
@@ -177,7 +193,7 @@ public static class ScanProfileMatrix
         {
             return new ToolCompatibilityEvaluation(
                 toolContract.ToolKey,
-                profile,
+                canonicalProfile,
                 IsCompatible: false,
                 Code: ToolProfileCompatibilityResult.ExceedsCpuLimit,
                 Reason: $"Tool '{toolContract.ToolKey}' requires {toolLimits.CpuCores} CPU cores, exceeding profile limit of {profileLimits.CpuCores} cores."
@@ -188,7 +204,7 @@ public static class ScanProfileMatrix
         {
             return new ToolCompatibilityEvaluation(
                 toolContract.ToolKey,
-                profile,
+                canonicalProfile,
                 IsCompatible: false,
                 Code: ToolProfileCompatibilityResult.ExceedsMemoryLimit,
                 Reason: $"Tool '{toolContract.ToolKey}' requires {toolLimits.MemoryBytes} bytes memory, exceeding profile limit of {profileLimits.MemoryBytes} bytes."
@@ -199,7 +215,7 @@ public static class ScanProfileMatrix
         {
             return new ToolCompatibilityEvaluation(
                 toolContract.ToolKey,
-                profile,
+                canonicalProfile,
                 IsCompatible: false,
                 Code: ToolProfileCompatibilityResult.ExceedsScratchLimit,
                 Reason: $"Tool '{toolContract.ToolKey}' requires {toolLimits.ScratchBytes} bytes scratch disk, exceeding profile limit of {profileLimits.ScratchBytes} bytes."
@@ -210,7 +226,7 @@ public static class ScanProfileMatrix
         {
             return new ToolCompatibilityEvaluation(
                 toolContract.ToolKey,
-                profile,
+                canonicalProfile,
                 IsCompatible: false,
                 Code: ToolProfileCompatibilityResult.ExceedsTimeoutLimit,
                 Reason: $"Tool '{toolContract.ToolKey}' requires timeout {toolLimits.Timeout}, exceeding profile maximum timeout of {profileLimits.Timeout}."
@@ -219,7 +235,7 @@ public static class ScanProfileMatrix
 
         return new ToolCompatibilityEvaluation(
             toolContract.ToolKey,
-            profile,
+            canonicalProfile,
             IsCompatible: true,
             Code: ToolProfileCompatibilityResult.Compatible,
             Reason: $"Tool '{toolContract.ToolKey}' is fully compatible with profile '{profileDef.CanonicalName}'."

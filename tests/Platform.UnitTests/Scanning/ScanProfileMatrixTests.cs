@@ -17,6 +17,7 @@ public class ScanProfileMatrixTests
         recon.CanonicalName.Should().Be("Recon");
         recon.MaximumAllowableLimits.CpuCores.Should().Be(1.0);
         recon.MaximumAllowableLimits.MemoryBytes.Should().Be(536_870_912); // 512 MiB
+        recon.MaximumAllowableLimits.ScratchBytes.Should().Be(268_435_456); // 256 MiB
         recon.MaximumAllowableLimits.Timeout.Should().Be(TimeSpan.FromMinutes(10));
         recon.RequiredCapabilities.Should().Contain(ToolCapability.SubdomainEnumeration);
         recon.RequiredCapabilities.Should().Contain(ToolCapability.DnsResolution);
@@ -26,6 +27,7 @@ public class ScanProfileMatrixTests
         standard.CanonicalName.Should().Be("Standard");
         standard.MaximumAllowableLimits.CpuCores.Should().Be(2.0);
         standard.MaximumAllowableLimits.MemoryBytes.Should().Be(1_073_741_824); // 1 GiB
+        standard.MaximumAllowableLimits.ScratchBytes.Should().Be(536_870_912);  // 512 MiB
         standard.MaximumAllowableLimits.Timeout.Should().Be(TimeSpan.FromMinutes(20));
         standard.RequiredCapabilities.Should().Contain(ToolCapability.HttpProbing);
         standard.RequiredCapabilities.Should().Contain(ToolCapability.UrlCrawling);
@@ -35,6 +37,7 @@ public class ScanProfileMatrixTests
         deep.CanonicalName.Should().Be("Deep");
         deep.MaximumAllowableLimits.CpuCores.Should().Be(4.0);
         deep.MaximumAllowableLimits.MemoryBytes.Should().Be(2_147_483_648); // 2 GiB
+        deep.MaximumAllowableLimits.ScratchBytes.Should().Be(1_073_741_824); // 1 GiB
         deep.MaximumAllowableLimits.Timeout.Should().Be(TimeSpan.FromMinutes(45));
         deep.RequiredCapabilities.Should().Contain(ToolCapability.Fuzzing);
         deep.RequiredCapabilities.Should().Contain(ToolCapability.AiAssistedHunting);
@@ -53,14 +56,19 @@ public class ScanProfileMatrixTests
     }
 
     [Fact]
-    public void EvaluateCompatibility_CompatibleTool_ReturnsPass()
+    public void EvaluateCompatibility_CompatibleTool_WithAllRequiredCapabilities_ReturnsPass()
     {
-        var subfinder = new ScanToolCapabilityContract(
-            ToolKey: "subfinder",
-            DisplayName: "Subfinder Passive Subdomain Tool",
-            Version: "v2.6.6",
-            Capabilities: new[] { ToolCapability.SubdomainEnumeration },
-            SupportedProfiles: new[] { SecurityScanProfileType.Recon, SecurityScanProfileType.Deep },
+        var reconTool = new ScanToolCapabilityContract(
+            ToolKey: "recon_suite",
+            DisplayName: "Comprehensive Recon Suite",
+            Version: "v1.0.0",
+            Capabilities: new[]
+            {
+                ToolCapability.SubdomainEnumeration,
+                ToolCapability.DnsResolution,
+                ToolCapability.HttpProbing
+            },
+            SupportedProfiles: new[] { SecurityScanProfileType.Recon },
             RequiredPermissions: new[] { "scans.execute" },
             OutputFormats: new[] { ToolOutputFormat.Json, ToolOutputFormat.PlainText },
             ResourceRequirements: new ScanToolResourceRequirements(
@@ -72,26 +80,80 @@ public class ScanProfileMatrixTests
             ContractVersion: "1.0"
         );
 
-        var eval = ScanProfileMatrix.EvaluateCompatibility(subfinder, SecurityScanProfileType.Recon);
+        var eval = ScanProfileMatrix.EvaluateCompatibility(reconTool, SecurityScanProfileType.Recon);
         eval.IsCompatible.Should().BeTrue();
         eval.Code.Should().Be(ToolProfileCompatibilityResult.Compatible);
     }
 
     [Fact]
+    public void EvaluateCompatibility_OnlyOptionalCapability_FailsClosed_WithMissingRequiredCapability()
+    {
+        // Tool declares support for Standard, but only provides optional SecretScanning (none of HttpProbing, UrlCrawling, VulnerabilityScanning)
+        var secretsOnlyTool = new ScanToolCapabilityContract(
+            ToolKey: "trufflehog",
+            DisplayName: "TruffleHog Secret Scanner",
+            Version: "v3.0.0",
+            Capabilities: new[] { ToolCapability.SecretScanning },
+            SupportedProfiles: new[] { SecurityScanProfileType.Standard },
+            RequiredPermissions: new[] { "scans.execute" },
+            OutputFormats: new[] { ToolOutputFormat.Json },
+            ResourceRequirements: new ScanToolResourceRequirements(1.0, 536_870_912, 134_217_728, TimeSpan.FromMinutes(10))
+        );
+
+        var eval = ScanProfileMatrix.EvaluateCompatibility(secretsOnlyTool, SecurityScanProfileType.Standard);
+        eval.IsCompatible.Should().BeFalse();
+        eval.Code.Should().Be(ToolProfileCompatibilityResult.MissingRequiredCapability);
+        eval.Reason.Should().Contain("is missing required capability/capabilities for profile 'Standard'");
+        eval.Reason.Should().Contain("HttpProbing");
+        eval.Reason.Should().Contain("UrlCrawling");
+        eval.Reason.Should().Contain("VulnerabilityScanning");
+    }
+
+    [Fact]
+    public void EvaluateCompatibility_AliasProfiles_ResolveCanonically()
+    {
+        var standardTool = new ScanToolCapabilityContract(
+            ToolKey: "zap_scanner",
+            DisplayName: "OWASP ZAP Standard Scanner",
+            Version: "v2.14.0",
+            Capabilities: new[]
+            {
+                ToolCapability.HttpProbing,
+                ToolCapability.UrlCrawling,
+                ToolCapability.VulnerabilityScanning
+            },
+            SupportedProfiles: new[] { SecurityScanProfileType.WebAssessment }, // Declares alias WebAssessment
+            RequiredPermissions: new[] { "scans.execute" },
+            OutputFormats: new[] { ToolOutputFormat.Sarif },
+            ResourceRequirements: new ScanToolResourceRequirements(1.5, 1_073_741_824, 268_435_456, TimeSpan.FromMinutes(15))
+        );
+
+        // Requested as canonical Standard
+        var eval1 = ScanProfileMatrix.EvaluateCompatibility(standardTool, SecurityScanProfileType.Standard);
+        eval1.IsCompatible.Should().BeTrue();
+        eval1.Code.Should().Be(ToolProfileCompatibilityResult.Compatible);
+
+        // Requested as alias WebAssessment
+        var eval2 = ScanProfileMatrix.EvaluateCompatibility(standardTool, SecurityScanProfileType.WebAssessment);
+        eval2.IsCompatible.Should().BeTrue();
+        eval2.Code.Should().Be(ToolProfileCompatibilityResult.Compatible);
+    }
+
+    [Fact]
     public void EvaluateCompatibility_UnsupportedProfile_FailsClosed()
     {
-        var subfinder = new ScanToolCapabilityContract(
+        var reconTool = new ScanToolCapabilityContract(
             ToolKey: "subfinder",
-            DisplayName: "Subfinder Passive Subdomain Tool",
+            DisplayName: "Subfinder",
             Version: "v2.6.6",
-            Capabilities: new[] { ToolCapability.SubdomainEnumeration },
+            Capabilities: new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing },
             SupportedProfiles: new[] { SecurityScanProfileType.Recon }, // Only Recon
             RequiredPermissions: new[] { "scans.execute" },
             OutputFormats: new[] { ToolOutputFormat.Json },
             ResourceRequirements: new ScanToolResourceRequirements(0.5, 268_435_456, 67_108_864, TimeSpan.FromMinutes(5))
         );
 
-        var eval = ScanProfileMatrix.EvaluateCompatibility(subfinder, SecurityScanProfileType.Standard);
+        var eval = ScanProfileMatrix.EvaluateCompatibility(reconTool, SecurityScanProfileType.Standard);
         eval.IsCompatible.Should().BeFalse();
         eval.Code.Should().Be(ToolProfileCompatibilityResult.ProfileNotSupported);
         eval.Reason.Should().Contain("does not declare support for profile 'Standard'");
@@ -104,7 +166,7 @@ public class ScanProfileMatrixTests
             ToolKey: "legacy_probe",
             DisplayName: "Legacy Terminal Prober",
             Version: "v1.0.0",
-            Capabilities: new[] { ToolCapability.HttpProbing },
+            Capabilities: new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing },
             SupportedProfiles: new[] { SecurityScanProfileType.Recon },
             RequiredPermissions: new[] { "scans.execute" },
             OutputFormats: new[] { ToolOutputFormat.PlainText }, // Only PlainText
@@ -120,11 +182,11 @@ public class ScanProfileMatrixTests
     [Fact]
     public void EvaluateCompatibility_ExceedsCpuLimit_FailsClosedWithoutSilentDowngrade()
     {
-        var heavyFuzzer = new ScanToolCapabilityContract(
-            ToolKey: "heavy_fuzzer",
-            DisplayName: "Heavy CPU Fuzzer",
+        var heavyTool = new ScanToolCapabilityContract(
+            ToolKey: "heavy_recon",
+            DisplayName: "Heavy CPU Recon",
             Version: "v1.0.0",
-            Capabilities: new[] { ToolCapability.SubdomainEnumeration },
+            Capabilities: new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing },
             SupportedProfiles: new[] { SecurityScanProfileType.Recon },
             RequiredPermissions: new[] { "scans.execute" },
             OutputFormats: new[] { ToolOutputFormat.Json },
@@ -136,7 +198,7 @@ public class ScanProfileMatrixTests
             )
         );
 
-        var eval = ScanProfileMatrix.EvaluateCompatibility(heavyFuzzer, SecurityScanProfileType.Recon);
+        var eval = ScanProfileMatrix.EvaluateCompatibility(heavyTool, SecurityScanProfileType.Recon);
         eval.IsCompatible.Should().BeFalse();
         eval.Code.Should().Be(ToolProfileCompatibilityResult.ExceedsCpuLimit);
         eval.Reason.Should().Contain("requires 2 CPU cores, exceeding profile limit of 1 cores");
@@ -145,11 +207,11 @@ public class ScanProfileMatrixTests
     [Fact]
     public void EvaluateCompatibility_ExceedsMemoryLimit_FailsClosed()
     {
-        var ramHungryScanner = new ScanToolCapabilityContract(
-            ToolKey: "ram_scanner",
-            DisplayName: "RAM Intensive Scanner",
+        var ramHungryTool = new ScanToolCapabilityContract(
+            ToolKey: "ram_recon",
+            DisplayName: "RAM Intensive Recon",
             Version: "v1.0.0",
-            Capabilities: new[] { ToolCapability.SubdomainEnumeration },
+            Capabilities: new[] { ToolCapability.SubdomainEnumeration, ToolCapability.DnsResolution, ToolCapability.HttpProbing },
             SupportedProfiles: new[] { SecurityScanProfileType.Recon },
             RequiredPermissions: new[] { "scans.execute" },
             OutputFormats: new[] { ToolOutputFormat.Json },
@@ -161,7 +223,7 @@ public class ScanProfileMatrixTests
             )
         );
 
-        var eval = ScanProfileMatrix.EvaluateCompatibility(ramHungryScanner, SecurityScanProfileType.Recon);
+        var eval = ScanProfileMatrix.EvaluateCompatibility(ramHungryTool, SecurityScanProfileType.Recon);
         eval.IsCompatible.Should().BeFalse();
         eval.Code.Should().Be(ToolProfileCompatibilityResult.ExceedsMemoryLimit);
     }
@@ -169,11 +231,11 @@ public class ScanProfileMatrixTests
     [Fact]
     public void EvaluateCompatibility_ExceedsTimeoutLimit_FailsClosed()
     {
-        var slowCrawler = new ScanToolCapabilityContract(
-            ToolKey: "slow_crawler",
-            DisplayName: "Slow Exhaustive Crawler",
+        var slowTool = new ScanToolCapabilityContract(
+            ToolKey: "slow_standard",
+            DisplayName: "Slow Exhaustive Standard Scanner",
             Version: "v1.0.0",
-            Capabilities: new[] { ToolCapability.HttpProbing },
+            Capabilities: new[] { ToolCapability.HttpProbing, ToolCapability.UrlCrawling, ToolCapability.VulnerabilityScanning },
             SupportedProfiles: new[] { SecurityScanProfileType.Standard },
             RequiredPermissions: new[] { "scans.execute" },
             OutputFormats: new[] { ToolOutputFormat.Json },
@@ -185,7 +247,7 @@ public class ScanProfileMatrixTests
             )
         );
 
-        var eval = ScanProfileMatrix.EvaluateCompatibility(slowCrawler, SecurityScanProfileType.Standard);
+        var eval = ScanProfileMatrix.EvaluateCompatibility(slowTool, SecurityScanProfileType.Standard);
         eval.IsCompatible.Should().BeFalse();
         eval.Code.Should().Be(ToolProfileCompatibilityResult.ExceedsTimeoutLimit);
     }
