@@ -31,6 +31,10 @@ public static class EvidenceSanitizer
         @"(?i)([\?&](?:token|key|api_key|apikey|secret|password|auth|sig|signature)=)([^&\s#]+)",
         RegexOptions.Compiled);
 
+    private static readonly Regex CommonApiSecretTokens = new(
+        @"\b(?:sk[-_]live[-_][a-zA-Z0-9]{10,}|ghp_[a-zA-Z0-9]{20,}|AKIA[0-9A-Z]{16})\b",
+        RegexOptions.Compiled);
+
     /// <summary>
     /// Sanitizes raw evidence string: strips control chars, redacts secrets, and bounds size.
     /// </summary>
@@ -53,7 +57,10 @@ public static class EvidenceSanitizer
         // 5. Redact Sensitive Query Parameters
         sanitized = SensitiveQueryParamRegex.Replace(sanitized, "$1[REDACTED]");
 
-        // 6. Bound payload size
+        // 6. Redact Known Bare Secret Token Patterns
+        sanitized = CommonApiSecretTokens.Replace(sanitized, "[REDACTED]");
+
+        // 7. Bound payload size
         var bytes = Encoding.UTF8.GetBytes(sanitized);
         if (bytes.Length > maxSizeBytes)
         {
