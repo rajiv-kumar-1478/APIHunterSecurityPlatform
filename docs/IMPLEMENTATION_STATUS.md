@@ -299,6 +299,39 @@ Legend:
   - [x] Gates 4–16 (Migrations, Secret Safety, Authorization, Concurrency, Lease Expiry, Finding Governance, Verification Authority, Risk Boundary, Audit Trail, Core Engine Isolation, `APIHunterV2` Isolation, Documentation) passed
   - [x] Gate 17 (Phase Lock): **Phase 7 OFFICIALLY LOCKED**
 
+---
+
+## Phase 8 — Hosted Security Scanning & Scan Foundation (IN PROGRESS)
+
+- [x] Step 1 — Scan Tool Registry & Security Target Governance (VERIFIED & LOCKED):
+  - [x] Created `SecurityScanTool`, `SecurityTarget`, `SecurityScanJob`, and `ScanProviderAccount` entities with DB mappings and migrations.
+  - [x] Implemented `ScanToolRegistryService` and `ScanJobService` with capability parsing, authorization boundaries, and profile mappings.
+  - [x] Implemented `BugHunterScanProvider` and in-memory/configuration secret stores.
+
+- [x] Step 2 — Fail-Closed Egress Policy Engine (VERIFIED & LOCKED):
+  - [x] Implemented `EgressPolicyEngine` evaluating URI syntax, DNS resolution, private IP ranges (RFC 1918), link-local/IMDS (`169.254.169.254`), loopback (`127.0.0.0/8`, `::1`), and DNS rebinding mitigations.
+  - [x] Created `EgressTarget` records with immutable policy versions and time-to-live expirations.
+
+- [x] Step 3 — CLI Tool Adapter & Orchestration Engine (VERIFIED & LOCKED):
+  - [x] Implemented `GenericCliToolAdapter` with strict executable allowlists (`ValidateToolExecutableWhitelist`), argument sanitization, platform scratch directory validation, and clean child process tree termination.
+  - [x] Implemented `GenericScanWorker` orchestrating jobs fail-closed.
+
+- [x] Step 3B.4 — Production-Hardened Scanner Runtime Sandbox & Egress Boundary (VERIFIED & LOCKED - Commit `e655acc`):
+  - [x] Enforced Egress Gateway (`IEnforcedEgressGateway` & `EnforcedEgressGateway`) with dedicated network attachment (`apihunter-sandbox-net`), gateway proxies (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`), and `NO_PROXY=""`.
+  - [x] Immutable container image provenance verification (`ContainerImageRepository` allowlisting and strict `ContainerImageDigest` `sha256:...` pinning) with zero `:latest` fallback.
+  - [x] Strict sandbox invariant: `GenericScanWorker` mandates `IScannerRuntimeSandbox` with zero direct host process fallbacks.
+  - [x] Authoritative Docker daemon health via `docker info` and live bounded cloud health probe (`GET /health/ready` with 3s timeout and `X-Scanner-Service-Key`).
+  - [x] `DevelopmentHostScannerRuntime` created strictly for dev/test harnesses with production startup guard.
+  - [x] Synchronized `PlatformScratchRoot` between worker and runtime sandbox.
+  - [x] Compiler gate: `dotnet build -warnaserror` (0 warnings, 0 errors).
+  - [x] Automated test suite: **503 / 503 Tests Passed (100%)**.
+
+- [ ] Step 3B.5 — Deployment Validation Pass (Docker / Render / Railway):
+  - [ ] Validate Docker, Render background workers, and Railway private service deployment contracts against actual hosting topology.
+  - [ ] Validate cloud scanner service endpoint configuration, secret authentication header (`X-Scanner-Service-Key`), and private mesh connectivity.
+  - [ ] Validate runtime health dashboard visibility and end-to-end telemetry.
+
+
 
 
 
