@@ -16,7 +16,7 @@ namespace Platform.Infrastructure.Scanning;
 /// <summary>
 /// Containerized OCI/Docker Scanner Runtime Sandbox.
 /// Enforces strong container isolation (CPU, Memory, PIDs, read-only root, dropped capabilities, no-new-privileges, scratch volume mount).
-/// Executes real `docker run` container processes when Docker daemon is available.
+/// Executes real `docker run` container processes with image provenance binding and pinned egress environment controls.
 /// Fails closed with DOCKER_RUNTIME_UNAVAILABLE when RuntimeMode is Docker or RequireDockerSandbox is true and Docker daemon is absent.
 /// </summary>
 public class DockerScannerRuntime : IScannerRuntimeSandbox
@@ -49,7 +49,14 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         if (egressTarget == null) throw new ArgumentNullException(nameof(egressTarget));
         if (secretLease == null) throw new ArgumentNullException(nameof(secretLease));
 
-        // 1. Fail Closed on Expired or Unapproved Egress Target Authorization
+        // 1. Fail Closed on Executable Missing / Unconfigured
+        if (string.IsNullOrWhiteSpace(request.Executable))
+        {
+            _logger.LogError("DockerScannerRuntime execution rejected: Executable is missing or unconfigured for tool '{ToolKey}'.", request.ToolKey);
+            return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "TOOL_EXECUTABLE_NOT_CONFIGURED");
+        }
+
+        // 2. Fail Closed on Expired or Unapproved Egress Target Authorization
         if (egressTarget.IsExpired(DateTime.UtcNow))
         {
             _logger.LogError("DockerScannerRuntime execution rejected: EgressTarget for host '{Host}' has expired.", egressTarget.CanonicalHost);
@@ -62,13 +69,16 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
             return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "UNAPPROVED_EGRESS_TARGET");
         }
 
-        // 2. Establish Scoped Network Proxy Policy Enforcement
+        // 3. Scratch Directory Path Defense in Depth
+        ValidateScratchMountPath(scratchDirectory);
+
+        // 4. Establish Scoped Network Proxy Policy Enforcement
         await using var scopedPolicy = await _egressNetworkProxy.CreateScopedPolicyAsync(egressTarget, cancellationToken);
 
-        // 3. Build Docker Container Isolation Arguments deterministically from ScannerRuntimeOptions
+        // 5. Build Docker Container Isolation Arguments deterministically from ScannerRuntimeOptions
         var dockerArgs = BuildDockerIsolationArguments(request, egressTarget, scratchDirectory);
 
-        // 4. Verify Docker Daemon Availability when Docker RuntimeMode or RequireDockerSandbox is Enforced
+        // 6. Verify Docker Daemon Availability when Docker RuntimeMode or RequireDockerSandbox is Enforced
         var isDockerAvailable = IsDockerDaemonAvailable();
         if ((_options.RuntimeMode == ScannerRuntimeMode.Docker || _options.RequireDockerSandbox) && !isDockerAvailable)
         {
@@ -79,7 +89,7 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         _logger.LogInformation("DockerScannerRuntime launching execution for tool '{ToolKey}' (v{Version}) with limits [CPU: {Cpu}, Memory: {Mem}B, PIDs: {Pids}].",
             request.ToolKey, request.Version, _options.MaxCpuCores, _options.MaxMemoryBytes, _options.MaxPids);
 
-        // 5. Execute real `docker run` container if Docker daemon is active
+        // 7. Execute real `docker run` container if Docker daemon is active
         if (isDockerAvailable)
         {
             return await ExecuteDockerContainerAsync(request, egressTarget, dockerArgs, scratchDirectory, cancellationToken);
@@ -87,7 +97,7 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
 
         _logger.LogWarning("DEVELOPMENT_MODE_REDUCED_ISOLATION: Docker daemon is unavailable on host. Running local process execution fallback.");
 
-        // 6. Local Process Fallback (strictly in UnsafeLocalProcessFallback mode)
+        // 8. Local Process Fallback (strictly in UnsafeLocalProcessFallback mode)
         var cliAdapter = _cliAdapterFactory(request.ToolKey);
         return await cliAdapter.ExecuteAsync(request, secretLease, scratchDirectory, cancellationToken);
     }
@@ -119,8 +129,12 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         }
 
         var normalizedScratch = Path.GetFullPath(scratchDirectory);
+        var approvedIps = string.Join(",", egressTarget.ApprovedIpAddresses.Select(ip => ip.ToString()));
+
         args.Add($"--volume={normalizedScratch}:/tmp/apihunter_scratch:rw");
         args.Add($"--env=APIHUNTER_TARGET_HOST={egressTarget.CanonicalHost}");
+        args.Add($"--env=APIHUNTER_APPROVED_IPS={approvedIps}");
+        args.Add($"--env=APIHUNTER_EGRESS_POLICY_VERSION={egressTarget.PolicyVersion}");
         args.Add($"--env=APIHUNTER_SCAN_JOB_ID={request.ScanJobId:N}");
 
         return args.AsReadOnly();
@@ -134,11 +148,16 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         CancellationToken cancellationToken)
     {
         var containerName = $"apihunter-{request.ToolKey}-{request.ScanJobId:N}";
+        var imageDigest = request.AuthorizedManifest != null && request.AuthorizedManifest.TryGetValue("ImageDigest", out var digestVal) ? digestVal : null;
+        var imageName = string.IsNullOrWhiteSpace(imageDigest)
+            ? $"apihunter/{request.ToolKey}:{request.Version}"
+            : $"apihunter/{request.ToolKey}@{imageDigest}";
+
         var fullArgs = new List<string>(isolationArgs)
         {
             $"--name={containerName}",
-            $"apihunter/{request.ToolKey}:{request.Version}",
-            request.Executable ?? request.ToolKey
+            imageName,
+            request.Executable!
         };
 
         if (request.Arguments != null)
@@ -196,8 +215,15 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         }
         catch (OperationCanceledException)
         {
-            _logger.LogWarning("Docker container execution for tool '{ToolKey}' timed out or was cancelled. Force killing container '{Container}'.", request.ToolKey, containerName);
             TryKillContainer(containerName);
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                _logger.LogWarning("Docker container execution for tool '{ToolKey}' was cancelled by user.", request.ToolKey);
+                return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.Failed, -1, null, "CANCELLED");
+            }
+
+            _logger.LogWarning("Docker container execution for tool '{ToolKey}' timed out after {Timeout}.", request.ToolKey, _options.ExecutionTimeout);
             return new ToolExecutionResult(request.ToolKey, request.Version, ToolExecutionStatus.TimedOut, -1, null, "DOCKER_CONTAINER_TIMEOUT");
         }
         catch (Exception ex)
@@ -207,17 +233,40 @@ public class DockerScannerRuntime : IScannerRuntimeSandbox
         }
     }
 
+    private static void ValidateScratchMountPath(string scratchDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(scratchDirectory))
+            throw new ArgumentException("Scratch directory path cannot be empty.", nameof(scratchDirectory));
+
+        var fullPath = Path.GetFullPath(scratchDirectory);
+        var tempRoot = Path.GetFullPath(Path.GetTempPath());
+
+        if (!fullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"Scratch directory '{fullPath}' is outside approved root '{tempRoot}'.");
+        }
+
+        var dirInfo = new DirectoryInfo(fullPath);
+        if (dirInfo.Exists && dirInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
+        {
+            throw new InvalidOperationException($"Scratch directory '{fullPath}' contains a reparse point or symlink.");
+        }
+    }
+
     private static void TryKillContainer(string containerName)
     {
         try
         {
-            using var killProc = Process.Start(new ProcessStartInfo
+            var psi = new ProcessStartInfo
             {
                 FileName = "docker",
-                Arguments = $"kill {containerName}",
                 UseShellExecute = false,
                 CreateNoWindow = true
-            });
+            };
+            psi.ArgumentList.Add("kill");
+            psi.ArgumentList.Add(containerName);
+
+            using var killProc = Process.Start(psi);
             killProc?.WaitForExit(3000);
         }
         catch

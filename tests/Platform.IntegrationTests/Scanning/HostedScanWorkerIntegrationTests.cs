@@ -64,7 +64,7 @@ public class HostedScanWorkerIntegrationTests
             PolicyVersion: "v1.0");
 
         using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
-        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(1));
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(1), Executable: "subfinder");
 
         var result = await runtime.ExecuteInSandboxAsync(request, egressTarget, secretLease, Path.GetTempPath());
 

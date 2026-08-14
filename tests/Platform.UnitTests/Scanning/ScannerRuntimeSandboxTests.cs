@@ -73,7 +73,7 @@ public class ScannerRuntimeSandboxTests
         Mock<IGenericCliToolAdapter> mockAdapter = new();
         var runtime = new DockerScannerRuntime(options, toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<DockerScannerRuntime>.Instance);
 
-        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10));
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10), Executable: "subfinder");
         var args = runtime.BuildDockerIsolationArguments(request, _validEgressTarget, Path.GetTempPath());
 
         args.Should().Contain("--read-only");
@@ -85,13 +85,27 @@ public class ScannerRuntimeSandboxTests
     }
 
     [Fact]
+    public async Task DockerScannerRuntime_FailsClosed_WhenExecutableIsMissing()
+    {
+        Mock<IGenericCliToolAdapter> mockAdapter = new();
+        var runtime = new DockerScannerRuntime(new ScannerRuntimeOptions(), toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<DockerScannerRuntime>.Instance);
+        using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
+
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10), Executable: null);
+        var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, Path.GetTempPath());
+
+        result.Status.Should().Be(ToolExecutionStatus.Failed);
+        result.ErrorCode.Should().Be("TOOL_EXECUTABLE_NOT_CONFIGURED");
+    }
+
+    [Fact]
     public async Task DockerScannerRuntime_RejectsExpiredEgressTarget()
     {
         Mock<IGenericCliToolAdapter> mockAdapter = new();
         var runtime = new DockerScannerRuntime(new ScannerRuntimeOptions(), toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<DockerScannerRuntime>.Instance);
         using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
 
-        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10));
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10), Executable: "subfinder");
         var result = await runtime.ExecuteInSandboxAsync(request, _expiredEgressTarget, secretLease, Path.GetTempPath());
 
         result.Status.Should().Be(ToolExecutionStatus.Failed);
@@ -111,7 +125,7 @@ public class ScannerRuntimeSandboxTests
         var runtime = new DockerScannerRuntime(options, toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<DockerScannerRuntime>.Instance);
         using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
 
-        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10));
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10), Executable: "subfinder");
         var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, Path.GetTempPath());
 
         result.Status.Should().Be(ToolExecutionStatus.Failed);
@@ -126,7 +140,7 @@ public class ScannerRuntimeSandboxTests
         var runtime = new HostedScannerRuntime(httpClient, serviceKey: null, toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<HostedScannerRuntime>.Instance);
         using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
 
-        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10));
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10), Executable: "subfinder");
         var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, Path.GetTempPath());
 
         result.Status.Should().Be(ToolExecutionStatus.Failed);
@@ -147,7 +161,7 @@ public class ScannerRuntimeSandboxTests
         var runtime = new HostedScannerRuntime(httpClient, serviceKey: "SECRET_KEY_123", toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<HostedScannerRuntime>.Instance);
         using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
 
-        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10));
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10), Executable: "subfinder");
         var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, Path.GetTempPath());
 
         result.Status.Should().Be(ToolExecutionStatus.Success);
@@ -168,7 +182,7 @@ public class ScannerRuntimeSandboxTests
         var runtime = new HostedScannerRuntime(httpClient, serviceKey: "SECRET_KEY_123", toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<HostedScannerRuntime>.Instance);
         using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
 
-        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10));
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10), Executable: "subfinder");
         var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, Path.GetTempPath());
 
         result.Status.Should().Be(ToolExecutionStatus.Failed);
@@ -185,7 +199,7 @@ public class ScannerRuntimeSandboxTests
         var runtime = new HostedScannerRuntime(httpClient, serviceKey: "SECRET_KEY_123", toolKey => mockAdapter.Object, _mockEgressProxy.Object, NullLogger<HostedScannerRuntime>.Instance);
         using var secretLease = new ProviderSecretLease("bughunter", new Dictionary<string, string>(), TimeSpan.FromMinutes(5));
 
-        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10));
+        var request = new ToolExecutionRequest("subfinder", "v2.6.6", new Dictionary<string, string>(), Guid.NewGuid(), TimeSpan.FromMinutes(10), Executable: "subfinder");
         var result = await runtime.ExecuteInSandboxAsync(request, _validEgressTarget, secretLease, Path.GetTempPath());
 
         result.Status.Should().Be(ToolExecutionStatus.Failed);
