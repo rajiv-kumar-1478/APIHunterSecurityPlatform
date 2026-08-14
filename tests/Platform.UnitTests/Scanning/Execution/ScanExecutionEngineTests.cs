@@ -201,4 +201,84 @@ public class ScanExecutionEngineTests
 
         Assert.Null(summary);
     }
+
+    [Fact]
+    public async Task ExecutePlan_WithActiveRuntimeSandbox_DispatchesExecutionToSandboxAndCollectsOutput()
+    {
+        var scanJobId = Guid.NewGuid();
+        var tenantId = Guid.NewGuid();
+
+        var mockSandbox = new MockScannerRuntimeSandbox((req, egress, secret, scratch, ct) =>
+        {
+            var outputJson = "[{\"findings\": [{\"rule_id\": \"custom-rule\", \"title\": \"Vulnerability\", \"severity\": \"high\"}]}]";
+            return Task.FromResult(new Platform.Application.Scanning.Contracts.ToolExecutionResult(
+                ToolKey: req.ToolKey,
+                Version: req.Version,
+                Status: Platform.Domain.Enums.ToolExecutionStatus.Success,
+                ExitCode: 0,
+                ArtifactReference: outputJson,
+                ErrorCode: null
+            ));
+        });
+
+        var engineWithSandbox = new ScanExecutionEngine(_toolRegistry, _dbContext, NullLogger<ScanExecutionEngine>.Instance, mockSandbox);
+
+        var invocations = new List<PlannedToolInvocation>
+        {
+            new("semgrep", "1.172.0", ScannerExecutionPhase.StaticAnalysis, new[] { "sast.scan" }, Array.Empty<string>(), "SAST")
+        };
+
+        var plan = new ResolvedScanPlan(
+            ScanJobId: scanJobId,
+            TenantId: tenantId,
+            TargetKind: TargetAssetKind.SourceRepository,
+            Profile: SecurityScanProfileType.Standard,
+            PlannedInvocations: invocations.AsReadOnly(),
+            ExecutionSequence: new[] { "semgrep" },
+            RuleSetVersions: new Dictionary<string, string> { ["semgrep"] = "1.172.0" },
+            SelectionReasons: new Dictionary<string, string>(),
+            PlannerVersion: "1.0.0",
+            PlanHash: "plan_sandbox_test",
+            PlannedAtUtc: DateTime.UtcNow
+        );
+
+        var result = await engineWithSandbox.ExecutePlanAsync(plan);
+
+        Assert.Equal(OverallScanExecutionStatus.Completed, result.OverallStatus);
+        Assert.Single(result.Invocations);
+        Assert.Equal(ToolInvocationStatus.Completed, result.Invocations[0].Status);
+        Assert.Equal("semgrep", result.Invocations[0].ToolKey);
+    }
+}
+
+public class MockScannerRuntimeSandbox : Platform.Application.Scanning.IScannerRuntimeSandbox
+{
+    private readonly Func<
+        Platform.Application.Scanning.Contracts.ToolExecutionRequest,
+        Platform.Application.Scanning.Contracts.EgressTarget,
+        Platform.Application.Scanning.Contracts.ProviderSecretLease,
+        string,
+        System.Threading.CancellationToken,
+        Task<Platform.Application.Scanning.Contracts.ToolExecutionResult>> _handler;
+
+    public MockScannerRuntimeSandbox(Func<
+        Platform.Application.Scanning.Contracts.ToolExecutionRequest,
+        Platform.Application.Scanning.Contracts.EgressTarget,
+        Platform.Application.Scanning.Contracts.ProviderSecretLease,
+        string,
+        System.Threading.CancellationToken,
+        Task<Platform.Application.Scanning.Contracts.ToolExecutionResult>> handler)
+    {
+        _handler = handler;
+    }
+
+    public Task<Platform.Application.Scanning.Contracts.ToolExecutionResult> ExecuteInSandboxAsync(
+        Platform.Application.Scanning.Contracts.ToolExecutionRequest request,
+        Platform.Application.Scanning.Contracts.EgressTarget egressTarget,
+        Platform.Application.Scanning.Contracts.ProviderSecretLease secretLease,
+        string scratchDirectory,
+        System.Threading.CancellationToken cancellationToken = default)
+    {
+        return _handler(request, egressTarget, secretLease, scratchDirectory, cancellationToken);
+    }
 }

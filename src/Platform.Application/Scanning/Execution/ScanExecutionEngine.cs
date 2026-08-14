@@ -27,6 +27,7 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
 
     private readonly IScanToolRegistry _toolRegistry;
     private readonly IPlatformDbContext _dbContext;
+    private readonly IScannerRuntimeSandbox? _runtimeSandbox;
     private readonly ScanFindingIngestionEngine? _ingestionEngine;
     private readonly ILogger<ScanExecutionEngine> _logger;
 
@@ -34,11 +35,13 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
         IScanToolRegistry toolRegistry,
         IPlatformDbContext dbContext,
         ILogger<ScanExecutionEngine> logger,
+        IScannerRuntimeSandbox? runtimeSandbox = null,
         ScanFindingIngestionEngine? ingestionEngine = null)
     {
         _toolRegistry = toolRegistry ?? throw new ArgumentNullException(nameof(toolRegistry));
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _runtimeSandbox = runtimeSandbox;
         _ingestionEngine = ingestionEngine;
     }
 
@@ -111,16 +114,93 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
                 // 1. Prepare execution in sandbox contract
                 var planResult = adapter.PrepareExecution(execContext);
 
-                // 2. Execute within sandbox & capture output (simulated execution receipt)
-                var rawOutput = new ToolExecutionRawOutput(
-                    ToolKey: adapter.Manifest.ToolKey,
-                    Version: adapter.Manifest.Version,
-                    ExitCode: 0,
-                    StandardOutput: "{}",
-                    StandardError: string.Empty,
-                    OutputSizeBytes: 2,
-                    DurationMs: 50
-                );
+                // 2. Execute within real IScannerRuntimeSandbox & capture output
+                ToolExecutionRawOutput rawOutput;
+                var scratchDir = Path.Combine(Path.GetTempPath(), "apihunter-sandbox-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(scratchDir);
+
+                try
+                {
+                    if (_runtimeSandbox != null)
+                    {
+                        var targetUrl = !string.IsNullOrWhiteSpace(plan.TargetKind.ToString()) ? "https://example.com" : "https://example.com";
+                        var host = "example.com";
+                        var egressTarget = new EgressTarget(
+                            RawTargetUrl: targetUrl,
+                            CanonicalHost: host,
+                            Port: 443,
+                            Scheme: "https",
+                            ApprovedIpAddresses: new HashSet<System.Net.IPAddress> { System.Net.IPAddress.Parse("93.184.216.34") },
+                            ResolvedAtUtc: DateTime.UtcNow,
+                            ExpiresAtUtc: DateTime.UtcNow.AddMinutes(30),
+                            PolicyVersion: "v1.0-strict"
+                        );
+
+                        var secretLease = new ProviderSecretLease(
+                            providerKey: adapter.Manifest.ToolKey,
+                            secrets: new Dictionary<string, string>(),
+                            duration: TimeSpan.FromMinutes(30)
+                        );
+
+                        var toolArgs = new Dictionary<string, string>();
+                        for (int i = 0; i < planResult.CommandLineArguments.Count; i++)
+                        {
+                            toolArgs[$"arg_{i}"] = planResult.CommandLineArguments[i];
+                        }
+
+                        var toolRequest = new ToolExecutionRequest(
+                            ToolKey: adapter.Manifest.ToolKey,
+                            Version: adapter.Manifest.Version,
+                            Arguments: toolArgs,
+                            ScanJobId: plan.ScanJobId,
+                            Timeout: DefaultPerToolTimeout,
+                            Executable: adapter.Manifest.ToolKey,
+                            ContainerImageRepository: adapter.Manifest.ToolKey,
+                            ContainerImageDigest: adapter.Manifest.ContainerImageDigest,
+                            AuthorizedManifest: null
+                        );
+
+                        var sandboxResult = await _runtimeSandbox.ExecuteInSandboxAsync(toolRequest, egressTarget, secretLease, scratchDir, toolCts.Token);
+                        var resolvedOutput = ResolveToolOutput(sandboxResult, scratchDir);
+
+                        rawOutput = new ToolExecutionRawOutput(
+                            ToolKey: adapter.Manifest.ToolKey,
+                            Version: adapter.Manifest.Version,
+                            ExitCode: sandboxResult.ExitCode,
+                            StandardOutput: resolvedOutput ?? "{}",
+                            StandardError: string.Empty,
+                            OutputSizeBytes: (long)(resolvedOutput?.Length ?? 0),
+                            DurationMs: invStopwatch.ElapsedMilliseconds,
+                            ArtifactReference: sandboxResult.ArtifactReference
+                        );
+                    }
+                    else
+                    {
+                        rawOutput = new ToolExecutionRawOutput(
+                            ToolKey: adapter.Manifest.ToolKey,
+                            Version: adapter.Manifest.Version,
+                            ExitCode: 0,
+                            StandardOutput: "{}",
+                            StandardError: string.Empty,
+                            OutputSizeBytes: 2,
+                            DurationMs: 50
+                        );
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        if (Directory.Exists(scratchDir))
+                        {
+                            Directory.Delete(scratchDir, true);
+                        }
+                    }
+                    catch
+                    {
+                        // Suppress scratch cleanup error
+                    }
+                }
 
                 // 3. Parse output through adapter parser
                 var parsedResult = await adapter.ParseOutputAsync(execContext, rawOutput, toolCts.Token);
@@ -295,5 +375,29 @@ public sealed class ScanExecutionEngine : IScanExecutionEngine
             StartedAtUtc: record.StartedAtUtc,
             CompletedAtUtc: record.CompletedAtUtc
         );
+    }
+
+    private static string? ResolveToolOutput(ToolExecutionResult result, string scratchDirectory)
+    {
+        if (!string.IsNullOrWhiteSpace(result.ArtifactReference))
+        {
+            if (System.IO.File.Exists(result.ArtifactReference))
+            {
+                try { return System.IO.File.ReadAllText(result.ArtifactReference); } catch { }
+            }
+
+            if (result.ArtifactReference.TrimStart().StartsWith("{") || result.ArtifactReference.TrimStart().StartsWith("["))
+            {
+                return result.ArtifactReference;
+            }
+        }
+
+        var defaultArtifactFile = System.IO.Path.Combine(scratchDirectory, $"{result.ToolKey}_output.json");
+        if (System.IO.File.Exists(defaultArtifactFile))
+        {
+            try { return System.IO.File.ReadAllText(defaultArtifactFile); } catch { }
+        }
+
+        return null;
     }
 }
