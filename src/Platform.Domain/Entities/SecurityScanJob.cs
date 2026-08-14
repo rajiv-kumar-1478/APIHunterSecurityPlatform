@@ -33,6 +33,18 @@ public class SecurityScanJob
 
     public string? FailureReason { get; set; }
 
+    public string? ExecutionReceiptJson { get; set; }
+
+    public int ProgressPercentage { get; set; } = 0;
+
+    public string? CurrentPhase { get; set; }
+
+    public string? CurrentTool { get; set; }
+
+    public int TotalFindingsCount { get; set; } = 0;
+
+    public Guid? RetryOfJobId { get; set; }
+
     /// <summary>
     /// EF Core Optimistic Concurrency Token
     /// </summary>

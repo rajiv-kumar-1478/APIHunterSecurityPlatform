@@ -35,7 +35,8 @@ public record ToolExecutionReceipt(
     int CandidatesParsed,
     int FindingsCreated,
     int FindingsUpdated,
-    string? FailureReason = null
+    string? FailureReason = null,
+    ToolFailureClassification FailureClassification = ToolFailureClassification.None
 );
 
 /// <summary>
@@ -52,3 +53,45 @@ public record ScanExecutionReceipt(
     int TotalFindingsUpdated,
     string Summary
 );
+
+/// <summary>
+/// Enriched scan job detail DTO for dashboard inspection, live tracking, and receipt review.
+/// </summary>
+public record ScanJobDetailDto(
+    Guid Id,
+    Guid? RepositoryId,
+    string? RepositoryName,
+    Guid? TargetId,
+    string? TargetName,
+    string TargetUrl,
+    SecurityScanProfileType ScanProfile,
+    SecurityScanJobStatus Status,
+    string ProviderKey,
+    string CorrelationId,
+    int ProgressPercentage,
+    string? CurrentPhase,
+    string? CurrentTool,
+    int TotalFindingsCount,
+    DateTime CreatedAtUtc,
+    DateTime? StartedAtUtc,
+    DateTime? CompletedAtUtc,
+    DateTime? CancelledAtUtc,
+    string? FailureReason,
+    Guid? RetryOfJobId,
+    int Version,
+    ScanExecutionReceipt? ExecutionReceipt
+);
+
+/// <summary>
+/// Callback contract for real-time scan progress reporting during orchestrator execution.
+/// </summary>
+public interface IScanProgressReporter
+{
+    Task ReportProgressAsync(
+        Guid jobId,
+        int progressPercentage,
+        ScanExecutionPhase? phase,
+        string? currentTool,
+        int findingsDiscoveredSoFar,
+        CancellationToken ct = default);
+}

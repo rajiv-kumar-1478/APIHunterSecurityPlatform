@@ -61,7 +61,8 @@ public record ToolExecutionResult(
     ToolExecutionStatus Status,
     int ExitCode,
     string? ArtifactReference,
-    string? ErrorCode
+    string? ErrorCode,
+    ToolFailureClassification FailureClassification = ToolFailureClassification.None
 );
 
 public record ProviderSecretStatus(

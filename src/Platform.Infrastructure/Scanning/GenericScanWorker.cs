@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -110,10 +111,13 @@ public class GenericScanWorker : IScanWorker
             await _dbContext.SaveChangesAsync(ct);
 
             // 3. Phased Multi-Tool Pipeline Orchestration
-            var receipt = await _orchestrator.ExecutePipelineAsync(job, egressTarget, secretLease, scratchDirectory, _runtimeSandbox, ct);
+            var receipt = await _orchestrator.ExecutePipelineAsync(job, egressTarget, secretLease, scratchDirectory, _runtimeSandbox, null, ct);
 
             job.Status = receipt.FinalJobStatus;
             job.FailureReason = receipt.FinalJobStatus == SecurityScanJobStatus.Failed ? receipt.Summary : null;
+            job.ExecutionReceiptJson = JsonSerializer.Serialize(receipt);
+            job.TotalFindingsCount = receipt.TotalFindingsCreated + receipt.TotalFindingsUpdated;
+            job.ProgressPercentage = 100;
             job.CompletedAtUtc = DateTime.UtcNow;
             await _dbContext.SaveChangesAsync(ct);
 
@@ -123,9 +127,11 @@ public class GenericScanWorker : IScanWorker
         catch (OperationCanceledException)
         {
             _logger.LogWarning("Worker execution cancelled for scan job '{ScanJobId}'.", scanJobId);
-            job.Status = SecurityScanJobStatus.Failed;
+            job.Status = SecurityScanJobStatus.Cancelled;
             job.FailureReason = "SCAN_JOB_CANCELLED";
+            job.CancelledAtUtc = DateTime.UtcNow;
             job.CompletedAtUtc = DateTime.UtcNow;
+            job.CurrentPhase = "Cancelled";
             await _dbContext.SaveChangesAsync(CancellationToken.None);
 
             return new ScanExecutionResult(job.Id, job.Status, null, null, job.FailureReason, DateTime.UtcNow);

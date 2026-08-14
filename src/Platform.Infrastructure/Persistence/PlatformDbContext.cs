@@ -799,6 +799,32 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.Property(pc => pc.ValidationStatus).HasMaxLength(50);
         });
     }
+
+    public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        if (Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
+        {
+            var addedFindings = ChangeTracker.Entries<SecurityFinding>()
+                .Where(e => e.State == EntityState.Added)
+                .Select(e => e.Entity.FindingFingerprint)
+                .ToList();
+
+            if (addedFindings.Count > 0)
+            {
+                var existing = await SecurityFindings.AsNoTracking()
+                    .Where(f => addedFindings.Contains(f.FindingFingerprint))
+                    .Select(f => f.FindingFingerprint)
+                    .FirstOrDefaultAsync(cancellationToken);
+
+                if (existing != null)
+                {
+                    throw new DbUpdateException($"Duplicate key value violates unique index 'IX_security_findings_finding_fingerprint' on finding fingerprint '{existing}'.");
+                }
+            }
+        }
+
+        return await base.SaveChangesAsync(cancellationToken);
+    }
 }
 
 

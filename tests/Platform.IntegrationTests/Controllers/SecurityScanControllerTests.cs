@@ -131,4 +131,112 @@ public class SecurityScanControllerTests : IDisposable
         health.Limits.Should().NotBeNull();
         health.Limits.CpuCores.Should().Be(2.0);
     }
+
+    [Fact]
+    public async Task Test6_GetJobReceipt_Returns200WithReceipt()
+    {
+        var receipt = new ScanExecutionReceipt(
+            JobId: Guid.NewGuid(),
+            Profile: SecurityScanProfileType.Standard,
+            FinalJobStatus: SecurityScanJobStatus.Completed,
+            StartedAtUtc: DateTime.UtcNow.AddMinutes(-2),
+            CompletedAtUtc: DateTime.UtcNow,
+            ToolReceipts: new[]
+            {
+                new ToolExecutionReceipt("nuclei", "v3.0", "nuclei", "ghcr.io/nuclei", "sha256:abc", SecurityScanProfileType.Standard, ScanExecutionPhase.Assessment, ToolExecutionStatus.Success, DateTime.UtcNow.AddMinutes(-1), DateTime.UtcNow, 60000, 512, 1, 1, 0, null, ToolFailureClassification.None)
+            },
+            TotalFindingsCreated: 1,
+            TotalFindingsUpdated: 0,
+            Summary: "Scan completed."
+        );
+
+        var job = new SecurityScanJob
+        {
+            Id = receipt.JobId,
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Standard,
+            Status = SecurityScanJobStatus.Completed,
+            ExecutionReceiptJson = System.Text.Json.JsonSerializer.Serialize(receipt),
+            RequestedByUserId = _adminUserId
+        };
+
+        _dbContext.SecurityScanJobs.Add(job);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _controller.GetJobReceipt(job.Id, default);
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        var returnedReceipt = okResult.Value.Should().BeOfType<ScanExecutionReceipt>().Subject;
+
+        returnedReceipt.JobId.Should().Be(job.Id);
+        returnedReceipt.Summary.Should().Be("Scan completed.");
+        returnedReceipt.ToolReceipts.Should().HaveCount(1);
+    }
+
+    [Fact]
+    public async Task Test7_RetryJob_Returns200WithQueuedJob()
+    {
+        _dbContext.SecurityTargets.Add(new SecurityTarget
+        {
+            Id = Guid.NewGuid(),
+            Name = "Retry Target",
+            BaseUrl = "https://retry.example.com",
+            Enabled = true
+        });
+
+        var failedJob = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            TargetUrl = "https://retry.example.com",
+            ScanProfile = SecurityScanProfileType.Recon,
+            Status = SecurityScanJobStatus.Failed,
+            FailureReason = "TOOL_FAILED",
+            RequestedByUserId = _adminUserId
+        };
+
+        _dbContext.SecurityScanJobs.Add(failedJob);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _controller.RetryJob(failedJob.Id, default);
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        var retriedJob = okResult.Value.Should().BeOfType<SecurityScanJob>().Subject;
+
+        retriedJob.Status.Should().Be(SecurityScanJobStatus.Queued);
+        retriedJob.RetryOfJobId.Should().Be(failedJob.Id);
+        retriedJob.TargetUrl.Should().Be("https://retry.example.com");
+    }
+
+    [Fact]
+    public async Task Test8_CancelJob_Returns200WithCancelledJob()
+    {
+        var runningJob = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Recon,
+            Status = SecurityScanJobStatus.Running,
+            RequestedByUserId = _adminUserId,
+            Version = 1
+        };
+
+        _dbContext.SecurityScanJobs.Add(runningJob);
+        await _dbContext.SaveChangesAsync();
+
+        var request = new CancelScanJobApiRequest("User stopped scan", 1);
+        var result = await _controller.CancelJob(runningJob.Id, request, default);
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        var cancelledJob = okResult.Value.Should().BeOfType<SecurityScanJob>().Subject;
+
+        cancelledJob.Status.Should().Be(SecurityScanJobStatus.Cancelled);
+        cancelledJob.FailureReason.Should().Contain("User stopped scan");
+    }
+
+    [Fact]
+    public async Task Test9_ListJobs_Returns200WithDetailDtoList()
+    {
+        var result = await _controller.ListJobs(page: 1, pageSize: 10, status: null, ct: default);
+        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
+        var jobs = okResult.Value.Should().BeAssignableTo<IReadOnlyList<ScanJobDetailDto>>().Subject;
+
+        jobs.Should().NotBeNull();
+    }
 }

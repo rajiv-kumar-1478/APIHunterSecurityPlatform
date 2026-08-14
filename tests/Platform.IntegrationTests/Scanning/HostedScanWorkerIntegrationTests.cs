@@ -506,7 +506,7 @@ public class HostedScanWorkerIntegrationTests
         var result = await workerTask;
 
         // Verify worker status
-        result.Status.Should().Be(SecurityScanJobStatus.Failed);
+        result.Status.Should().Be(SecurityScanJobStatus.Cancelled);
         result.FailureReason.Should().Contain("CANCELLED");
 
         // Assert exact captured process instance is terminated

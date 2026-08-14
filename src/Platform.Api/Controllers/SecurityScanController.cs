@@ -75,22 +75,34 @@ public class SecurityScanController : ControllerBase
     }
 
     [HttpGet("jobs")]
-    public async Task<ActionResult<IReadOnlyList<SecurityScanJob>>> ListJobs([FromQuery] int page = 1, [FromQuery] int pageSize = 50, [FromQuery] SecurityScanJobStatus? status = null, CancellationToken ct = default)
+    public async Task<ActionResult<IReadOnlyList<ScanJobDetailDto>>> ListJobs([FromQuery] int page = 1, [FromQuery] int pageSize = 50, [FromQuery] SecurityScanJobStatus? status = null, CancellationToken ct = default)
     {
-        var jobs = await _scanJobService.ListJobsAsync(page, pageSize, status, ct);
+        var jobs = await _scanJobService.ListJobsDetailAsync(page, pageSize, status, ct);
         return Ok(jobs);
     }
 
     [HttpGet("jobs/{id:guid}")]
-    public async Task<ActionResult<SecurityScanJob>> GetJob(Guid id, CancellationToken ct)
+    public async Task<ActionResult<ScanJobDetailDto>> GetJob(Guid id, CancellationToken ct)
     {
-        var job = await _scanJobService.GetJobByIdAsync(id, ct);
+        var job = await _scanJobService.GetJobDetailAsync(id, ct);
         if (job == null)
         {
             return NotFound(new { message = $"Scan job '{id}' not found." });
         }
 
         return Ok(job);
+    }
+
+    [HttpGet("jobs/{id:guid}/receipt")]
+    public async Task<ActionResult<ScanExecutionReceipt>> GetJobReceipt(Guid id, CancellationToken ct)
+    {
+        var receipt = await _scanJobService.GetJobReceiptAsync(id, ct);
+        if (receipt == null)
+        {
+            return NotFound(new { message = $"Execution receipt for scan job '{id}' not found or scan not completed." });
+        }
+
+        return Ok(receipt);
     }
 
     [HttpPost("jobs")]
@@ -104,6 +116,24 @@ public class SecurityScanController : ControllerBase
         catch (ArgumentException ex)
         {
             return BadRequest(new { message = ex.Message });
+        }
+        catch (InvalidOperationException ex)
+        {
+            return BadRequest(new { message = ex.Message });
+        }
+    }
+
+    [HttpPost("jobs/{id:guid}/retry")]
+    public async Task<ActionResult<SecurityScanJob>> RetryJob(Guid id, CancellationToken ct)
+    {
+        try
+        {
+            var job = await _scanJobService.RetryScanJobAsync(id, ct);
+            return Ok(job);
+        }
+        catch (KeyNotFoundException ex)
+        {
+            return NotFound(new { message = ex.Message });
         }
         catch (InvalidOperationException ex)
         {

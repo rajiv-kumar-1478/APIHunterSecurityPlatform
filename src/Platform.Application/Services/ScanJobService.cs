@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -28,10 +29,10 @@ public class ScanJobService
         ScanToolRegistryService toolRegistryService,
         ILogger<ScanJobService> logger)
     {
-        _dbContext = dbContext;
-        _currentUserContext = currentUserContext;
-        _toolRegistryService = toolRegistryService;
-        _logger = logger;
+        _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+        _currentUserContext = currentUserContext ?? throw new ArgumentNullException(nameof(currentUserContext));
+        _toolRegistryService = toolRegistryService ?? throw new ArgumentNullException(nameof(toolRegistryService));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     public async Task<SecurityScanJob> CreateScanJobAsync(CreateScanJobRequest request, CancellationToken ct = default)
@@ -105,6 +106,39 @@ public class ScanJobService
             .FirstOrDefaultAsync(j => j.Id == jobId, ct);
     }
 
+    public async Task<ScanJobDetailDto?> GetJobDetailAsync(Guid jobId, CancellationToken ct = default)
+    {
+        var job = await _dbContext.SecurityScanJobs
+            .Include(j => j.Target)
+            .Include(j => j.Repository)
+            .FirstOrDefaultAsync(j => j.Id == jobId, ct);
+
+        if (job == null) return null;
+
+        return MapToDetailDto(job);
+    }
+
+    public async Task<ScanExecutionReceipt?> GetJobReceiptAsync(Guid jobId, CancellationToken ct = default)
+    {
+        var job = await _dbContext.SecurityScanJobs.AsNoTracking()
+            .FirstOrDefaultAsync(j => j.Id == jobId, ct);
+
+        if (job == null || string.IsNullOrWhiteSpace(job.ExecutionReceiptJson))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<ScanExecutionReceipt>(job.ExecutionReceiptJson);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to deserialize execution receipt JSON for scan job '{JobId}'.", jobId);
+            return null;
+        }
+    }
+
     public async Task<IReadOnlyList<SecurityScanJob>> ListJobsAsync(int page = 1, int pageSize = 50, SecurityScanJobStatus? statusFilter = null, CancellationToken ct = default)
     {
         var query = _dbContext.SecurityScanJobs.AsNoTracking();
@@ -121,6 +155,27 @@ public class ScanJobService
             .ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<ScanJobDetailDto>> ListJobsDetailAsync(int page = 1, int pageSize = 50, SecurityScanJobStatus? statusFilter = null, CancellationToken ct = default)
+    {
+        var query = _dbContext.SecurityScanJobs
+            .Include(j => j.Target)
+            .Include(j => j.Repository)
+            .AsNoTracking();
+
+        if (statusFilter.HasValue)
+        {
+            query = query.Where(j => j.Status == statusFilter.Value);
+        }
+
+        var jobs = await query
+            .OrderByDescending(j => j.CreatedAtUtc)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(ct);
+
+        return jobs.Select(MapToDetailDto).ToList();
+    }
+
     public async Task<SecurityScanJob> CancelScanJobAsync(Guid jobId, string reason, int expectedVersion, CancellationToken ct = default)
     {
         var userId = _currentUserContext.UserId ?? throw new InvalidOperationException("User must be authenticated.");
@@ -133,14 +188,15 @@ public class ScanJobService
             throw new DbUpdateConcurrencyException($"Concurrency conflict: scan job version is {job.Version}, expected {expectedVersion}.");
         }
 
-        if (job.Status is SecurityScanJobStatus.Completed or SecurityScanJobStatus.Failed or SecurityScanJobStatus.Cancelled)
+        if (job.Status is SecurityScanJobStatus.Completed or SecurityScanJobStatus.CompletedWithWarnings or SecurityScanJobStatus.Failed or SecurityScanJobStatus.Cancelled)
         {
-            throw new InvalidOperationException($"Cannot cancel scan job in status '{job.Status}'.");
+            throw new InvalidOperationException($"Cannot cancel scan job in terminal status '{job.Status}'.");
         }
 
         job.Status = SecurityScanJobStatus.Cancelled;
         job.CancelledAtUtc = DateTime.UtcNow;
         job.FailureReason = $"Cancelled by user: {reason}";
+        job.CurrentPhase = "Cancelled";
         job.Version++;
 
         _dbContext.AuditEvents.Add(new AuditEvent
@@ -157,6 +213,112 @@ public class ScanJobService
 
         await _dbContext.SaveChangesAsync(ct);
         return job;
+    }
+
+    public async Task<SecurityScanJob> RetryScanJobAsync(Guid jobId, CancellationToken ct = default)
+    {
+        var userId = _currentUserContext.UserId ?? throw new InvalidOperationException("User must be authenticated to retry a scan job.");
+
+        var originalJob = await _dbContext.SecurityScanJobs.FirstOrDefaultAsync(j => j.Id == jobId, ct)
+            ?? throw new KeyNotFoundException($"Scan job '{jobId}' not found.");
+
+        if (originalJob.Status is not (SecurityScanJobStatus.Failed or SecurityScanJobStatus.Cancelled or SecurityScanJobStatus.CompletedWithWarnings))
+        {
+            throw new InvalidOperationException($"Only failed, cancelled, or completed-with-warnings scan jobs can be retried. Current status is '{originalJob.Status}'.");
+        }
+
+        // Re-validate scope & target authorization
+        await ValidateTargetScopeAsync(originalJob.TargetId, originalJob.TargetUrl, ct);
+
+        // Validate required capabilities for profile
+        var requiredCaps = GetRequiredCapabilitiesForProfile(originalJob.ScanProfile);
+        var availableTools = await _toolRegistryService.GetToolsForCapabilitiesAsync(requiredCaps, ct);
+
+        var missingRequiredTools = availableTools
+            .Where(t => t.Required && t.HealthStatus != ToolHealthStatus.Healthy)
+            .ToList();
+
+        if (missingRequiredTools.Any())
+        {
+            var missingKeys = string.Join(", ", missingRequiredTools.Select(t => t.ToolKey));
+            throw new InvalidOperationException($"Retry blocked: required tools are missing or unhealthy: {missingKeys}");
+        }
+
+        var retriedJob = new SecurityScanJob
+        {
+            Id = Guid.NewGuid(),
+            RepositoryId = originalJob.RepositoryId,
+            TargetId = originalJob.TargetId,
+            TargetUrl = originalJob.TargetUrl,
+            ScanProfile = originalJob.ScanProfile,
+            Status = SecurityScanJobStatus.Queued,
+            RequestedByUserId = userId,
+            ProviderKey = originalJob.ProviderKey,
+            CorrelationId = originalJob.CorrelationId,
+            RetryOfJobId = originalJob.Id,
+            CreatedAtUtc = DateTime.UtcNow,
+            Version = 1
+        };
+
+        _dbContext.SecurityScanJobs.Add(retriedJob);
+
+        _dbContext.AuditEvents.Add(new AuditEvent
+        {
+            Id = Guid.NewGuid(),
+            EventCode = AuditEventCode.ScanJobRetried,
+            UserId = userId,
+            CorrelationId = retriedJob.CorrelationId,
+            ResourceType = "SecurityScanJob",
+            ResourceId = retriedJob.Id.ToString(),
+            CreatedAtUtc = DateTime.UtcNow,
+            Metadata = $"{{\"OriginalJobId\":\"{originalJob.Id}\",\"NewJobId\":\"{retriedJob.Id}\",\"TargetUrl\":\"{retriedJob.TargetUrl}\"}}"
+        });
+
+        await _dbContext.SaveChangesAsync(ct);
+        _logger.LogInformation("Security scan job '{OriginalJobId}' retried as new job '{NewJobId}'.", originalJob.Id, retriedJob.Id);
+
+        return retriedJob;
+    }
+
+    private static ScanJobDetailDto MapToDetailDto(SecurityScanJob job)
+    {
+        ScanExecutionReceipt? receipt = null;
+        if (!string.IsNullOrWhiteSpace(job.ExecutionReceiptJson))
+        {
+            try
+            {
+                receipt = JsonSerializer.Deserialize<ScanExecutionReceipt>(job.ExecutionReceiptJson);
+            }
+            catch
+            {
+                // Ignore deserialization error
+            }
+        }
+
+        return new ScanJobDetailDto(
+            Id: job.Id,
+            RepositoryId: job.RepositoryId,
+            RepositoryName: job.Repository?.Name,
+            TargetId: job.TargetId,
+            TargetName: job.Target?.Name,
+            TargetUrl: job.TargetUrl,
+            ScanProfile: job.ScanProfile,
+            Status: job.Status,
+            ProviderKey: job.ProviderKey,
+            CorrelationId: job.CorrelationId,
+            ProgressPercentage: job.ProgressPercentage,
+            CurrentPhase: job.CurrentPhase,
+            CurrentTool: job.CurrentTool,
+            TotalFindingsCount: job.TotalFindingsCount,
+            CreatedAtUtc: job.CreatedAtUtc,
+            StartedAtUtc: job.StartedAtUtc,
+            CompletedAtUtc: job.CompletedAtUtc,
+            CancelledAtUtc: job.CancelledAtUtc,
+            FailureReason: job.FailureReason,
+            RetryOfJobId: job.RetryOfJobId,
+            Version: job.Version,
+            ExecutionReceipt: receipt
+        );
     }
 
     private async Task ValidateTargetScopeAsync(Guid? targetId, string targetUrl, CancellationToken ct)
@@ -206,7 +368,7 @@ public class ScanJobService
 
             if (!isAuthorized)
             {
-                _logger.LogWarning("Scope authorization rejected for target URL '{TargetUrl}': host '{Host}' is not registered under authorized security targets.", targetUrl, host);
+                _logger.LogWarning("Target URL '{TargetUrl}' does not match any authorized security target domain.", targetUrl);
                 throw new InvalidOperationException($"Target URL '{targetUrl}' is out of scope. Scans are permitted only against authorized security targets.");
             }
         }

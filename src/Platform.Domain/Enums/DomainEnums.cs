@@ -126,10 +126,20 @@ public enum AuditEventCode
     ScanJobCreated,
     ScanJobStatusChanged,
     ScanJobCancelled,
+    ScanJobRetried,
     ScanToolRegistered,
     ScanToolStatusChanged,
     ScanProviderConfigured,
     ScanFindingsIngested
+}
+
+public enum ToolFailureClassification
+{
+    None = 0,
+    SecurityBoundary = 1,
+    ToolExecution = 2,
+    Infrastructure = 3,
+    Cancelled = 4
 }
 
 public enum SecurityScanJobStatus

@@ -48,6 +48,7 @@ public class ScanExecutionOrchestrator
         ProviderSecretLease secretLease,
         string scratchDirectory,
         IScannerRuntimeSandbox runtimeSandbox,
+        IScanProgressReporter? progressReporter = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(job);
@@ -130,11 +131,31 @@ public class ScanExecutionOrchestrator
         var successfulToolsCount = 0;
         var failedToolsCount = 0;
         var fatalSecurityBoundaryFailure = false;
+        var totalTools = orderedPlan.Count;
 
         // 5. Sequential Phase Execution
-        foreach (var (tool, phase) in orderedPlan)
+        for (int i = 0; i < totalTools; i++)
         {
+            var (tool, phase) = orderedPlan[i];
             ct.ThrowIfCancellationRequested();
+
+            var currentProgress = (int)Math.Round(((double)i / totalTools) * 100);
+            job.CurrentPhase = phase.ToString();
+            job.CurrentTool = tool.ToolKey;
+            job.ProgressPercentage = currentProgress;
+            job.TotalFindingsCount = totalFindingsCreated;
+
+            if (progressReporter != null)
+            {
+                try
+                {
+                    await progressReporter.ReportProgressAsync(job.Id, currentProgress, phase, tool.ToolKey, totalFindingsCreated, ct);
+                }
+                catch (Exception pex)
+                {
+                    _logger.LogDebug(pex, "Progress report notification error for job '{JobId}'.", job.Id);
+                }
+            }
 
             if (fatalSecurityBoundaryFailure)
             {
@@ -155,7 +176,8 @@ public class ScanExecutionOrchestrator
                     CandidatesParsed: 0,
                     FindingsCreated: 0,
                     FindingsUpdated: 0,
-                    FailureReason: "SKIPPED_DUE_TO_FATAL_SECURITY_BOUNDARY_FAILURE"
+                    FailureReason: "SKIPPED_DUE_TO_FATAL_SECURITY_BOUNDARY_FAILURE",
+                    FailureClassification: ToolFailureClassification.SecurityBoundary
                 ));
                 continue;
             }
@@ -206,7 +228,8 @@ public class ScanExecutionOrchestrator
                     Status: ToolExecutionStatus.Failed,
                     ExitCode: -1,
                     ArtifactReference: null,
-                    ErrorCode: $"SANDBOX_EXECUTION_CRASH: {ex.Message}"
+                    ErrorCode: $"SANDBOX_EXECUTION_CRASH: {ex.Message}",
+                    FailureClassification: ToolFailureClassification.SecurityBoundary
                 );
             }
             sw.Stop();
@@ -218,6 +241,7 @@ public class ScanExecutionOrchestrator
             var toolFindingsCreated = 0;
             var toolFindingsUpdated = 0;
             string? failureReason = null;
+            var failureClassification = toolResult.FailureClassification;
 
             if (toolResult.Status == ToolExecutionStatus.Success)
             {
@@ -262,7 +286,23 @@ public class ScanExecutionOrchestrator
                 failureReason = toolResult.ErrorCode ?? "TOOL_EXECUTION_FAILED";
                 _logger.LogWarning("Tool '{ToolKey}' execution failed ({Status}): {Reason}", tool.ToolKey, toolResult.Status, failureReason);
 
-                if (failureReason.StartsWith("SANDBOX_") || failureReason.StartsWith("SECURITY_"))
+                if (failureClassification == ToolFailureClassification.None)
+                {
+                    if (failureReason.StartsWith("SANDBOX_") || failureReason.StartsWith("SECURITY_") || failureReason.StartsWith("DOCKER_") || failureReason.StartsWith("IMAGE_PROVENANCE_"))
+                    {
+                        failureClassification = ToolFailureClassification.SecurityBoundary;
+                    }
+                    else if (ct.IsCancellationRequested || failureReason.Contains("CANCELLED"))
+                    {
+                        failureClassification = ToolFailureClassification.Cancelled;
+                    }
+                    else
+                    {
+                        failureClassification = ToolFailureClassification.ToolExecution;
+                    }
+                }
+
+                if (failureClassification == ToolFailureClassification.SecurityBoundary)
                 {
                     fatalSecurityBoundaryFailure = true;
                 }
@@ -284,7 +324,8 @@ public class ScanExecutionOrchestrator
                 CandidatesParsed: candidatesParsed,
                 FindingsCreated: toolFindingsCreated,
                 FindingsUpdated: toolFindingsUpdated,
-                FailureReason: failureReason
+                FailureReason: failureReason,
+                FailureClassification: failureClassification
             );
 
             toolReceipts.Add(receipt);
@@ -294,7 +335,12 @@ public class ScanExecutionOrchestrator
         SecurityScanJobStatus finalStatus;
         string summary;
 
-        if (failedToolsCount == 0 && successfulToolsCount > 0)
+        if (ct.IsCancellationRequested)
+        {
+            finalStatus = SecurityScanJobStatus.Cancelled;
+            summary = "Scan execution was cancelled.";
+        }
+        else if (failedToolsCount == 0 && successfulToolsCount > 0)
         {
             finalStatus = SecurityScanJobStatus.Completed;
             summary = $"Scan completed successfully. All {successfulToolsCount} tool(s) executed. Findings created: {totalFindingsCreated}, updated: {totalFindingsUpdated}.";
@@ -308,6 +354,23 @@ public class ScanExecutionOrchestrator
         {
             finalStatus = SecurityScanJobStatus.Failed;
             summary = $"All {failedToolsCount} tool(s) failed execution.";
+        }
+
+        job.ProgressPercentage = 100;
+        job.CurrentPhase = "Completed";
+        job.CurrentTool = null;
+        job.TotalFindingsCount = totalFindingsCreated;
+
+        if (progressReporter != null)
+        {
+            try
+            {
+                await progressReporter.ReportProgressAsync(job.Id, 100, ScanExecutionPhase.Ingestion, null, totalFindingsCreated, CancellationToken.None);
+            }
+            catch
+            {
+                // Ignore background notification error
+            }
         }
 
         _logger.LogInformation("Scan job '{JobId}' finished with status '{Status}'. Summary: {Summary}", job.Id, finalStatus, summary);
