@@ -17,5 +17,7 @@ public sealed record ScanToolManifest(
     IReadOnlySet<string> Capabilities,
     IReadOnlyList<string> DiscoveredAssetTypes,
     string ParserVersion,
-    string ManifestVersion
+    string ManifestVersion,
+    Platform.Application.Scanning.Planning.Contracts.ScannerExecutionPhase ExecutionPhase = Platform.Application.Scanning.Planning.Contracts.ScannerExecutionPhase.Discovery,
+    IReadOnlyList<string>? RequiredCapabilities = null
 );

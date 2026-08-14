@@ -42,7 +42,8 @@ public sealed class SemgrepAdapter : IScanToolAdapter
             "config_issue"
         },
         ParserVersion: "1.0",
-        ManifestVersion: "1.0"
+        ManifestVersion: "1.0",
+        ExecutionPhase: Planning.Contracts.ScannerExecutionPhase.StaticAnalysis
     );
 
     public SemgrepAdapter(SemgrepOutputParser parser, SemgrepRulePolicy? rulePolicy = null)

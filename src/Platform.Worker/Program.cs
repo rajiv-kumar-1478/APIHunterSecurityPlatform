@@ -96,6 +96,7 @@ builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAd
 builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.BugHunterAdapter>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.SemgrepAdapter>();
 builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolRegistry, Platform.Application.Scanning.Adapters.ScanToolRegistry>();
+builder.Services.AddSingleton<Platform.Application.Scanning.Planning.IScanPlanningEngine, Platform.Application.Scanning.Planning.ScanPlanningEngine>();
 builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsDiscoveryEngine, Platform.Application.Scanning.JavaScript.JsDiscoveryEngine>();
 builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsAstAnalyzer, Platform.Application.Scanning.JavaScript.JsAstAnalyzer>();
 builder.Services.AddSingleton<Platform.Application.Scanning.JavaScript.IJsSecretAnalyzer, Platform.Application.Scanning.JavaScript.JsSecretAnalyzer>();

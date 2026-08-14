@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using Platform.Application.Scanning.Planning.Contracts;
 using Platform.Application.Scanning.Validation;
 using Platform.Domain.Enums;
 
@@ -64,5 +67,43 @@ public sealed class ScanToolRegistry : IScanToolRegistry
         return _adapters.Values
             .Where(a => a.Manifest.Capabilities.Contains(capability))
             .ToList();
+    }
+
+    public IReadOnlyList<IScanToolAdapter> GetAdaptersForAssetType(string assetType)
+    {
+        if (string.IsNullOrWhiteSpace(assetType)) return Array.Empty<IScanToolAdapter>();
+
+        return _adapters.Values
+            .Where(a => a.Manifest.DiscoveredAssetTypes.Contains(assetType, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+    }
+
+    public Task<IReadOnlyList<ToolDiagnosticReport>> DiagnoseAllToolsAsync(CancellationToken ct = default)
+    {
+        var reports = new List<ToolDiagnosticReport>();
+
+        foreach (var adapter in _adapters.Values)
+        {
+            var manifest = adapter.Manifest;
+            var validation = ScanToolManifestValidator.Validate(manifest);
+
+            var status = validation.IsValid ? ToolHealthStatus.Healthy : ToolHealthStatus.Degraded;
+            var isValidDigest = !string.IsNullOrWhiteSpace(manifest.ContainerImageDigest) &&
+                                manifest.ContainerImageDigest.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase) &&
+                                manifest.ContainerImageDigest.Length == 71;
+
+            reports.Add(new ToolDiagnosticReport(
+                ToolKey: manifest.ToolKey,
+                Version: manifest.Version,
+                Status: status,
+                IsContainerImageDigestValid: isValidDigest,
+                DeclaredCapabilities: manifest.Capabilities,
+                ExecutionPhase: manifest.ExecutionPhase,
+                LastDiagnosticAtUtc: DateTime.UtcNow,
+                ErrorMessage: validation.IsValid ? null : string.Join("; ", validation.Errors)
+            ));
+        }
+
+        return Task.FromResult<IReadOnlyList<ToolDiagnosticReport>>(reports.AsReadOnly());
     }
 }

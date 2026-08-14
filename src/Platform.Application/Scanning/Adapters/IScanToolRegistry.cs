@@ -1,4 +1,7 @@
 using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Platform.Application.Scanning.Planning.Contracts;
 using Platform.Domain.Enums;
 
 namespace Platform.Application.Scanning.Adapters;
@@ -19,4 +22,10 @@ public interface IScanToolRegistry
 
     /// <summary>Gets all adapters declaring a given capability tag.</summary>
     IReadOnlyList<IScanToolAdapter> GetAdaptersForCapability(string capability);
+
+    /// <summary>Gets all adapters discovering a given asset type.</summary>
+    IReadOnlyList<IScanToolAdapter> GetAdaptersForAssetType(string assetType);
+
+    /// <summary>Runs non-intrusive diagnostic and provenance checks across all registered scanner adapters.</summary>
+    Task<IReadOnlyList<ToolDiagnosticReport>> DiagnoseAllToolsAsync(CancellationToken ct = default);
 }

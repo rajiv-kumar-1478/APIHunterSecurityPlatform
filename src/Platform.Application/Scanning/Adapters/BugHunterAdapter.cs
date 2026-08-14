@@ -42,7 +42,9 @@ public sealed class BugHunterAdapter : IScanToolAdapter
             "parameter_tampering"
         },
         ParserVersion: "1.0",
-        ManifestVersion: "1.0"
+        ManifestVersion: "1.0",
+        ExecutionPhase: Planning.Contracts.ScannerExecutionPhase.ActiveVerification,
+        RequiredCapabilities: new[] { "endpoint.extract" }
     );
 
     public BugHunterAdapter(BugHunterOutputParser parser)
