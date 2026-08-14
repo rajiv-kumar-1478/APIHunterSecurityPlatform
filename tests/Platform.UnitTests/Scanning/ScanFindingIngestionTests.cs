@@ -287,4 +287,95 @@ public class ScanFindingIngestionTests : IDisposable
         finding.RiskScore.Should().BeGreaterThan(0);
         finding.Evidences.First().SafeEvidenceJson.Should().Contain("SUPER_EXTREME_URGENT");
     }
+
+    [Fact]
+    public async Task ConcurrentIngestion_HandlesSimultaneousDuplicateFingerprints_GracefullyWithoutDataLoss()
+    {
+        var dbName = Guid.NewGuid().ToString();
+
+        var sharedRepoId = Guid.NewGuid();
+        var sharedTargetId = Guid.NewGuid();
+
+        // Seed shared db
+        var options = new DbContextOptionsBuilder<PlatformDbContext>()
+            .UseInMemoryDatabase(databaseName: dbName)
+            .Options;
+
+        using (var seedDb = new PlatformDbContext(options))
+        {
+            seedDb.Repositories.Add(new Repository
+            {
+                Id = sharedRepoId,
+                Name = "ConcurrentRepo",
+                FullName = "org/ConcurrentRepo",
+                Owner = "org",
+                Url = "https://github.com/org/ConcurrentRepo",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            seedDb.SecurityTargets.Add(new SecurityTarget
+            {
+                Id = sharedTargetId,
+                Name = "Concurrent Target",
+                TargetType = "WebEndpoint",
+                BaseUrl = "https://api.example.com",
+                Enabled = true,
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await seedDb.SaveChangesAsync();
+        }
+
+        var candidate1 = new FindingCandidate(
+            ToolKey: "worker_a_scanner",
+            ToolVersion: "v1.0.0",
+            FindingType: FindingType.ProductionServiceExposed,
+            Title: "Concurrent Vulnerability Finding",
+            Description: "Worker A report",
+            RawSeverity: "high",
+            TargetUrl: "https://api.example.com/api/v1/auth",
+            TemplateId: "auth-bypass-race"
+        );
+
+        var candidate2 = new FindingCandidate(
+            ToolKey: "worker_b_scanner",
+            ToolVersion: "v1.0.0",
+            FindingType: FindingType.ProductionServiceExposed,
+            Title: "Concurrent Vulnerability Finding",
+            Description: "Worker B report",
+            RawSeverity: "high",
+            TargetUrl: "https://api.example.com/api/v1/auth",
+            TemplateId: "auth-bypass-race"
+        );
+
+        var context1 = new ScanJobContext(Guid.NewGuid(), sharedRepoId, sharedTargetId, "https://api.example.com", SecurityScanProfileType.Standard, DateTime.UtcNow);
+        var context2 = new ScanJobContext(Guid.NewGuid(), sharedRepoId, sharedTargetId, "https://api.example.com", SecurityScanProfileType.Standard, DateTime.UtcNow);
+
+        // Run concurrently in separate DbContext instances
+        var task1 = Task.Run(async () =>
+        {
+            using var db1 = new PlatformDbContext(options);
+            var eng1 = new ScanFindingIngestionEngine(db1, NullLogger<ScanFindingIngestionEngine>.Instance);
+            return await eng1.IngestCandidatesAsync(new[] { candidate1 }, context1);
+        });
+
+        var task2 = Task.Run(async () =>
+        {
+            using var db2 = new PlatformDbContext(options);
+            var eng2 = new ScanFindingIngestionEngine(db2, NullLogger<ScanFindingIngestionEngine>.Instance);
+            return await eng2.IngestCandidatesAsync(new[] { candidate2 }, context2);
+        });
+
+        var results = await Task.WhenAll(task1, task2);
+
+        results[0].CandidatesAccepted.Should().Be(1);
+        results[1].CandidatesAccepted.Should().Be(1);
+
+        using (var verifyDb = new PlatformDbContext(options))
+        {
+            var findings = await verifyDb.SecurityFindings.Include(f => f.Evidences).ToListAsync();
+            findings.Should().HaveCount(1, "Exactly one finding must exist with deduplicated fingerprint");
+            findings[0].Evidences.Should().HaveCount(2, "Both concurrent observations must be appended without data loss");
+            findings[0].Evidences.Should().Contain(e => e.SafeEvidenceJson.Contains("worker_a_scanner"));
+            findings[0].Evidences.Should().Contain(e => e.SafeEvidenceJson.Contains("worker_b_scanner"));
+        }
+    }
 }
