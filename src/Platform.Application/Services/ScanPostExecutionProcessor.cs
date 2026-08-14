@@ -139,10 +139,17 @@ public class ScanPostExecutionProcessor
         {
             baselineJob = await _scanJobService.GetJobByIdAsync(baselineJobId.Value, ct)
                 ?? throw new KeyNotFoundException($"Baseline scan job '{baselineJobId.Value}' not found.");
+
+            if (baselineJob.TargetId != currentJob.TargetId)
+            {
+                throw new InvalidOperationException($"Cannot compare scan diff across different targets (Current: '{currentJob.TargetId}', Baseline: '{baselineJob.TargetId}').");
+            }
         }
         else if (currentJob.TargetId.HasValue)
         {
-            // Find most recent previous terminal successful scan for the exact same target
+            var canonicalProfile = ScanProfileMatrix.CanonicalizeProfile(currentJob.ScanProfile);
+
+            // Find most recent previous terminal successful scan for the exact same target and compatible profile
             baselineJob = await _dbContext.SecurityScanJobs.AsNoTracking()
                 .Where(j => j.TargetId == currentJob.TargetId
                          && j.Id != currentJob.Id
@@ -471,18 +478,22 @@ public class ScanPostExecutionProcessor
     {
         if (!targetId.HasValue) return 0;
 
-        // Query historical observations for the same target and compatible profile in reverse chronological order
+        var canonicalProfile = ScanProfileMatrix.CanonicalizeProfile(profile);
+
+        // Query historical observations for the same target in reverse chronological order
         var historicalObs = await _dbContext.ScanFindingObservations
             .Include(o => o.ScanJob)
             .Where(o => o.FindingId == findingId
-                     && o.ScanJob.TargetId == targetId
-                     && o.ScanJob.ScanProfile == profile)
+                     && o.ScanJob.TargetId == targetId)
             .OrderByDescending(o => o.ObservedAtUtc)
             .ToListAsync(ct);
 
         int count = 0;
         foreach (var obs in historicalObs)
         {
+            if (obs.ScanJob == null || ScanProfileMatrix.CanonicalizeProfile(obs.ScanJob.ScanProfile) != canonicalProfile)
+                continue;
+
             if (obs.WasObserved)
             {
                 break; // Found an observation where the finding was present; streak ends
