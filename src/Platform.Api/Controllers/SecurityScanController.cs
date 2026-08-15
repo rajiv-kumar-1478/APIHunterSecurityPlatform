@@ -37,18 +37,18 @@ public class SecurityScanController : ControllerBase
         IScanProviderSecretStore secretStore,
         ScanPostExecutionProcessor postProcessor,
         ScanReportBuilderService reportBuilder,
-        Platform.Application.Scanning.Audit.IScanPlanAuditService? auditService = null,
-        Platform.Application.Scanning.Execution.IScanExecutionEngine? executionEngine = null,
+        Platform.Application.Scanning.Audit.IScanPlanAuditService auditService,
+        Platform.Application.Scanning.Execution.IScanExecutionEngine executionEngine,
         SecurityReportFormatterRegistry? formatterRegistry = null)
     {
-        _scanJobService = scanJobService;
-        _toolRegistryService = toolRegistryService;
-        _toolHealthService = toolHealthService;
-        _secretStore = secretStore;
-        _postProcessor = postProcessor;
-        _reportBuilder = reportBuilder;
-        _auditService = auditService!;
-        _executionEngine = executionEngine!;
+        _scanJobService = scanJobService ?? throw new ArgumentNullException(nameof(scanJobService));
+        _toolRegistryService = toolRegistryService ?? throw new ArgumentNullException(nameof(toolRegistryService));
+        _toolHealthService = toolHealthService ?? throw new ArgumentNullException(nameof(toolHealthService));
+        _secretStore = secretStore ?? throw new ArgumentNullException(nameof(secretStore));
+        _postProcessor = postProcessor ?? throw new ArgumentNullException(nameof(postProcessor));
+        _reportBuilder = reportBuilder ?? throw new ArgumentNullException(nameof(reportBuilder));
+        _auditService = auditService ?? throw new ArgumentNullException(nameof(auditService));
+        _executionEngine = executionEngine ?? throw new ArgumentNullException(nameof(executionEngine));
         _formatterRegistry = formatterRegistry ?? new SecurityReportFormatterRegistry();
     }
 

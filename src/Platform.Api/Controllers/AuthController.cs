@@ -21,10 +21,10 @@ public class AuthController(AuthService authService, IAntiforgery antiforgery) :
             Request.Headers["User-Agent"].ToString());
 
         var result = await authService.LoginAsync(command, ct);
-        if (!result.IsSuccess)
-            return Unauthorized(new { title = result.ErrorMessage, code = result.ErrorCode });
+        if (!result.IsSuccess || result.Value is null)
+            return Unauthorized(new { title = result.ErrorMessage ?? "Authentication failed.", code = result.ErrorCode ?? "AUTH_FAILED" });
 
-        var session = result.Value!;
+        var session = result.Value;
 
         // Build claims principal
         var claims = new List<Claim>

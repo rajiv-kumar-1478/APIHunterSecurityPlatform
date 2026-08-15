@@ -281,7 +281,7 @@ public class RealSandboxEgressAllowlistIntegrationTests
         var result = await engine.ExecutePlanAsync(plan);
 
         result.OverallStatus.Should().Be(OverallScanExecutionStatus.Failed);
-        result.Invocations.Should().ContainSingle(i => i.Status == ToolInvocationStatus.Failed && i.ErrorMessage.Contains("PROVIDER_EGRESS_UNAUTHORIZED"));
+        result.Invocations.Should().ContainSingle(i => i.Status == ToolInvocationStatus.Failed && i.ErrorMessage != null && i.ErrorMessage.Contains("PROVIDER_EGRESS_UNAUTHORIZED"));
         cliAdapterEverCalled.Should().BeFalse("Real sandbox/CLI adapter MUST NEVER be called when verification destination is prohibited.");
     }
 

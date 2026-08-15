@@ -90,6 +90,8 @@ public class ScanProductionAcceptanceTests : IDisposable
         _postProcessor = new ScanPostExecutionProcessor(_dbContext, _scanJobService, NullLogger<ScanPostExecutionProcessor>.Instance);
         _reportBuilder = new ScanReportBuilderService(_dbContext, _scanJobService, _postProcessor, NullLogger<ScanReportBuilderService>.Instance);
         _formatterRegistry = new SecurityReportFormatterRegistry();
+        var mockAuditService = new Mock<Platform.Application.Scanning.Audit.IScanPlanAuditService>();
+        var mockExecutionEngine = new Mock<Platform.Application.Scanning.Execution.IScanExecutionEngine>();
 
         _controller = new SecurityScanController(
             _scanJobService,
@@ -97,7 +99,10 @@ public class ScanProductionAcceptanceTests : IDisposable
             _toolHealthService,
             _secretStore,
             _postProcessor,
-            _reportBuilder);
+            _reportBuilder,
+            mockAuditService.Object,
+            mockExecutionEngine.Object,
+            _formatterRegistry);
 
         // Seed Repository and SecurityTarget
         _dbContext.Repositories.Add(new Repository

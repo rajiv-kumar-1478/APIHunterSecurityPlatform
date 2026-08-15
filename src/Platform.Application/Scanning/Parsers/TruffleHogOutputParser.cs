@@ -189,10 +189,14 @@ public sealed class TruffleHogOutputParser
             {
                 if (dataProp.TryGetProperty("Filesystem", out var fsProp) && fsProp.ValueKind == JsonValueKind.Object)
                 {
-                    if (fsProp.TryGetProperty("file", out var fileProp) && !string.IsNullOrWhiteSpace(fileProp.GetString()))
+                    if (fsProp.TryGetProperty("file", out var fileProp))
                     {
-                        filePath = fileProp.GetString()!;
-                        scannedFiles.Add(filePath);
+                        var parsedFile = fileProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(parsedFile))
+                        {
+                            filePath = parsedFile;
+                            scannedFiles.Add(filePath);
+                        }
                     }
                     if (fsProp.TryGetProperty("line", out var lineProp) && lineProp.TryGetInt32(out var l))
                     {
@@ -201,10 +205,14 @@ public sealed class TruffleHogOutputParser
                 }
                 else if (dataProp.TryGetProperty("Git", out var gitProp) && gitProp.ValueKind == JsonValueKind.Object)
                 {
-                    if (gitProp.TryGetProperty("file", out var gFileProp) && !string.IsNullOrWhiteSpace(gFileProp.GetString()))
+                    if (gitProp.TryGetProperty("file", out var gFileProp))
                     {
-                        filePath = gFileProp.GetString()!;
-                        scannedFiles.Add(filePath);
+                        var parsedFile = gFileProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(parsedFile))
+                        {
+                            filePath = parsedFile;
+                            scannedFiles.Add(filePath);
+                        }
                     }
                     if (gitProp.TryGetProperty("line", out var gLineProp) && gLineProp.TryGetInt32(out var gl))
                     {
@@ -222,17 +230,23 @@ public sealed class TruffleHogOutputParser
         // Raw and RawV2 are NEVER persisted.
         // Even the Redacted field from untrusted scanner output is strictly sanitized through EvidenceSanitizer.
         string redacted = $"[REDACTED {detectorName} SECRET]";
-        if (root.TryGetProperty("Redacted", out var redProp) && !string.IsNullOrWhiteSpace(redProp.GetString()))
+        if (root.TryGetProperty("Redacted", out var redProp))
         {
-            var rawRedacted = redProp.GetString()!;
-            var bounded = rawRedacted.Length > 256 ? rawRedacted.Substring(0, 256) : rawRedacted;
-            redacted = EvidenceSanitizer.SanitizeEvidence(bounded, 256);
+            var rawRedacted = redProp.GetString();
+            if (!string.IsNullOrWhiteSpace(rawRedacted))
+            {
+                var bounded = rawRedacted.Length > 256 ? rawRedacted.Substring(0, 256) : rawRedacted;
+                redacted = EvidenceSanitizer.SanitizeEvidence(bounded, 256);
+            }
         }
-        else if (root.TryGetProperty("redacted", out var redProp2) && !string.IsNullOrWhiteSpace(redProp2.GetString()))
+        else if (root.TryGetProperty("redacted", out var redProp2))
         {
-            var rawRedacted = redProp2.GetString()!;
-            var bounded = rawRedacted.Length > 256 ? rawRedacted.Substring(0, 256) : rawRedacted;
-            redacted = EvidenceSanitizer.SanitizeEvidence(bounded, 256);
+            var rawRedacted = redProp2.GetString();
+            if (!string.IsNullOrWhiteSpace(rawRedacted))
+            {
+                var bounded = rawRedacted.Length > 256 ? rawRedacted.Substring(0, 256) : rawRedacted;
+                redacted = EvidenceSanitizer.SanitizeEvidence(bounded, 256);
+            }
         }
 
         // Calibrated Platform Severity & FindingType

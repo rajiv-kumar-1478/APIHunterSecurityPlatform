@@ -59,7 +59,7 @@ public static class AiEvidenceProjector
 
         return new ProjectedAiEvidence(
             FindingId: findingId,
-            RuleOrTemplateId: candidate.RuleOrTemplateId,
+            RuleOrTemplateId: candidate.RuleOrTemplateId ?? candidate.TemplateId ?? "unknown",
             FindingTitle: candidate.Title,
             TargetEndpoint: RedactSensitiveMaterial(candidate.EndpointPath ?? candidate.TargetUrl),
             HttpMethod: candidate.HttpMethod,

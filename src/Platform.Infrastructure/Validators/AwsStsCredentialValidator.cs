@@ -97,7 +97,7 @@ public class AwsStsCredentialValidator : BaseCredentialValidator
         string[] parts = decryptedSecret.Split(':', ';', '|', ' ');
         if (parts.Length >= 2 && parts[0].StartsWith("AKIA", StringComparison.OrdinalIgnoreCase) || parts[0].StartsWith("ASIA", StringComparison.OrdinalIgnoreCase))
         {
-            string session = parts.Length >= 3 ? parts[2] : null!;
+            string? session = parts.Length >= 3 ? parts[2] : null;
             return (parts[0], parts[1], session);
         }
 

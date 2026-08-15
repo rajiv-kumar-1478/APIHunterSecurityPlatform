@@ -20,7 +20,7 @@ namespace Platform.Infrastructure.Scanning;
 public class ScanToolHealthService : IScanToolHealthService
 {
     private readonly ScanToolRegistryService? _registryService;
-    private readonly IPlatformDbContext _dbContext;
+    private readonly IPlatformDbContext? _dbContext;
     private readonly IToolRuntimeVerifier _runtimeVerifier;
     private readonly ScannerRuntimeOptions _options;
     private readonly IEnforcedEgressGateway? _egressGateway;
@@ -38,7 +38,7 @@ public class ScanToolHealthService : IScanToolHealthService
     {
         _registryService = registryService;
         _logger = logger ?? NullLogger<ScanToolHealthService>.Instance;
-        _dbContext = dbContext!;
+        _dbContext = dbContext;
         _runtimeVerifier = runtimeVerifier ?? new ToolRuntimeVerifier(NullLogger<ToolRuntimeVerifier>.Instance);
         _options = options ?? new ScannerRuntimeOptions();
         _egressGateway = egressGateway;

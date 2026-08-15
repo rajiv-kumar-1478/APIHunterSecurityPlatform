@@ -111,7 +111,8 @@ public class HttpxOutputParser : IToolOutputParser
                 .Where(t => t.ValueKind == JsonValueKind.String)
                 .Select(t => t.GetString())
                 .Where(s => !string.IsNullOrWhiteSpace(s))
-                .ToList()!;
+                .Select(s => s!)
+                .ToList();
         }
 
         var candidateTitle = !string.IsNullOrWhiteSpace(pageTitle)

@@ -180,7 +180,7 @@ public class SecurityIntelligenceGraphBuilder
                 // Extract Service Node if present
                 if (root.TryGetProperty("service", out var serviceProp) && serviceProp.ValueKind == JsonValueKind.String)
                 {
-                    string rawService = serviceProp.GetString()!;
+                    string rawService = serviceProp.GetString() ?? string.Empty;
                     string normService = NormalizeServiceName(rawService);
 
                     var serviceNode = await GetOrCreateNodeAsync(
@@ -204,7 +204,7 @@ public class SecurityIntelligenceGraphBuilder
                 // Extract Domain Node if present
                 if (root.TryGetProperty("domain", out var domainProp) && domainProp.ValueKind == JsonValueKind.String)
                 {
-                    string normDomain = NormalizeDomain(domainProp.GetString()!);
+                    string normDomain = NormalizeDomain(domainProp.GetString() ?? string.Empty);
                     if (!string.IsNullOrEmpty(normDomain))
                     {
                         var domainNode = await GetOrCreateNodeAsync(
@@ -229,7 +229,7 @@ public class SecurityIntelligenceGraphBuilder
                 // Extract Database Node if present
                 if (root.TryGetProperty("databaseHost", out var dbProp) && dbProp.ValueKind == JsonValueKind.String)
                 {
-                    string normDb = NormalizeHost(dbProp.GetString()!);
+                    string normDb = NormalizeHost(dbProp.GetString() ?? string.Empty);
                     if (!string.IsNullOrEmpty(normDb))
                     {
                         var dbNode = await GetOrCreateNodeAsync(
@@ -254,7 +254,7 @@ public class SecurityIntelligenceGraphBuilder
                 // Extract Environment Node if present
                 if (root.TryGetProperty("environment", out var envProp) && envProp.ValueKind == JsonValueKind.String)
                 {
-                    string normEnv = NormalizeEnvironment(envProp.GetString()!);
+                    string normEnv = NormalizeEnvironment(envProp.GetString() ?? string.Empty);
                     var envNode = await GetOrCreateNodeAsync(
                         IntelligenceNodeType.Environment,
                         $"env:{repo.Id}:{normEnv}",

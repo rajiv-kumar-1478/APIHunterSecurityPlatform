@@ -47,8 +47,18 @@ public class SecurityScanControllerTests : IDisposable
         _secretStore = new InMemoryScanProviderSecretStore();
         var postProcessor = new ScanPostExecutionProcessor(_dbContext, _scanJobService, NullLogger<ScanPostExecutionProcessor>.Instance);
         var reportBuilder = new ScanReportBuilderService(_dbContext, _scanJobService, postProcessor, NullLogger<ScanReportBuilderService>.Instance);
+        var mockAuditService = new Mock<Platform.Application.Scanning.Audit.IScanPlanAuditService>();
+        var mockExecutionEngine = new Mock<Platform.Application.Scanning.Execution.IScanExecutionEngine>();
 
-        _controller = new SecurityScanController(_scanJobService, _toolRegistryService, _toolHealthService, _secretStore, postProcessor, reportBuilder);
+        _controller = new SecurityScanController(
+            _scanJobService,
+            _toolRegistryService,
+            _toolHealthService,
+            _secretStore,
+            postProcessor,
+            reportBuilder,
+            mockAuditService.Object,
+            mockExecutionEngine.Object);
     }
 
     public void Dispose()

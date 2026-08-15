@@ -157,15 +157,22 @@ public class ScanReportBuilderService
                 {
                     using var doc = JsonDocument.Parse(ev.SafeEvidenceJson);
                     var root = doc.RootElement;
-                    if (root.TryGetProperty("cveId", out var cveProp) && cveProp.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(cveProp.GetString()))
+                    if (root.TryGetProperty("cveId", out var cveProp) && cveProp.ValueKind == JsonValueKind.String)
                     {
-                        cveList.Add(cveProp.GetString()!);
+                        var cve = cveProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(cve))
+                        {
+                            cveList.Add(cve);
+                        }
                     }
-                    if (root.TryGetProperty("cweId", out var cweProp) && cweProp.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(cweProp.GetString()))
+                    if (root.TryGetProperty("cweId", out var cweProp) && cweProp.ValueKind == JsonValueKind.String)
                     {
-                        var cwe = cweProp.GetString()!;
-                        cweList.Add(cwe);
-                        cweDistribution[cwe] = cweDistribution.GetValueOrDefault(cwe) + 1;
+                        var cwe = cweProp.GetString();
+                        if (!string.IsNullOrWhiteSpace(cwe))
+                        {
+                            cweList.Add(cwe);
+                            cweDistribution[cwe] = cweDistribution.GetValueOrDefault(cwe) + 1;
+                        }
                     }
                     if (root.TryGetProperty("cvssScore", out var cvssProp) && cvssProp.TryGetDouble(out var cvss))
                     {

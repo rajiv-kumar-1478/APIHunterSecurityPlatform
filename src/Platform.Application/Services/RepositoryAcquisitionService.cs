@@ -88,11 +88,11 @@ public class RepositoryAcquisitionService(
             .ToListAsync(ct);
 
         int count = 0;
-        foreach (var refGroup in repoRefs.GroupBy(r => (r.RepoOwner!.ToLowerInvariant(), r.RepoName!.ToLowerInvariant())))
+        foreach (var refGroup in repoRefs.Where(r => !string.IsNullOrWhiteSpace(r.RepoOwner) && !string.IsNullOrWhiteSpace(r.RepoName)).GroupBy(r => (r.RepoOwner!.ToLowerInvariant(), r.RepoName!.ToLowerInvariant())))
         {
             var sample = refGroup.First();
-            var owner = sample.RepoOwner!;
-            var name = sample.RepoName!;
+            var owner = sample.RepoOwner ?? string.Empty;
+            var name = sample.RepoName ?? string.Empty;
 
             try
             {

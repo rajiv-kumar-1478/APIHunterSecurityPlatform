@@ -109,9 +109,13 @@ public class NucleiOutputParser : IToolOutputParser
 
         if (root.TryGetProperty("info", out var info) && info.ValueKind == JsonValueKind.Object)
         {
-            if (info.TryGetProperty("name", out var nameProp) && !string.IsNullOrWhiteSpace(nameProp.GetString()))
+            if (info.TryGetProperty("name", out var nameProp))
             {
-                title = nameProp.GetString()!;
+                var parsedName = nameProp.GetString();
+                if (!string.IsNullOrWhiteSpace(parsedName))
+                {
+                    title = parsedName;
+                }
             }
 
             if (info.TryGetProperty("description", out var descProp))
@@ -155,6 +159,7 @@ public class NucleiOutputParser : IToolOutputParser
                 .Where(e => e.ValueKind == JsonValueKind.String)
                 .Select(e => e.GetString())
                 .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Select(s => s!)
                 .ToList();
 
             if (results.Count > 0)
@@ -171,13 +176,15 @@ public class NucleiOutputParser : IToolOutputParser
         }
 
         var attributes = new Dictionary<string, string>();
-        if (root.TryGetProperty("type", out var typeProp) && !string.IsNullOrWhiteSpace(typeProp.GetString()))
+        if (root.TryGetProperty("type", out var typeProp))
         {
-            attributes["protocol_type"] = typeProp.GetString()!;
+            var typeStr = typeProp.GetString();
+            if (!string.IsNullOrWhiteSpace(typeStr)) attributes["protocol_type"] = typeStr;
         }
-        if (root.TryGetProperty("matcher-name", out var matcherProp) && !string.IsNullOrWhiteSpace(matcherProp.GetString()))
+        if (root.TryGetProperty("matcher-name", out var matcherProp))
         {
-            attributes["matcher_name"] = matcherProp.GetString()!;
+            var matcherStr = matcherProp.GetString();
+            if (!string.IsNullOrWhiteSpace(matcherStr)) attributes["matcher_name"] = matcherStr;
         }
 
         return new FindingCandidate(
