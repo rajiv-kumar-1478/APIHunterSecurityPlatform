@@ -58,6 +58,14 @@ try
         .WriteTo.File("logs/platform-.txt", rollingInterval: RollingInterval.Day));
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Production Security Configuration Validation (Fail-Closed Startup Guard)
+    // ─────────────────────────────────────────────────────────────────────────
+    if (builder.Environment.IsProduction())
+    {
+        ProductionSecurityConfigurationValidator.Validate(builder.Configuration);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Configuration Binding (strongly typed — no direct env var access below)
     // ─────────────────────────────────────────────────────────────────────────
     builder.Services.Configure<AuthenticationOptions>(builder.Configuration.GetSection(AuthenticationOptions.SectionName));
