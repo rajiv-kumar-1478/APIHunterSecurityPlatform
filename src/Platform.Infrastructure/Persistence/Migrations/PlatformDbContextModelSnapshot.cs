@@ -328,11 +328,11 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Property<int>("RetryCount")
                         .HasColumnType("integer");
 
-                    b.Property<byte[]>("RowVersion")
+                    b.Property<uint>("RowVersion")
                         .IsConcurrencyToken()
-                        .IsRequired()
                         .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("bytea");
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.Property<DateTime?>("StartedAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -613,6 +613,54 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.HasIndex("UserId", "ExpiresAtUtc");
 
                     b.ToTable("authentication_sessions", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.CampaignExecutionAuditLog", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("CampaignId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Decision")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid?>("DispatchedScanJobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("EvaluatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("MetadataJson")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<long>("ScheduleVersion")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TriggerSource")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CampaignId", "EvaluatedAtUtc");
+
+                    b.HasIndex("TenantId", "EvaluatedAtUtc");
+
+                    b.ToTable("campaign_execution_audit_logs", (string)null);
                 });
 
             modelBuilder.Entity("Platform.Domain.Entities.CandidateOccurrence", b =>
@@ -1332,11 +1380,11 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Property<long>("ProviderRepoId")
                         .HasColumnType("bigint");
 
-                    b.Property<byte[]>("RowVersion")
+                    b.Property<uint>("RowVersion")
                         .IsConcurrencyToken()
-                        .IsRequired()
                         .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("bytea");
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
 
                     b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -1494,6 +1542,320 @@ namespace Platform.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("repository_sources", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.ScanCampaign", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("AutoPauseOnConsecutiveFailures")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("ConcurrencyPolicy")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("ConsecutiveFailuresCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CronExpression")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Description")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<TimeSpan?>("IntervalDuration")
+                        .HasColumnType("interval");
+
+                    b.Property<string>("LastCampaignOccurrenceKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("LastRunUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("LastScanJobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("MaxConsecutiveFailures")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<DateTime?>("NextRunUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("RepositoryId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ScanProfile")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ScheduleType")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<long>("ScheduleVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("SecurityTargetId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("TimeZoneId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<int>("TotalRunsCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RepositoryId");
+
+                    b.HasIndex("SecurityTargetId");
+
+                    b.HasIndex("Status", "NextRunUtc");
+
+                    b.HasIndex("TenantId", "Status");
+
+                    b.ToTable("scan_campaigns", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.ScanFindingObservation", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("FindingId")
+                        .HasColumnType("uuid");
+
+                    b.Property<bool>("FullCoverageConfirmed")
+                        .HasColumnType("boolean");
+
+                    b.Property<DateTime>("ObservedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("ScanJobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ToolCoverageHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<bool>("WasObserved")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScanJobId");
+
+                    b.HasIndex("FindingId", "ObservedAtUtc");
+
+                    b.HasIndex("FindingId", "ScanJobId")
+                        .IsUnique();
+
+                    b.ToTable("scan_finding_observations", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.ScanPlanAuditRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CapabilitySnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExecutionSequenceJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("PlanHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTime>("PlannedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PlannerVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("PreviousAuditHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("Profile")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("RecordHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("RegistrySnapshotHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("RuleSetVersionsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ScanJobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("SelectionPolicySnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SelectionReasonsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TargetKind")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("TargetUrl")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ToolManifestSnapshotsJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PlanHash");
+
+                    b.HasIndex("ScanJobId")
+                        .IsUnique();
+
+                    b.HasIndex("TenantId", "PlannedAtUtc");
+
+                    b.ToTable("scan_plan_audits", (string)null);
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.ScanToolInvocationRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("CandidateCount")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ContainerImageDigest")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("CoverageJson")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<long>("DurationMs")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExecutionPhase")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<int>("ExitCode")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("PlanHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("RegistrySnapshotHash")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("RuleSetVersion")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<Guid>("ScanJobId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ToolKey")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("ToolVersion")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ScanJobId", "ToolKey");
+
+                    b.HasIndex("TenantId", "StartedAtUtc");
+
+                    b.ToTable("scan_tool_invocations", (string)null);
                 });
 
             modelBuilder.Entity("Platform.Domain.Entities.SecurityAlertLog", b =>
@@ -1909,6 +2271,16 @@ namespace Platform.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<Guid?>("CampaignId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("CampaignOccurrenceKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTime?>("CampaignOutcomeProcessedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTime?>("CancelledAtUtc")
                         .HasColumnType("timestamp with time zone");
 
@@ -1923,8 +2295,28 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("CurrentPhase")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CurrentTool")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ExecutionReceiptJson")
+                        .HasColumnType("text");
+
                     b.Property<string>("FailureReason")
                         .HasColumnType("text");
+
+                    b.Property<int>("JobVersion")
+                        .IsConcurrencyToken()
+                        .HasColumnType("integer")
+                        .HasColumnName("JobVersion");
+
+                    b.Property<DateTime?>("LastHeartbeatUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("ProgressPercentage")
+                        .HasColumnType("integer");
 
                     b.Property<string>("ProviderKey")
                         .IsRequired()
@@ -1934,7 +2326,10 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Property<Guid?>("RepositoryId")
                         .HasColumnType("uuid");
 
-                    b.Property<Guid>("RequestedByUserId")
+                    b.Property<Guid?>("RequestedByUserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("RetryOfJobId")
                         .HasColumnType("uuid");
 
                     b.Property<string>("ScanProfile")
@@ -1958,11 +2353,24 @@ namespace Platform.Infrastructure.Persistence.Migrations
                         .HasMaxLength(1024)
                         .HasColumnType("character varying(1024)");
 
-                    b.Property<int>("Version")
-                        .IsConcurrencyToken()
+                    b.Property<Guid>("TenantId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("TotalFindingsCount")
                         .HasColumnType("integer");
 
+                    b.Property<string>("TriggeredBy")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("WorkerInstanceId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
                     b.HasKey("Id");
+
+                    b.HasIndex("CampaignId");
 
                     b.HasIndex("CreatedAtUtc");
 
@@ -1976,6 +2384,17 @@ namespace Platform.Infrastructure.Persistence.Migrations
 
                     b.HasIndex("TargetUrl");
 
+                    b.HasIndex("TenantId");
+
+                    b.HasIndex("CampaignId", "CampaignOccurrenceKey")
+                        .IsUnique()
+                        .HasDatabaseName("IX_security_scan_jobs_campaign_occurrence_key")
+                        .HasFilter("\"CampaignOccurrenceKey\" IS NOT NULL");
+
+                    b.HasIndex("CampaignId", "CampaignOutcomeProcessedAtUtc");
+
+                    b.HasIndex("TenantId", "Status", "CreatedAtUtc");
+
                     b.ToTable("security_scan_jobs", (string)null);
                 });
 
@@ -1984,6 +2403,11 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
+
+                    b.Property<string>("ArtifactFormat")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
 
                     b.Property<string>("ArtifactRepository")
                         .IsRequired()
@@ -2004,13 +2428,31 @@ namespace Platform.Infrastructure.Persistence.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)");
 
+                    b.Property<string>("ArtifactUrl")
+                        .IsRequired()
+                        .HasMaxLength(1024)
+                        .HasColumnType("character varying(1024)");
+
                     b.Property<string>("CapabilitiesJson")
                         .IsRequired()
                         .HasColumnType("jsonb");
 
+                    b.Property<string>("CapabilityProbeCommand")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("CapabilityProbeExpectedKeyword")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<string>("ContainerImageDigest")
                         .HasMaxLength(128)
                         .HasColumnType("character varying(128)");
+
+                    b.Property<string>("ContainerImageRepository")
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("timestamp with time zone");
@@ -2425,6 +2867,17 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Platform.Domain.Entities.CampaignExecutionAuditLog", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.ScanCampaign", "Campaign")
+                        .WithMany("AuditLogs")
+                        .HasForeignKey("CampaignId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Campaign");
+                });
+
             modelBuilder.Entity("Platform.Domain.Entities.CandidateOccurrence", b =>
                 {
                     b.HasOne("Platform.Domain.Entities.CredentialCandidate", "Candidate")
@@ -2626,6 +3079,44 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.Navigation("Repository");
                 });
 
+            modelBuilder.Entity("Platform.Domain.Entities.ScanCampaign", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.Repository", "Repository")
+                        .WithMany()
+                        .HasForeignKey("RepositoryId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Platform.Domain.Entities.SecurityTarget", "SecurityTarget")
+                        .WithMany()
+                        .HasForeignKey("SecurityTargetId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Repository");
+
+                    b.Navigation("SecurityTarget");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.ScanFindingObservation", b =>
+                {
+                    b.HasOne("Platform.Domain.Entities.SecurityFinding", "Finding")
+                        .WithMany()
+                        .HasForeignKey("FindingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Platform.Domain.Entities.SecurityScanJob", "ScanJob")
+                        .WithMany()
+                        .HasForeignKey("ScanJobId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Finding");
+
+                    b.Navigation("ScanJob");
+                });
+
             modelBuilder.Entity("Platform.Domain.Entities.SecurityFinding", b =>
                 {
                     b.HasOne("Platform.Domain.Entities.Repository", "Repository")
@@ -2701,6 +3192,11 @@ namespace Platform.Infrastructure.Persistence.Migrations
 
             modelBuilder.Entity("Platform.Domain.Entities.SecurityScanJob", b =>
                 {
+                    b.HasOne("Platform.Domain.Entities.ScanCampaign", "Campaign")
+                        .WithMany("ScanJobs")
+                        .HasForeignKey("CampaignId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("Platform.Domain.Entities.Repository", "Repository")
                         .WithMany()
                         .HasForeignKey("RepositoryId")
@@ -2709,13 +3205,14 @@ namespace Platform.Infrastructure.Persistence.Migrations
                     b.HasOne("Platform.Domain.Entities.User", "RequestedByUser")
                         .WithMany()
                         .HasForeignKey("RequestedByUserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("Platform.Domain.Entities.SecurityTarget", "Target")
                         .WithMany()
                         .HasForeignKey("TargetId")
                         .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("Campaign");
 
                     b.Navigation("Repository");
 
@@ -2804,6 +3301,13 @@ namespace Platform.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Platform.Domain.Entities.RepositorySnapshot", b =>
                 {
                     b.Navigation("Files");
+                });
+
+            modelBuilder.Entity("Platform.Domain.Entities.ScanCampaign", b =>
+                {
+                    b.Navigation("AuditLogs");
+
+                    b.Navigation("ScanJobs");
                 });
 
             modelBuilder.Entity("Platform.Domain.Entities.SecurityFinding", b =>

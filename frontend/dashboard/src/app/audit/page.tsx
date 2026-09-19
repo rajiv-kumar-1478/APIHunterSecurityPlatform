@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { apiRequest } from "@/lib/api-client";
+
+interface AuditListResponse {
+  items?: AuditEventDto[];
+}
 
 interface AuditEventDto {
   id: string;
@@ -24,24 +28,26 @@ export default function AuditPage() {
 
   useEffect(() => {
     async function init() {
-      const meRes = await fetch(`${API_URL}/api/v1/auth/me`, { credentials: "include" });
-      if (!meRes.ok) { router.replace("/login"); return; }
-      const me = await meRes.json();
-      if (!me.isPlatformAdmin) { router.replace("/dashboard"); return; }
-      setUser(me);
-      await loadAuditLogs();
+      try {
+        const me = await apiRequest<{ isPlatformAdmin: boolean }>("/api/v1/auth/me");
+        if (!me.isPlatformAdmin) {
+          router.replace("/dashboard");
+          return;
+        }
+        setUser(me);
+        await loadAuditLogs();
+      } catch {
+        router.replace("/login");
+      }
     }
-    init();
+    void init();
   }, [router]);
 
   async function loadAuditLogs() {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/v1/audit?page=1&pageSize=50`, { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        setEvents(data.items ?? []);
-      }
+      const data = await apiRequest<AuditListResponse>("/api/v1/audit?page=1&pageSize=50");
+      setEvents(data.items ?? []);
     } finally {
       setLoading(false);
     }

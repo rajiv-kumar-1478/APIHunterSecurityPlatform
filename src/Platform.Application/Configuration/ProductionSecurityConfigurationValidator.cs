@@ -20,119 +20,76 @@ public sealed class ProductionSecurityConfigurationException : Exception
 }
 
 /// <summary>
-/// Authoritative validator that ensures all critical production security settings,
-/// network isolation policies, data protection key stores, and scanner sandboxes
-/// are strictly configured before the host process can start in Production mode.
+/// Validates production database, cryptographic key, scanner isolation, and
+/// web-host HTTPS invariants before a process starts.
 /// </summary>
 public sealed class ProductionSecurityConfigurationValidator
 {
-    public static void Validate(IConfiguration configuration)
+    public static void Validate(IConfiguration configuration, bool requireHttps = true)
     {
         var validator = new ProductionSecurityConfigurationValidator();
-        validator.ValidateConfiguration(configuration);
+        validator.ValidateConfiguration(configuration, requireHttps);
     }
 
-    public void ValidateConfiguration(IConfiguration configuration)
+    public void ValidateConfiguration(IConfiguration configuration, bool requireHttps = true)
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
         var violations = new List<string>();
 
-        // 1. HTTPS Requirement
-        var requireHttpsStr = configuration["Authentication:RequireHttps"];
-        if (string.IsNullOrWhiteSpace(requireHttpsStr) || !bool.TryParse(requireHttpsStr, out var requireHttps) || !requireHttps)
+        if (requireHttps)
         {
-            violations.Add("Authentication:RequireHttps must be explicitly set to 'true' in Production.");
+            var requireHttpsValue = configuration["Authentication:RequireHttps"];
+            if (string.IsNullOrWhiteSpace(requireHttpsValue) ||
+                !bool.TryParse(requireHttpsValue, out var httpsRequired) ||
+                !httpsRequired)
+            {
+                violations.Add("Authentication:RequireHttps must be explicitly set to 'true' for a Production web host.");
+            }
         }
 
-        // 2. Database Connection String
-        var dbConn = configuration["Database:ConnectionString"] ?? configuration.GetConnectionString("Default");
-        if (string.IsNullOrWhiteSpace(dbConn))
+        if (!Guid.TryParse(configuration["Tenant:Id"], out var tenantId) || tenantId == Guid.Empty)
+        {
+            violations.Add("Tenant:Id is required in Production and must be a non-empty GUID.");
+        }
+
+        var databaseConnection = configuration["Database:ConnectionString"]
+            ?? configuration.GetConnectionString("Default");
+        if (string.IsNullOrWhiteSpace(databaseConnection))
         {
             violations.Add("Database:ConnectionString is required in Production and cannot be empty.");
         }
-        else if (dbConn.Trim().Equals("InMemory", StringComparison.OrdinalIgnoreCase) ||
-                 dbConn.Contains("PlatformTestDb", StringComparison.OrdinalIgnoreCase))
+        else if (databaseConnection.Trim().Equals("InMemory", StringComparison.OrdinalIgnoreCase) ||
+                 databaseConnection.Contains("PlatformTestDb", StringComparison.OrdinalIgnoreCase))
         {
             violations.Add("Database:ConnectionString cannot use InMemory or Test providers in Production.");
         }
 
-        // 3. Data Protection Key Persistence
-        var dpKeyPath = configuration["DataProtection:KeyPath"];
-        if (string.IsNullOrWhiteSpace(dpKeyPath))
+        if (string.IsNullOrWhiteSpace(configuration["DataProtection:KeyPath"]))
         {
             violations.Add("DataProtection:KeyPath is required in Production to ensure persistent cryptographic keys across process restarts.");
         }
 
-        // 4. Scanner Runtime & Sandbox Mode
-        var runtimeModeStr = configuration["ScannerRuntime:RuntimeMode"] ?? "LocalDocker";
-        if (!Enum.TryParse<ScannerRuntimeMode>(runtimeModeStr, ignoreCase: true, out var runtimeMode))
+        if (string.IsNullOrWhiteSpace(configuration["DataProtection:ApplicationName"]))
         {
-            violations.Add($"ScannerRuntime:RuntimeMode '{runtimeModeStr}' is invalid.");
-        }
-        else if (runtimeMode == ScannerRuntimeMode.UnsafeLocalProcessFallback)
-        {
-            violations.Add("ScannerRuntime:RuntimeMode cannot be 'UnsafeLocalProcessFallback' in Production.");
-        }
-        else if (runtimeMode == ScannerRuntimeMode.CloudManagedContainer)
-        {
-            var hostedEndpoint = configuration["ScannerRuntime:HostedScannerServiceEndpoint"];
-            var hostedKey = configuration["ScannerRuntime:HostedScannerServiceKey"];
-
-            if (string.IsNullOrWhiteSpace(hostedEndpoint) || !Uri.TryCreate(hostedEndpoint, UriKind.Absolute, out _))
-            {
-                violations.Add("ScannerRuntime:HostedScannerServiceEndpoint is required and must be a valid absolute URI when CloudManagedContainer is selected.");
-            }
-
-            if (string.IsNullOrWhiteSpace(hostedKey))
-            {
-                violations.Add("ScannerRuntime:HostedScannerServiceKey is required when CloudManagedContainer is selected.");
-            }
-        }
-        else // LocalDocker
-        {
-            var requireDockerSandboxStr = configuration["ScannerRuntime:RequireDockerSandbox"];
-            if (string.IsNullOrWhiteSpace(requireDockerSandboxStr) || !bool.TryParse(requireDockerSandboxStr, out var requireDocker) || !requireDocker)
-            {
-                violations.Add("ScannerRuntime:RequireDockerSandbox must be set to 'true' in Production.");
-            }
+            violations.Add("DataProtection:ApplicationName is required in Production so API and worker hosts share the same key-ring discriminator.");
         }
 
-        // 5. Image Provenance & Trusted Registries
-        var enforceProvenanceStr = configuration["ScannerRuntime:EnforceImageProvenance"] ?? "true";
-        if (bool.TryParse(enforceProvenanceStr, out var enforceProvenance) && !enforceProvenance)
+        var runtimeModeValue = configuration["ScannerRuntime:RuntimeMode"] ?? "Disabled";
+        if (!Enum.TryParse<ScannerRuntimeMode>(runtimeModeValue, ignoreCase: true, out var runtimeMode))
         {
-            violations.Add("ScannerRuntime:EnforceImageProvenance cannot be disabled in Production.");
+            violations.Add($"ScannerRuntime:RuntimeMode '{runtimeModeValue}' is invalid.");
+        }
+        else if (runtimeMode == ScannerRuntimeMode.Disabled)
+        {
+            ValidateDisabledScannerConfiguration(configuration, violations);
+        }
+        else
+        {
+            ValidateEnabledScannerConfiguration(configuration, runtimeMode, violations);
         }
 
-        var trustedRegistries = configuration.GetSection("ScannerRuntime:TrustedImageRegistries").Get<string[]>() ?? [];
-        if (trustedRegistries.Length == 0)
-        {
-            violations.Add("ScannerRuntime:TrustedImageRegistries must contain at least one trusted container registry in Production.");
-        }
-
-        // 6. Egress Gateway & Network Isolation
-        var egressModeStr = configuration["ScannerRuntime:EgressGatewayMode"] ?? "EnforcedGateway";
-        if (!Enum.TryParse<EgressGatewayMode>(egressModeStr, ignoreCase: true, out var egressMode) || egressMode != EgressGatewayMode.EnforcedGateway)
-        {
-            violations.Add("ScannerRuntime:EgressGatewayMode must be 'EnforcedGateway' in Production.");
-        }
-
-        var egressEndpoint = configuration["ScannerRuntime:EgressGatewayEndpoint"];
-        if (string.IsNullOrWhiteSpace(egressEndpoint) || !Uri.TryCreate(egressEndpoint, UriKind.Absolute, out _))
-        {
-            violations.Add("ScannerRuntime:EgressGatewayEndpoint is required and must be a valid absolute URI.");
-        }
-
-        var egressNet = configuration["ScannerRuntime:EgressNetworkName"];
-        if (string.IsNullOrWhiteSpace(egressNet))
-        {
-            violations.Add("ScannerRuntime:EgressNetworkName is required in Production.");
-        }
-
-        // 7. Unsafe fallback check
-        var allowUnsafeStr = configuration["ScannerRuntime:AllowUnsafeProcessFallback"];
-        if (bool.TryParse(allowUnsafeStr, out var allowUnsafe) && allowUnsafe)
+        if (bool.TryParse(configuration["ScannerRuntime:AllowUnsafeProcessFallback"], out var unsafeFallback) && unsafeFallback)
         {
             violations.Add("ScannerRuntime:AllowUnsafeProcessFallback must be 'false' in Production.");
         }
@@ -142,4 +99,101 @@ public sealed class ProductionSecurityConfigurationValidator
             throw new ProductionSecurityConfigurationException(violations);
         }
     }
+
+    private static void ValidateDisabledScannerConfiguration(
+        IConfiguration configuration,
+        ICollection<string> violations)
+    {
+        var egressModeValue = configuration["ScannerRuntime:EgressGatewayMode"] ?? "None";
+        if (!Enum.TryParse<EgressGatewayMode>(egressModeValue, ignoreCase: true, out var egressMode) ||
+            egressMode != EgressGatewayMode.None)
+        {
+            violations.Add("ScannerRuntime:EgressGatewayMode must be 'None' when ScannerRuntime:RuntimeMode is 'Disabled'.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(configuration["ScannerRuntime:EgressGatewayEndpoint"]))
+        {
+            violations.Add("ScannerRuntime:EgressGatewayEndpoint must be empty when the scanner runtime is disabled.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(configuration["ScannerRuntime:EgressNetworkName"]))
+        {
+            violations.Add("ScannerRuntime:EgressNetworkName must be empty when the scanner runtime is disabled.");
+        }
+
+        if (IsExplicitlyEnabled(configuration["ScanJobConsumer:Enabled"]))
+        {
+            violations.Add("ScanJobConsumer:Enabled must be 'false' when the scanner runtime is disabled.");
+        }
+
+        if (IsExplicitlyEnabled(configuration["CampaignScheduler:GlobalEnabled"]))
+        {
+            violations.Add("CampaignScheduler:GlobalEnabled must be 'false' when the scanner runtime is disabled.");
+        }
+    }
+
+    private static void ValidateEnabledScannerConfiguration(
+        IConfiguration configuration,
+        ScannerRuntimeMode runtimeMode,
+        ICollection<string> violations)
+    {
+        if (runtimeMode == ScannerRuntimeMode.UnsafeLocalProcessFallback)
+        {
+            violations.Add("ScannerRuntime:RuntimeMode cannot be 'UnsafeLocalProcessFallback' in Production.");
+        }
+        else if (runtimeMode == ScannerRuntimeMode.CloudManagedContainer)
+        {
+            var hostedEndpoint = configuration["ScannerRuntime:HostedScannerServiceEndpoint"];
+            if (string.IsNullOrWhiteSpace(hostedEndpoint) ||
+                !Uri.TryCreate(hostedEndpoint, UriKind.Absolute, out _))
+            {
+                violations.Add("ScannerRuntime:HostedScannerServiceEndpoint is required and must be a valid absolute URI when CloudManagedContainer is selected.");
+            }
+
+            if (string.IsNullOrWhiteSpace(configuration["ScannerRuntime:HostedScannerServiceKey"]))
+            {
+                violations.Add("ScannerRuntime:HostedScannerServiceKey is required when CloudManagedContainer is selected.");
+            }
+        }
+        else if (!IsExplicitlyEnabled(configuration["ScannerRuntime:RequireDockerSandbox"]))
+        {
+            violations.Add("ScannerRuntime:RequireDockerSandbox must be set to 'true' in Production.");
+        }
+
+        var provenanceValue = configuration["ScannerRuntime:EnforceImageProvenance"] ?? "true";
+        if (!bool.TryParse(provenanceValue, out var provenanceEnabled) || !provenanceEnabled)
+        {
+            violations.Add("ScannerRuntime:EnforceImageProvenance must be 'true' in Production.");
+        }
+
+        var trustedRegistries = configuration
+            .GetSection("ScannerRuntime:TrustedImageRegistries")
+            .Get<string[]>() ?? [];
+        if (trustedRegistries.Length == 0)
+        {
+            violations.Add("ScannerRuntime:TrustedImageRegistries must contain at least one trusted container registry in Production.");
+        }
+
+        var egressModeValue = configuration["ScannerRuntime:EgressGatewayMode"] ?? "EnforcedGateway";
+        if (!Enum.TryParse<EgressGatewayMode>(egressModeValue, ignoreCase: true, out var egressMode) ||
+            egressMode != EgressGatewayMode.EnforcedGateway)
+        {
+            violations.Add("ScannerRuntime:EgressGatewayMode must be 'EnforcedGateway' in Production.");
+        }
+
+        var egressEndpoint = configuration["ScannerRuntime:EgressGatewayEndpoint"];
+        if (string.IsNullOrWhiteSpace(egressEndpoint) ||
+            !Uri.TryCreate(egressEndpoint, UriKind.Absolute, out _))
+        {
+            violations.Add("ScannerRuntime:EgressGatewayEndpoint is required and must be a valid absolute URI.");
+        }
+
+        if (string.IsNullOrWhiteSpace(configuration["ScannerRuntime:EgressNetworkName"]))
+        {
+            violations.Add("ScannerRuntime:EgressNetworkName is required in Production.");
+        }
+    }
+
+    private static bool IsExplicitlyEnabled(string? value) =>
+        bool.TryParse(value, out var enabled) && enabled;
 }

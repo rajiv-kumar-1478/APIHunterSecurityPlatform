@@ -40,7 +40,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
         _dbContext = new PlatformDbContext(options);
         _userContext = new TestUserContext();
         _toolRegistry = new ScanToolRegistryService(_dbContext, NullLogger<ScanToolRegistryService>.Instance);
-        _scanJobService = new ScanJobService(_dbContext, _userContext, _toolRegistry, NullLogger<ScanJobService>.Instance);
+        _scanJobService = new ScanJobService(_dbContext, _userContext, new TestTenantContext(), _toolRegistry, NullLogger<ScanJobService>.Instance);
 
         var mockAuditService = new Mock<IAuditService>();
         var recEngine = new RemediationRecommendationEngine();
@@ -111,6 +111,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = receipt.JobId,
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -181,6 +182,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
     {
         var baselineJob = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -193,6 +195,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
 
         var currentJob = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -274,6 +277,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
         var receipt = CreateSuccessfulReceipt(Guid.NewGuid());
         var scanJob = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = receipt.JobId,
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -322,6 +326,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
         var scan1Id = Guid.NewGuid();
         var scan1 = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = scan1Id,
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -347,6 +352,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
         var receipt2 = CreateSuccessfulReceipt(Guid.NewGuid());
         var scan2 = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = receipt2.JobId,
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -393,6 +399,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
         var scan1Id = Guid.NewGuid();
         var scan1 = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = scan1Id,
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -431,6 +438,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
 
         var scan2 = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = receipt2.JobId,
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -475,6 +483,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
         var scan1Id = Guid.NewGuid();
         var scan1 = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = scan1Id,
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -499,6 +508,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
         var receipt2 = CreateSuccessfulReceipt(Guid.NewGuid());
         var scan2 = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = receipt2.JobId,
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -543,6 +553,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
         var receipt = CreateSuccessfulReceipt(Guid.NewGuid());
         var scanJob = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = receipt.JobId,
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -586,6 +597,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
         var receipt = CreateSuccessfulReceipt(Guid.NewGuid());
         var scanJob = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = receipt.JobId,
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -645,6 +657,7 @@ public class ScanPostExecutionAndLifecycleTests : IDisposable
         var receipt = CreateSuccessfulReceipt(Guid.NewGuid());
         var scanJob = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = receipt.JobId,
             RepositoryId = _repoId,
             TargetId = _targetId,

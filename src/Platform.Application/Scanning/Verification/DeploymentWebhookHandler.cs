@@ -27,13 +27,19 @@ public sealed class DeploymentWebhookHandler : IDeploymentWebhookHandler
     private static readonly TimeSpan MaxTimestampTolerance = TimeSpan.FromMinutes(5);
 
     private readonly IApplicationTargetResolver _targetResolver;
+    private readonly IDeploymentScanJobEnqueuer _scanJobEnqueuer;
     private readonly ILogger<DeploymentWebhookHandler> _logger;
 
     public DeploymentWebhookHandler(
         IApplicationTargetResolver targetResolver,
+        IDeploymentScanJobEnqueuer scanJobEnqueuer,
         ILogger<DeploymentWebhookHandler> logger)
     {
         _targetResolver = targetResolver ?? throw new ArgumentNullException(nameof(targetResolver));
+
+        // Required: reporting an enqueued deployment scan without a durable job would tell a
+        // CI/CD caller that verification is running when nothing was persisted.
+        _scanJobEnqueuer = scanJobEnqueuer ?? throw new ArgumentNullException(nameof(scanJobEnqueuer));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -127,11 +133,53 @@ public sealed class DeploymentWebhookHandler : IDeploymentWebhookHandler
             return new DeploymentWebhookResponse(false, null, "Cryptographic signature validation failed.", "INVALID_SIGNATURE");
         }
 
-        // 7. Mark Webhook Processed (Idempotency Record)
+        // 7. Create the durable SecurityScanJob.
+        //
+        // This must happen BEFORE the idempotency record is written. Marking the webhook
+        // processed first would turn any enqueue failure into a permanent "duplicate"
+        // rejection on retry, silently dropping verification for that deployment.
+        Guid scanJobId;
+        try
+        {
+            scanJobId = await _scanJobEnqueuer.EnqueueDeploymentScanAsync(resolution, requestPayload, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // Fail closed and leave the webhook unprocessed so the caller may retry.
+            _logger.LogError(
+                ex,
+                "Failed to enqueue deployment scan job for application '{AppId}' (webhook '{WebhookId}'). The webhook remains unprocessed so the sender may retry.",
+                requestPayload.ApplicationId,
+                webhookId);
+
+            return new DeploymentWebhookResponse(
+                false,
+                null,
+                "Deployment scan job could not be enqueued. The webhook was not recorded as processed; retry is permitted.",
+                "SCAN_JOB_ENQUEUE_FAILED");
+        }
+
+        if (scanJobId == Guid.Empty)
+        {
+            _logger.LogError(
+                "Deployment scan enqueuer returned an empty job identifier for application '{AppId}' (webhook '{WebhookId}').",
+                requestPayload.ApplicationId,
+                webhookId);
+
+            return new DeploymentWebhookResponse(
+                false,
+                null,
+                "Deployment scan job could not be enqueued. The webhook was not recorded as processed; retry is permitted.",
+                "SCAN_JOB_ENQUEUE_FAILED");
+        }
+
+        // 8. Mark Webhook Processed (Idempotency Record) only after durable job creation.
         await _targetResolver.MarkWebhookProcessedAsync(webhookId, requestPayload.ApplicationId, ct);
 
-        // 8. Create Asynchronous SecurityScanJob
-        var scanJobId = Guid.NewGuid();
         _logger.LogInformation("Enqueued deployment scan job '{ScanJobId}' for application '{AppId}' at target '{TargetUrl}' (Commit: {CommitSha}).",
             scanJobId, resolution.ApplicationId, resolution.AuthorizedTargetUrl, requestPayload.CommitSha);
 

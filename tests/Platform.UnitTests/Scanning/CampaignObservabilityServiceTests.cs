@@ -267,6 +267,7 @@ public sealed class CampaignObservabilityServiceTests : IDisposable
         var scanJobId = Guid.NewGuid();
         _db.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = _tenantA,
             Id = scanJobId,
             CampaignId = campaignId,
             RepositoryId = _repoId,
@@ -423,6 +424,7 @@ public sealed class CampaignObservabilityServiceTests : IDisposable
 
         _db.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = _tenantA,
             Id = jobSuccess,
             CampaignId = campaignId,
             RepositoryId = _repoId,
@@ -436,6 +438,7 @@ public sealed class CampaignObservabilityServiceTests : IDisposable
 
         _db.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = _tenantA,
             Id = jobFail,
             CampaignId = campaignId,
             RepositoryId = _repoId,

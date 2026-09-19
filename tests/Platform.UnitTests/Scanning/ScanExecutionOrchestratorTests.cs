@@ -119,6 +119,7 @@ public class ScanExecutionOrchestratorTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -169,6 +170,7 @@ public class ScanExecutionOrchestratorTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -217,6 +219,7 @@ public class ScanExecutionOrchestratorTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -254,6 +257,7 @@ public class ScanExecutionOrchestratorTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -306,6 +310,7 @@ public class ScanExecutionOrchestratorTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,

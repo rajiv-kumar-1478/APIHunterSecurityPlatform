@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getErrorMessage } from "@/lib/api-client";
 import {
   RemediationActionDetailDto,
   RemediationActionHistoryDto,
@@ -18,46 +19,71 @@ interface RemediationDetailDrawerProps {
   onRefreshList: () => void;
 }
 
+async function requestRemediationDetail(id: string): Promise<{
+  detail: RemediationActionDetailDto;
+  history: RemediationActionHistoryDto[];
+}> {
+  const [detail, history] = await Promise.all([
+    fetchRemediationActionById(id),
+    fetchRemediationHistory(id),
+  ]);
+  return { detail, history };
+}
+
 export default function RemediationDetailDrawer({ actionId, onClose, onRefreshList }: RemediationDetailDrawerProps) {
   const [detail, setDetail] = useState<RemediationActionDetailDto | null>(null);
   const [history, setHistory] = useState<RemediationActionHistoryDto[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [concurrencyNotice, setConcurrencyNotice] = useState<string | null>(null);
+  const [concurrencyNotice, setConcurrencyNotice] = useState<{
+    actionId: string;
+    message: string;
+  } | null>(null);
+  const isLoading = detail?.id !== actionId;
 
   const loadData = async (id: string) => {
-    setIsLoading(true);
-    setConcurrencyNotice(null);
     try {
-      const actionDetail = await fetchRemediationActionById(id);
-      const actionHistory = await fetchRemediationHistory(id);
-      setDetail(actionDetail);
-      setHistory(actionHistory);
-    } catch (err: any) {
-      console.error("Failed to load remediation detail:", err);
-    } finally {
-      setIsLoading(false);
+      const data = await requestRemediationDetail(id);
+      setDetail(data.detail);
+      setHistory(data.history);
+    } catch (error: unknown) {
+      console.error("Failed to load remediation detail:", getErrorMessage(error, "Unknown error"));
     }
   };
 
   useEffect(() => {
-    if (actionId) {
-      loadData(actionId);
-    } else {
-      setDetail(null);
-      setHistory([]);
-    }
+    if (!actionId) return;
+
+    let cancelled = false;
+    void requestRemediationDetail(actionId)
+      .then((data) => {
+        if (cancelled) return;
+        setDetail(data.detail);
+        setHistory(data.history);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          console.error("Failed to load remediation detail:", getErrorMessage(error, "Unknown error"));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [actionId]);
 
   if (!actionId) return null;
 
   const handleConcurrencyConflict = () => {
-    setConcurrencyNotice("Stale action version detected. The action was modified concurrently. Data refreshed below.");
-    if (actionId) loadData(actionId);
+    setConcurrencyNotice({
+      actionId,
+      message: "Stale action version detected. The action was modified concurrently. Data refreshed below.",
+    });
+    void loadData(actionId);
     onRefreshList();
   };
 
   const handleActionSuccess = () => {
-    if (actionId) loadData(actionId);
+    setConcurrencyNotice(null);
+    void loadData(actionId);
     onRefreshList();
   };
 
@@ -91,12 +117,12 @@ export default function RemediationDetailDrawer({ actionId, onClose, onRefreshLi
 
         {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
-          {concurrencyNotice && (
+          {concurrencyNotice?.actionId === actionId && (
             <div className="p-3 bg-amber-950/50 border border-amber-700/60 rounded-xl text-xs text-amber-300 flex items-center gap-2">
               <svg className="w-4 h-4 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
               </svg>
-              {concurrencyNotice}
+              {concurrencyNotice.message}
             </div>
           )}
 

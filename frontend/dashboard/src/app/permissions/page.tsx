@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { apiRequest } from "@/lib/api-client";
 
 interface PermissionDto {
   id: string;
@@ -32,22 +32,27 @@ export default function PermissionsPage() {
 
   useEffect(() => {
     async function init() {
-      const meRes = await fetch(`${API_URL}/api/v1/auth/me`, { credentials: "include" });
-      if (!meRes.ok) { router.replace("/login"); return; }
-      const me = await meRes.json();
-      if (!me.isPlatformAdmin) { router.replace("/dashboard"); return; }
-      setUser(me);
+      try {
+        const me = await apiRequest<{ isPlatformAdmin: boolean }>("/api/v1/auth/me");
+        if (!me.isPlatformAdmin) {
+          router.replace("/dashboard");
+          return;
+        }
+        setUser(me);
 
-      const [pRes, fpRes] = await Promise.all([
-        fetch(`${API_URL}/api/v1/admin/permissions`, { credentials: "include" }),
-        fetch(`${API_URL}/api/v1/admin/field-permissions`, { credentials: "include" }),
-      ]);
+        const [permissionData, fieldPermissionData] = await Promise.all([
+          apiRequest<PermissionDto[]>("/api/v1/admin/permissions"),
+          apiRequest<FieldPermissionDto[]>("/api/v1/admin/field-permissions"),
+        ]);
 
-      if (pRes.ok) setPermissions(await pRes.json());
-      if (fpRes.ok) setFieldPermissions(await fpRes.json());
-      setLoading(false);
+        setPermissions(permissionData);
+        setFieldPermissions(fieldPermissionData);
+        setLoading(false);
+      } catch {
+        router.replace("/login");
+      }
     }
-    init();
+    void init();
   }, [router]);
 
   if (!user) return (

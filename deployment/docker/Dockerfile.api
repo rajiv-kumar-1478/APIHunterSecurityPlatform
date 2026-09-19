@@ -1,6 +1,9 @@
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS base
 WORKDIR /app
 EXPOSE 8080
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
@@ -10,14 +13,13 @@ COPY ["src/Platform.Domain/Platform.Domain.csproj", "src/Platform.Domain/"]
 COPY ["src/Platform.Infrastructure/Platform.Infrastructure.csproj", "src/Platform.Infrastructure/"]
 RUN dotnet restore "src/Platform.Api/Platform.Api.csproj"
 COPY . .
-WORKDIR "/src/src/Platform.Api"
-RUN dotnet build "Platform.Api.csproj" -c Release -o /app/build
-
-FROM build AS publish
+WORKDIR /src/src/Platform.Api
 RUN dotnet publish "Platform.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 FROM base AS final
 WORKDIR /app
-COPY --from=publish /app/publish .
-RUN mkdir -p /app/dp-keys /app/logs
+COPY --from=build /app/publish .
+RUN mkdir -p /app/dp-keys /app/logs \
+    && chown -R "$APP_UID:$APP_UID" /app
+USER $APP_UID
 ENTRYPOINT ["dotnet", "Platform.Api.dll"]

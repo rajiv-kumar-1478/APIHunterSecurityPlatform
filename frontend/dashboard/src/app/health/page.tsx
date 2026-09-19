@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { apiRequest } from "@/lib/api-client";
 
 interface ComponentHealth {
   name: string;
@@ -65,13 +65,15 @@ export default function HealthPage() {
 
   useEffect(() => {
     async function init() {
-      const meRes = await fetch(`${API_URL}/api/v1/auth/me`, { credentials: "include" });
-      if (!meRes.ok) { router.replace("/login"); return; }
-      const me = await meRes.json();
-      setUser(me);
+      try {
+        const me = await apiRequest<{ isPlatformAdmin: boolean }>("/api/v1/auth/me");
+        setUser(me);
 
-      await fetchAllHealth(me.isPlatformAdmin);
-      setLoading(false);
+        await fetchAllHealth(me.isPlatformAdmin);
+        setLoading(false);
+      } catch {
+        router.replace("/login");
+      }
     }
     init();
   }, [router]);
@@ -79,19 +81,17 @@ export default function HealthPage() {
   async function fetchAllHealth(isAdmin: boolean) {
     try {
       if (isAdmin) {
-        const hRes = await fetch(`${API_URL}/api/v1/health/detailed`, { credentials: "include" });
-        if (hRes.ok) setReport(await hRes.json());
+        const healthReport = await apiRequest<HealthReport>("/api/v1/health/detailed");
+        setReport(healthReport);
       } else {
-        const hRes = await fetch(`${API_URL}/api/v1/health`);
-        if (hRes.ok) setReport({ ...(await hRes.json()), components: [] });
+        const healthReport = await apiRequest<Omit<HealthReport, "components">>("/api/v1/health");
+        setReport({ ...healthReport, components: [] });
       }
 
-      const sRes = await fetch(`${API_URL}/api/v1/security/scans/runtime/health`, { credentials: "include" });
-      if (sRes.ok) {
-        setScannerHealth(await sRes.json());
-      }
-    } catch (e) {
-      console.error("Failed to fetch health reports", e);
+      const scannerReport = await apiRequest<ScannerRuntimeHealth>("/api/v1/security/scans/runtime/health");
+      setScannerHealth(scannerReport);
+    } catch (error: unknown) {
+      console.error("Failed to fetch health reports", error);
     }
   }
 

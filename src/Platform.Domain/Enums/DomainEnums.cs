@@ -220,6 +220,7 @@ public enum ScannerRuntimeMode
     LocalDocker,
     CloudManagedContainer,
     UnsafeLocalProcessFallback,
+    Disabled,
     Docker = LocalDocker,
     Hosted = CloudManagedContainer
 }

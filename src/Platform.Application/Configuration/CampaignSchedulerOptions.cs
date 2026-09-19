@@ -2,7 +2,7 @@ namespace Platform.Application.Configuration;
 
 /// <summary>
 /// Configuration options for the CampaignSchedulerWorker background service.
-/// Bind from "CampaignScheduler" section in appsettings.json.
+/// Bind from "CampaignScheduler" and validate positive timing/batch values at host startup.
 /// </summary>
 public class CampaignSchedulerOptions
 {
@@ -25,6 +25,7 @@ public class CampaignSchedulerOptions
 
     /// <summary>
     /// How long a Running job may have no heartbeat before recovery considers it stuck (minutes).
+    /// Startup validation requires room for at least three configured heartbeat intervals.
     /// Default: 60 minutes.
     /// </summary>
     public int StuckJobThresholdMinutes { get; set; } = 60;

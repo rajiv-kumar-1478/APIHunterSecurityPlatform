@@ -14,11 +14,17 @@ export function CampaignDiagnosticsModal({ campaignId, onClose }: CampaignDiagno
 
   useEffect(() => {
     if (!campaignId) return;
-    setLoading(true);
-    getCampaignDiagnostics(campaignId).then((data) => {
+
+    let cancelled = false;
+    void getCampaignDiagnostics(campaignId).then((data) => {
+      if (cancelled) return;
       setDiag(data);
       setLoading(false);
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [campaignId]);
 
   if (!campaignId) return null;

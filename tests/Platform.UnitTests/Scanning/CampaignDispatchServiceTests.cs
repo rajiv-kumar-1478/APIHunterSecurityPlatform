@@ -63,6 +63,8 @@ public sealed class CampaignDispatchServiceTests : IDisposable
             _db,
             _calculator,
             Options.Create(_options),
+            new TestTenantContext(_tenantId),
+            new PostgreSqlDatabaseErrorClassifier(),
             NullLogger<CampaignDispatchService>.Instance);
 
         // Seed base entities
@@ -142,6 +144,34 @@ public sealed class CampaignDispatchServiceTests : IDisposable
     }
 
     [Fact]
+    public void OccurrenceKey_SubMicrosecondDifference_ProducesSameKey()
+    {
+        var campaignId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+        var persistedOccurrence = new DateTime(2026, 8, 14, 10, 0, 0, DateTimeKind.Utc)
+            .AddTicks(1_234_560);
+        var prePersistenceOccurrence = persistedOccurrence.AddTicks(7);
+
+        var persistedKey = CampaignDispatchService.ComputeOccurrenceKey(campaignId, persistedOccurrence, 42);
+        var prePersistenceKey = CampaignDispatchService.ComputeOccurrenceKey(campaignId, prePersistenceOccurrence, 42);
+
+        prePersistenceKey.Should().Be(persistedKey,
+            "PostgreSQL drops sub-microsecond ticks when persisting timestamp with time zone values");
+    }
+
+    [Theory]
+    [InlineData(DateTimeKind.Local)]
+    [InlineData(DateTimeKind.Unspecified)]
+    public void OccurrenceKey_NonUtcInput_IsRejected(DateTimeKind kind)
+    {
+        var occurrence = DateTime.SpecifyKind(new DateTime(2026, 8, 14, 10, 0, 0), kind);
+
+        var act = () => CampaignDispatchService.ComputeOccurrenceKey(Guid.NewGuid(), occurrence, 1);
+
+        act.Should().Throw<ArgumentException>()
+            .WithParameterName("scheduledOccurrenceUtc");
+    }
+
+    [Fact]
     public void OccurrenceKey_Is64CharLowercaseHex()
     {
         var key = CampaignDispatchService.ComputeOccurrenceKey(
@@ -186,6 +216,8 @@ public sealed class CampaignDispatchServiceTests : IDisposable
         var disabledOptions = new CampaignSchedulerOptions { GlobalEnabled = false };
         var disabledService = new CampaignDispatchService(
             _db, _calculator, Options.Create(disabledOptions),
+            new TestTenantContext(_tenantId),
+            new PostgreSqlDatabaseErrorClassifier(),
             NullLogger<CampaignDispatchService>.Instance);
 
         var result = await disabledService.RunSchedulerTickAsync(CancellationToken.None);
@@ -232,22 +264,24 @@ public sealed class CampaignDispatchServiceTests : IDisposable
     }
 
     // =========================================================================
-    // 4. IDEMPOTENCY GUARD
-    //    Same CampaignOccurrenceKey → no second job dispatched
+    // 4. INCOMPLETE IDEMPOTENCY STATE
+    //    A job row without matching campaign/audit state must fail closed
     // =========================================================================
 
     [Fact]
-    public async Task RunSchedulerTick_SameOccurrenceKey_AlreadyDispatched_NoSecondJobCreated()
+    public async Task RunSchedulerTick_SameOccurrenceKey_WithoutAtomicState_FailsClosed()
     {
         var campaign = CreateDueCampaign();
         var scheduledOccurrence = campaign.NextRunUtc!.Value;
+        var originalScheduleVersion = campaign.ScheduleVersion;
 
-        // Pre-existing job with the same occurrence key (simulates scheduler retry after ambiguous commit)
+        // A job-only row cannot have been produced by the atomic dispatch operation.
         var existingKey = CampaignDispatchService.ComputeOccurrenceKey(
             campaign.Id, scheduledOccurrence, campaign.ScheduleVersion);
 
         _db.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             CampaignId = campaign.Id,
             RepositoryId = _repoId,
@@ -255,7 +289,7 @@ public sealed class CampaignDispatchServiceTests : IDisposable
             TargetUrl = "https://api.payments.enterprise.com",
             ScanProfile = SecurityScanProfileType.Standard,
             Status = SecurityScanJobStatus.Queued,
-            RequestedByUserId = Guid.Empty,
+            RequestedByUserId = null,
             TriggeredBy = "CampaignScheduler",
             CampaignOccurrenceKey = existingKey,
             CreatedAtUtc = DateTime.UtcNow
@@ -264,12 +298,26 @@ public sealed class CampaignDispatchServiceTests : IDisposable
 
         var result = await _service.RunSchedulerTickAsync(CancellationToken.None);
 
-        // Must not create a second job
         var jobs = await _db.SecurityScanJobs
             .Where(j => j.CampaignId == campaign.Id)
             .ToListAsync();
-        jobs.Should().HaveCount(1, "idempotency guard must prevent duplicate dispatch on retry");
-        result.Dispatched.Should().Be(1, "idempotency guard returns Dispatched (already handled)");
+        jobs.Should().ContainSingle("the job-only integrity failure must not create another job");
+        result.Dispatched.Should().Be(0);
+        result.ClaimLost.Should().Be(0,
+            "a partial row must not be accepted as a complete competing dispatch");
+        result.Errors.Should().Be(1,
+            "incomplete job/campaign/audit state must propagate to the tick error boundary");
+
+        var persistedCampaign = await _db.ScanCampaigns
+            .AsNoTracking()
+            .SingleAsync(candidate => candidate.Id == campaign.Id);
+        persistedCampaign.ScheduleVersion.Should().Be(originalScheduleVersion);
+        persistedCampaign.NextRunUtc.Should().Be(scheduledOccurrence);
+        persistedCampaign.LastCampaignOccurrenceKey.Should().BeNull();
+        persistedCampaign.LastScanJobId.Should().BeNull();
+        (await _db.CampaignExecutionAuditLogs.CountAsync(
+                audit => audit.CampaignId == campaign.Id))
+            .Should().Be(0);
     }
 
     // =========================================================================
@@ -316,13 +364,14 @@ public sealed class CampaignDispatchServiceTests : IDisposable
         // Simulate a running job
         _db.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             CampaignId = campaign.Id,
             RepositoryId = _repoId,
             TargetId = _targetId,
             TargetUrl = "https://api.payments.enterprise.com",
             Status = SecurityScanJobStatus.Running,
-            RequestedByUserId = Guid.Empty,
+            RequestedByUserId = null,
             TriggeredBy = "CampaignScheduler",
             CreatedAtUtc = DateTime.UtcNow
         });
@@ -361,13 +410,14 @@ public sealed class CampaignDispatchServiceTests : IDisposable
 
         var stuckJob = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             CampaignId = campaign.Id,
             RepositoryId = _repoId,
             TargetId = _targetId,
             TargetUrl = "https://api.payments.enterprise.com",
             Status = SecurityScanJobStatus.Running,
-            RequestedByUserId = Guid.Empty,
+            RequestedByUserId = null,
             TriggeredBy = "CampaignScheduler",
             WorkerInstanceId = "worker-abc",
             LastHeartbeatUtc = DateTime.UtcNow.AddHours(-2), // 2 hours ago — beyond 60min threshold
@@ -407,13 +457,14 @@ public sealed class CampaignDispatchServiceTests : IDisposable
         // Job has a stale heartbeat timestamp but we'll simulate the version already updated
         var job = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             CampaignId = campaign.Id,
             RepositoryId = _repoId,
             TargetId = _targetId,
             TargetUrl = "https://api.payments.enterprise.com",
             Status = SecurityScanJobStatus.Running,
-            RequestedByUserId = Guid.Empty,
+            RequestedByUserId = null,
             TriggeredBy = "CampaignScheduler",
             WorkerInstanceId = "worker-live",
             LastHeartbeatUtc = DateTime.UtcNow.AddHours(-2),
@@ -457,13 +508,14 @@ public sealed class CampaignDispatchServiceTests : IDisposable
 
         _db.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             CampaignId = campaign.Id,
             RepositoryId = _repoId,
             TargetId = _targetId,
             TargetUrl = "https://api.payments.enterprise.com",
             Status = SecurityScanJobStatus.Running,
-            RequestedByUserId = Guid.Empty,
+            RequestedByUserId = null,
             TriggeredBy = "CampaignScheduler",
             LastHeartbeatUtc = DateTime.UtcNow.AddHours(-2),
             JobVersion = 1,
@@ -495,13 +547,14 @@ public sealed class CampaignDispatchServiceTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             CampaignId = campaign.Id,
             RepositoryId = _repoId,
             TargetId = _targetId,
             TargetUrl = "https://api.payments.enterprise.com",
             Status = SecurityScanJobStatus.Completed,
-            RequestedByUserId = Guid.Empty,
+            RequestedByUserId = null,
             TriggeredBy = "CampaignScheduler",
             CreatedAtUtc = DateTime.UtcNow
         };
@@ -528,13 +581,14 @@ public sealed class CampaignDispatchServiceTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             CampaignId = campaign.Id,
             RepositoryId = _repoId,
             TargetId = _targetId,
             TargetUrl = "https://api.payments.enterprise.com",
             Status = SecurityScanJobStatus.Failed,
-            RequestedByUserId = Guid.Empty,
+            RequestedByUserId = null,
             TriggeredBy = "CampaignScheduler",
             CreatedAtUtc = DateTime.UtcNow
         };
@@ -558,13 +612,14 @@ public sealed class CampaignDispatchServiceTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             CampaignId = campaign.Id,
             RepositoryId = _repoId,
             TargetId = _targetId,
             TargetUrl = "https://api.payments.enterprise.com",
             Status = SecurityScanJobStatus.Failed,
-            RequestedByUserId = Guid.Empty,
+            RequestedByUserId = null,
             TriggeredBy = "CampaignScheduler",
             CreatedAtUtc = DateTime.UtcNow
         };
@@ -593,13 +648,14 @@ public sealed class CampaignDispatchServiceTests : IDisposable
         {
             var j = new SecurityScanJob
             {
+                TenantId = _tenantId,
                 Id = Guid.NewGuid(),
                 CampaignId = campaign.Id,
                 RepositoryId = _repoId,
                 TargetId = _targetId,
                 TargetUrl = "https://api.payments.enterprise.com",
                 Status = status,
-                RequestedByUserId = Guid.Empty,
+                RequestedByUserId = null,
                 TriggeredBy = "CampaignScheduler",
                 CreatedAtUtc = DateTime.UtcNow
             };
@@ -634,13 +690,14 @@ public sealed class CampaignDispatchServiceTests : IDisposable
     {
         var manualJob = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             CampaignId = null, // Manual job, no campaign
             RepositoryId = _repoId,
             TargetId = _targetId,
             TargetUrl = "https://api.payments.enterprise.com",
             Status = SecurityScanJobStatus.Failed,
-            RequestedByUserId = Guid.Empty,
+            RequestedByUserId = null,
             TriggeredBy = "Manual",
             CreatedAtUtc = DateTime.UtcNow
         };
@@ -688,5 +745,7 @@ public sealed class CampaignDispatchServiceTests : IDisposable
         job.TriggeredBy.Should().Be("CampaignScheduler");
         job.Status.Should().Be(SecurityScanJobStatus.Queued);
         job.TargetUrl.Should().Be("https://api.payments.enterprise.com");
+        job.TenantId.Should().Be(_tenantId);
+        job.RequestedByUserId.Should().BeNull("scheduler-created jobs have no user actor");
     }
 }

@@ -16,11 +16,17 @@ export function CampaignHistoryDrawer({ campaignId, campaignName, onClose }: Cam
 
   useEffect(() => {
     if (!campaignId) return;
-    setLoading(true);
-    getCampaignHistory(campaignId, page, 25).then((data) => {
+
+    let cancelled = false;
+    void getCampaignHistory(campaignId, page, 25).then((data) => {
+      if (cancelled) return;
       setHistory(data);
       setLoading(false);
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, [campaignId, page]);
 
   if (!campaignId) return null;
@@ -125,14 +131,20 @@ export function CampaignHistoryDrawer({ campaignId, campaignName, onClose }: Cam
           <div className="flex gap-2">
             <button
               disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              onClick={() => {
+                setLoading(true);
+                setPage((currentPage) => Math.max(1, currentPage - 1));
+              }}
               className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 transition"
             >
               Previous
             </button>
             <button
               disabled={history.length < 25}
-              onClick={() => setPage((p) => p + 1)}
+              onClick={() => {
+                setLoading(true);
+                setPage((currentPage) => currentPage + 1);
+              }}
               className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed text-slate-200 transition"
             >
               Next

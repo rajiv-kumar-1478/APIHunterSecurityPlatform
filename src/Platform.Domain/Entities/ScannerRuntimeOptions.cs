@@ -5,13 +5,13 @@ namespace Platform.Domain.Entities;
 
 public sealed record ScannerRuntimeOptions
 {
-    public ScannerRuntimeMode RuntimeMode { get; init; } = ScannerRuntimeMode.LocalDocker;
+    public ScannerRuntimeMode RuntimeMode { get; init; } = ScannerRuntimeMode.Disabled;
 
-    public EgressGatewayMode EgressGatewayMode { get; init; } = EgressGatewayMode.EnforcedGateway;
+    public EgressGatewayMode EgressGatewayMode { get; init; } = EgressGatewayMode.None;
 
-    public string EgressNetworkName { get; init; } = "apihunter-sandbox-net";
+    public string EgressNetworkName { get; init; } = string.Empty;
 
-    public string EgressGatewayEndpoint { get; init; } = "http://127.0.0.1:8888";
+    public string EgressGatewayEndpoint { get; init; } = string.Empty;
 
     public double MaxCpuCores { get; init; } = 2.0;
 

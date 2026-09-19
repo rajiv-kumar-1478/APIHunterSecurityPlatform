@@ -13,14 +13,14 @@ namespace Platform.UnitTests.Scanning;
 public class ScanProviderContractTests
 {
     [Fact]
-    public void Test1_BugHunterProvider_ExposesCorrectProviderKey()
+    public void BugHunterProvider_ExposesStableProviderKey()
     {
         var provider = new BugHunterScanProvider(NullLogger<BugHunterScanProvider>.Instance);
         provider.ProviderKey.Should().Be("bughunter");
     }
 
     [Fact]
-    public async Task Test2_BugHunterProvider_StartAsync_ReturnsValidExternalScanId()
+    public async Task BugHunterProvider_StartAsync_FailsClosedWithoutAuthoritativeContract()
     {
         var provider = new BugHunterScanProvider(NullLogger<BugHunterScanProvider>.Instance);
         var request = new ScanExecutionRequest(
@@ -29,40 +29,41 @@ public class ScanProviderContractTests
             Profile: SecurityScanProfileType.Recon,
             ProviderKey: "bughunter",
             Parameters: new Dictionary<string, string>(),
-            Timeout: TimeSpan.FromMinutes(5)
-        );
+            Timeout: TimeSpan.FromMinutes(5));
 
         var result = await provider.StartAsync(request);
 
-        result.Success.Should().BeTrue();
-        result.ExternalScanId.Should().StartWith("bughunter-scan-");
+        result.Success.Should().BeFalse();
+        result.ExternalScanId.Should().BeEmpty();
+        result.ErrorMessage.Should().Be(BugHunterScanProvider.UnavailableCode);
     }
 
     [Fact]
-    public async Task Test3_BugHunterProvider_GetStatusAsync_ReturnsRunningStatus()
+    public async Task BugHunterProvider_Status_RemainsBlockedWithoutSyntheticProgress()
     {
         var provider = new BugHunterScanProvider(NullLogger<BugHunterScanProvider>.Instance);
-        var status = await provider.GetStatusAsync("bughunter-scan-123");
+        var status = await provider.GetStatusAsync("unverified-external-id");
 
-        status.ExternalScanId.Should().Be("bughunter-scan-123");
-        status.Status.Should().Be(SecurityScanJobStatus.Running);
+        status.ExternalScanId.Should().Be("unverified-external-id");
+        status.Status.Should().Be(SecurityScanJobStatus.Blocked);
+        status.ProgressPercent.Should().Be(0);
+        status.Message.Should().Be(BugHunterScanProvider.UnavailableCode);
     }
 
     [Fact]
-    public async Task Test4_BugHunterProvider_GetResultAsync_ReturnsToolExecutionResults()
+    public async Task BugHunterProvider_Result_HasNoSyntheticToolsOrArtifacts()
     {
         var provider = new BugHunterScanProvider(NullLogger<BugHunterScanProvider>.Instance);
-        var result = await provider.GetResultAsync("bughunter-scan-123");
+        var result = await provider.GetResultAsync("unverified-external-id");
 
-        result.ExternalScanId.Should().Be("bughunter-scan-123");
-        result.Status.Should().Be(SecurityScanJobStatus.Completed);
-        result.ToolResults.Should().NotBeEmpty();
-        result.ToolResults.Should().Contain(t => t.ToolKey == "subfinder");
-        result.ToolResults.Should().Contain(t => t.ToolKey == "httpx");
+        result.Status.Should().Be(SecurityScanJobStatus.Blocked);
+        result.ToolResults.Should().BeEmpty();
+        result.ArtifactReference.Should().BeNull();
+        result.Summary.Should().Be(BugHunterScanProvider.UnavailableCode);
     }
 
     [Fact]
-    public async Task Test5_InMemorySecretStore_DevTestOnly_ProvidesDefaultStatus()
+    public async Task InMemorySecretStore_ReportsDevelopmentCredentialsSeparatelyFromProviderAvailability()
     {
         var secretStore = new InMemoryScanProviderSecretStore();
         var status = await secretStore.GetStatusAsync("bughunter");
@@ -73,7 +74,7 @@ public class ScanProviderContractTests
     }
 
     [Fact]
-    public async Task Test6_InMemorySecretStore_AcquireLease_ReturnsValidLease()
+    public async Task InMemorySecretStore_AcquireLease_ReturnsValidLease()
     {
         var secretStore = new InMemoryScanProviderSecretStore();
         using var lease = await secretStore.AcquireLeaseAsync("bughunter");

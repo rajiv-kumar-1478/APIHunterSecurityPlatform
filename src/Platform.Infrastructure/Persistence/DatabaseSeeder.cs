@@ -188,7 +188,25 @@ public static class BuiltInDetectionRules
             new() { Id = "deepseek-api-key", Version = 1, Description = "DeepSeek API Key", RegexPattern = @"sk-[a-f0-9]{32}", CredentialType = "DeepSeek", Confidence = "High" },
             new() { Id = "fireworks-api-key", Version = 1, Description = "Fireworks AI Key", RegexPattern = @"fw_[A-Za-z0-9_-]{30,80}", CredentialType = "FireworksAI", Confidence = "High" },
             new() { Id = "replicate-api-key", Version = 1, Description = "Replicate API Key", RegexPattern = @"r8_[a-zA-Z0-9]{32}", CredentialType = "Replicate", Confidence = "High" },
-            new() { Id = "slack-bot-token", Version = 1, Description = "Slack Bot Token", RegexPattern = @"xoxb-[0-9]{11,13}-[0-9]{11,13}-[a-zA-Z0-9]{24}", CredentialType = "Slack", Confidence = "High" }
+            new() { Id = "slack-bot-token", Version = 1, Description = "Slack Bot Token", RegexPattern = @"xoxb-[0-9]{11,13}-[0-9]{11,13}-[a-zA-Z0-9]{24}", CredentialType = "Slack", Confidence = "High" },
+            new() { Id = "openrouter-api-key", Version = 1, Description = "OpenRouter API Key", RegexPattern = @"sk-or-v1-[a-f0-9]{64}", CredentialType = "OpenRouter", Confidence = "High" },
+            new() { Id = "xai-api-key", Version = 1, Description = "xAI (Grok) API Key", RegexPattern = @"xai-[A-Za-z0-9]{20,}", CredentialType = "XAI", Confidence = "High" },
+            new() { Id = "cerebras-api-key", Version = 1, Description = "Cerebras API Key", RegexPattern = @"csk-[A-Za-z0-9]{20,}", CredentialType = "Cerebras", Confidence = "High" },
+            new() { Id = "tavily-api-key", Version = 1, Description = "Tavily API Key", RegexPattern = @"tvly-[A-Za-z0-9]{20,}", CredentialType = "Tavily", Confidence = "High" },
+            new() { Id = "falai-api-key", Version = 1, Description = "Fal.ai API Key", RegexPattern = @"fal_[A-Za-z0-9_-]{20,}", CredentialType = "FalAi", Confidence = "High" },
+            new() { Id = "jina-api-key", Version = 1, Description = "Jina AI API Key", RegexPattern = @"jina_[A-Za-z0-9_-]{20,}", CredentialType = "JinaAI", Confidence = "High" },
+            new() { Id = "kling-api-key", Version = 1, Description = "Kling AI API Key", RegexPattern = @"kling_[A-Za-z0-9_-]{20,}", CredentialType = "KlingAI", Confidence = "High" },
+            new() { Id = "runwayml-api-key", Version = 1, Description = "Runway ML API Key", RegexPattern = @"rw_[A-Za-z0-9_-]{20,}", CredentialType = "RunwayML", Confidence = "High" },
+            new() { Id = "runpod-api-key", Version = 1, Description = "RunPod API Key", RegexPattern = @"rpk_[A-Za-z0-9_-]{20,}", CredentialType = "RunPod", Confidence = "High" },
+            new() { Id = "google-gemini-key", Version = 1, Description = "Google Gemini API Key", RegexPattern = @"AIzaSy[A-Za-z0-9_-]{33}", CredentialType = "GoogleGemini", Confidence = "High" },
+            new() { Id = "elevenlabs-key", Version = 1, Description = "ElevenLabs API Key", RegexPattern = @"el_[A-Za-z0-9_-]{20,}", CredentialType = "ElevenLabs", Confidence = "High" },
+            new() { Id = "togetherai-key", Version = 1, Description = "TogetherAI API Key", RegexPattern = @"(?i)together(?:_ai)?\s*[:=]\s*['""]?([a-f0-9]{64})['""]?", CredentialType = "TogetherAI", Confidence = "High" },
+            new() { Id = "mistral-key", Version = 1, Description = "Mistral API Key", RegexPattern = @"(?i)mistral(?:_ai)?\s*[:=]\s*['""]?([a-zA-Z0-9]{32})['""]?", CredentialType = "Mistral", Confidence = "High" },
+            new() { Id = "stability-key", Version = 1, Description = "Stability AI Key", RegexPattern = @"(?i)stability(?:_ai)?\s*[:=]\s*['""]?(sk-[a-zA-Z0-9]{32,})['""]?", CredentialType = "StabilityAI", Confidence = "High" },
+            new() { Id = "ai21-api-key", Version = 1, Description = "AI21 Labs API Key", RegexPattern = @"(?i)ai21(?:_api)?\s*[:=]\s*['""]?([a-zA-Z0-9]{32})['""]?", CredentialType = "AI21", Confidence = "High" },
+            new() { Id = "assemblyai-api-key", Version = 1, Description = "AssemblyAI API Key", RegexPattern = @"(?i)assembly(?:_?ai)?\s*[:=]\s*['""]?([a-f0-9]{32})['""]?", CredentialType = "AssemblyAI", Confidence = "High" },
+            new() { Id = "deepgram-api-key", Version = 1, Description = "Deepgram API Key", RegexPattern = @"(?i)deepgram\s*[:=]\s*['""]?([a-f0-9]{40})['""]?", CredentialType = "Deepgram", Confidence = "High" },
+            new() { Id = "leonardo-api-key", Version = 1, Description = "Leonardo AI API Key", RegexPattern = @"(?i)leonardo(?:_?ai)?\s*[:=]\s*['""]?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})['""]?", CredentialType = "LeonardoAI", Confidence = "High" }
         };
     }
 }

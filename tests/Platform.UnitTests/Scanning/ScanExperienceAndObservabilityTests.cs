@@ -47,7 +47,7 @@ public class ScanExperienceAndObservabilityTests : IDisposable
         _parserProvider = new ToolOutputParserProvider();
         _ingestionEngine = new ScanFindingIngestionEngine(_dbContext, NullLogger<ScanFindingIngestionEngine>.Instance, new RiskEngine(new Platform.Application.Configuration.RiskPolicyOptions()));
         _orchestrator = new ScanExecutionOrchestrator(_toolRegistry, _parserProvider, _ingestionEngine, NullLogger<ScanExecutionOrchestrator>.Instance);
-        _scanJobService = new ScanJobService(_dbContext, _userContext, _toolRegistry, NullLogger<ScanJobService>.Instance);
+        _scanJobService = new ScanJobService(_dbContext, _userContext, new TestTenantContext(), _toolRegistry, NullLogger<ScanJobService>.Instance);
 
         _dbContext.Repositories.Add(new Repository
         {
@@ -93,6 +93,7 @@ public class ScanExperienceAndObservabilityTests : IDisposable
     {
         var originalJob = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -131,6 +132,7 @@ public class ScanExperienceAndObservabilityTests : IDisposable
     {
         var runningJob = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://api.example.com",
             ScanProfile = SecurityScanProfileType.Standard,
@@ -166,6 +168,7 @@ public class ScanExperienceAndObservabilityTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = receipt.JobId,
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -220,6 +223,7 @@ public class ScanExperienceAndObservabilityTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -256,6 +260,7 @@ public class ScanExperienceAndObservabilityTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -302,6 +307,7 @@ public class ScanExperienceAndObservabilityTests : IDisposable
 
         var failedJob = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,

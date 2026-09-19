@@ -226,6 +226,7 @@ public class ScanCampaignServiceTests : IDisposable
         // Simulate an already running job
         _dbContext.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             CampaignId = campaign.Id,
             Status = SecurityScanJobStatus.Running,
@@ -259,6 +260,7 @@ public class ScanCampaignServiceTests : IDisposable
         // Active running job
         _dbContext.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             CampaignId = campaign.Id,
             Status = SecurityScanJobStatus.Running,

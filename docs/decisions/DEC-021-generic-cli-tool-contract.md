@@ -1,13 +1,13 @@
 # DEC-021: Generic CLI Tool Contract & Configuration-Driven Tool Replacement
 
-- **Status**: Accepted & Locked (Phase 8)
-- **Date**: 2026-08-13
-- **Context**:
-  The platform uses external security scanning tools (`subfinder`, `httpx`, `katana`, `nuclei`, `bughunter`). Hardcoding binary paths, CLI flags, or tool-specific logic into core orchestration services, domain entities, API controllers, or UI components creates tight coupling, making tool upgrades or replacements expensive and risky.
+- **Status**: Accepted; operational scope clarified by DEC-022
+- **Original date**: 2026-08-13
+- **Clarified**: 2026-09-05
+- **Context**: Hardcoded binary paths and tool syntax create unsafe coupling, but claiming every scanner is configuration-only hides parser, provenance, sandbox, and egress requirements.
 - **Decision**:
-  1. **Configuration-Driven Replacement Invariant**: Adding or replacing a tool that conforms to the Generic CLI Tool Contract must require configuration/worker-image changes only, not modifications to core scan orchestration, domain models, API contracts, or dashboard code.
-  2. **Capability-Based Scheduling**: Orchestration services request abstract capabilities (`SubdomainEnumeration`, `HttpProbing`, `UrlCrawling`, `VulnerabilityScanning`, `AiAssistedHunting`). The tool registry maps requested capabilities to available healthy tools dynamically.
-  3. **Hosted Worker Execution Only**: Scanning tools run exclusively within hosted worker containers (`Platform.Worker`). Web servers and APIs never execute scanning binaries directly.
-  4. **Strict Resource Isolation**: Execution timeouts, container memory limits, temporary scratch disk cleanup, and target scope network checks are enforced for all tool runs.
-- **Impact**:
-  Guaranteed tool extensibility. Security tools can be added, updated, or replaced cleanly via configuration and container updates without touching core platform domain code.
+  1. **Configuration-only scope**: Configuration/image changes are sufficient only when a tool already conforms to the approved generic executable, arguments, parser/output, capability, provenance, sandbox, and egress contracts.
+  2. **Typed extensions**: A new CLI/output schema, capability policy, or adapter requires code, DI registration, authentic fixtures, and tests. Core domain/API/dashboard contracts remain canonical and scanner-independent.
+  3. **Capability scheduling**: Planning selects only enabled, healthy, provenance-valid tools supported by an operational runtime. Capability intent alone is not health.
+  4. **Sandbox-only execution**: Tools execute only through `IScannerRuntimeSandbox`; API/worker host fallback is forbidden.
+  5. **Fail-closed isolation**: Timeouts, process-tree termination, resource limits, scratch cleanup, target scope, immutable image provenance, and enforced egress are mandatory. Missing boundaries return a stable unavailable/security-boundary result.
+- **Impact**: Conforming tools remain replaceable without changing canonical platform contracts, while non-conforming or unverified tools cannot be mislabeled operational.

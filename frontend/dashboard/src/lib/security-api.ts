@@ -1,4 +1,10 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import {
+  apiFetch,
+  getErrorMessage,
+  getResponseMessage,
+  parseJsonResponse,
+  parseResponseBody,
+} from "@/lib/api-client";
 
 export interface SecurityPosture {
   totalRepositoriesMonitored: number;
@@ -110,23 +116,15 @@ export interface GraphData {
   edges: IntelligenceEdge[];
 }
 
-export async function fetchWithAuth(url: string, options: RequestInit = {}) {
-  const csrf = sessionStorage.getItem("csrf_token") ?? "";
-  const headers = {
-    "Content-Type": "application/json",
-    "X-CSRF-TOKEN": csrf,
-    ...(options.headers || {}),
-  };
-
-  const res = await fetch(url, { ...options, credentials: "include", headers });
-  return res;
+export function fetchWithAuth(path: string, options: RequestInit = {}): Promise<Response> {
+  return apiFetch(path, options);
 }
 
 export async function getSecurityPosture(): Promise<SecurityPosture | null> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security-center/posture`);
+    const res = await fetchWithAuth("/api/v1/security-center/posture");
     if (!res.ok) return null;
-    return await res.json();
+    return await parseJsonResponse<SecurityPosture>(res);
   } catch {
     return null;
   }
@@ -134,9 +132,9 @@ export async function getSecurityPosture(): Promise<SecurityPosture | null> {
 
 export async function getAlertingStatus(): Promise<AlertingStatus | null> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security-center/alerting-status`);
+    const res = await fetchWithAuth("/api/v1/security-center/alerting-status");
     if (!res.ok) return null;
-    return await res.json();
+    return await parseJsonResponse<AlertingStatus>(res);
   } catch {
     return null;
   }
@@ -158,16 +156,17 @@ export async function getFindings(params: {
   query.set("page", String(params.page ?? 1));
   query.set("pageSize", String(params.pageSize ?? 20));
 
-  const res = await fetchWithAuth(`${API_URL}/api/v1/findings?${query.toString()}`);
-  if (!res.ok) return { items: [], totalCount: 0, page: 1, pageSize: 20 };
-  return await res.json();
+  const fallback = { items: [], totalCount: 0, page: 1, pageSize: 20 };
+  const res = await fetchWithAuth(`/api/v1/findings?${query.toString()}`);
+  if (!res.ok) return fallback;
+  return (await parseJsonResponse<PagedResult<SecurityFinding>>(res)) ?? fallback;
 }
 
 export async function getFindingEvidence(findingId: string): Promise<FindingEvidence[]> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/findings/${findingId}/evidence`);
+    const res = await fetchWithAuth(`/api/v1/findings/${findingId}/evidence`);
     if (!res.ok) return [];
-    return await res.json();
+    return (await parseJsonResponse<FindingEvidence[]>(res)) ?? [];
   } catch {
     return [];
   }
@@ -175,9 +174,9 @@ export async function getFindingEvidence(findingId: string): Promise<FindingEvid
 
 export async function getFindingHistory(findingId: string): Promise<StatusHistory[]> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/findings/${findingId}/history`);
+    const res = await fetchWithAuth(`/api/v1/findings/${findingId}/history`);
     if (!res.ok) return [];
-    return await res.json();
+    return (await parseJsonResponse<StatusHistory[]>(res)) ?? [];
   } catch {
     return [];
   }
@@ -190,8 +189,9 @@ export async function updateFindingStatus(
   reason: string
 ): Promise<{ success: boolean; message: string }> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/findings/${findingId}/status`, {
+    const res = await fetchWithAuth(`/api/v1/findings/${findingId}/status`, {
       method: "PATCH",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         newStatus,
         expectedLifecycleVersion,
@@ -199,22 +199,28 @@ export async function updateFindingStatus(
       }),
     });
 
-    const data = await res.json();
+    const body = await parseResponseBody(res);
     if (!res.ok) {
-      return { success: false, message: data.message ?? "Failed to update finding status." };
+      return {
+        success: false,
+        message: getResponseMessage(body, "Failed to update finding status."),
+      };
     }
-    return { success: true, message: data.message ?? "Status updated successfully." };
-  } catch (err: any) {
-    return { success: false, message: err.message ?? "Network error." };
+    return {
+      success: true,
+      message: getResponseMessage(body, "Status updated successfully."),
+    };
+  } catch (error: unknown) {
+    return { success: false, message: getErrorMessage(error, "Network error.") };
   }
 }
 
 export async function getSecurityGraph(repositoryId?: string): Promise<GraphData> {
   try {
-    const query = repositoryId ? `?repositoryId=${repositoryId}` : "";
-    const res = await fetchWithAuth(`${API_URL}/api/v1/intelligence/graph${query}`);
+    const query = repositoryId ? `?repositoryId=${encodeURIComponent(repositoryId)}` : "";
+    const res = await fetchWithAuth(`/api/v1/intelligence/graph${query}`);
     if (!res.ok) return { nodes: [], edges: [] };
-    return await res.json();
+    return (await parseJsonResponse<GraphData>(res)) ?? { nodes: [], edges: [] };
   } catch {
     return { nodes: [], edges: [] };
   }
@@ -285,12 +291,18 @@ export interface CreateScanJobParams {
   providerKey?: string;
 }
 
+export interface ScanJobMutationResult {
+  success: boolean;
+  data?: ScanJobDetailDto;
+  message?: string;
+}
+
 export async function getScanJobs(status?: string): Promise<ScanJobDetailDto[]> {
   try {
     const query = status ? `?status=${encodeURIComponent(status)}` : "";
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/scans/jobs${query}`);
+    const res = await fetchWithAuth(`/api/v1/security/scans/jobs${query}`);
     if (!res.ok) return [];
-    return await res.json();
+    return (await parseJsonResponse<ScanJobDetailDto[]>(res)) ?? [];
   } catch {
     return [];
   }
@@ -298,9 +310,9 @@ export async function getScanJobs(status?: string): Promise<ScanJobDetailDto[]> 
 
 export async function getScanJobDetail(jobId: string): Promise<ScanJobDetailDto | null> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/scans/jobs/${jobId}`);
+    const res = await fetchWithAuth(`/api/v1/security/scans/jobs/${jobId}`);
     if (!res.ok) return null;
-    return await res.json();
+    return await parseJsonResponse<ScanJobDetailDto>(res);
   } catch {
     return null;
   }
@@ -308,52 +320,73 @@ export async function getScanJobDetail(jobId: string): Promise<ScanJobDetailDto 
 
 export async function getScanJobReceipt(jobId: string): Promise<ScanExecutionReceiptDto | null> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/scans/jobs/${jobId}/receipt`);
+    const res = await fetchWithAuth(`/api/v1/security/scans/jobs/${jobId}/receipt`);
     if (!res.ok) return null;
-    return await res.json();
+    return await parseJsonResponse<ScanExecutionReceiptDto>(res);
   } catch {
     return null;
   }
 }
 
-export async function createScanJob(params: CreateScanJobParams): Promise<{ success: boolean; data?: any; message?: string }> {
+export async function createScanJob(params: CreateScanJobParams): Promise<ScanJobMutationResult> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/scans/jobs`, {
+    const res = await fetchWithAuth("/api/v1/security/scans/jobs", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     });
-    const data = await res.json();
-    if (!res.ok) return { success: false, message: data.message ?? "Failed to create scan job." };
-    return { success: true, data };
-  } catch (err: any) {
-    return { success: false, message: err.message ?? "Network error." };
+    const body = await parseResponseBody(res);
+    if (!res.ok) {
+      return {
+        success: false,
+        message: getResponseMessage(body, "Failed to create scan job."),
+      };
+    }
+    return { success: true, data: body as ScanJobDetailDto };
+  } catch (error: unknown) {
+    return { success: false, message: getErrorMessage(error, "Network error.") };
   }
 }
 
-export async function retryScanJob(jobId: string): Promise<{ success: boolean; data?: any; message?: string }> {
+export async function retryScanJob(jobId: string): Promise<ScanJobMutationResult> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/scans/jobs/${jobId}/retry`, {
+    const res = await fetchWithAuth(`/api/v1/security/scans/jobs/${jobId}/retry`, {
       method: "POST",
     });
-    const data = await res.json();
-    if (!res.ok) return { success: false, message: data.message ?? "Failed to retry scan job." };
-    return { success: true, data };
-  } catch (err: any) {
-    return { success: false, message: err.message ?? "Network error." };
+    const body = await parseResponseBody(res);
+    if (!res.ok) {
+      return {
+        success: false,
+        message: getResponseMessage(body, "Failed to retry scan job."),
+      };
+    }
+    return { success: true, data: body as ScanJobDetailDto };
+  } catch (error: unknown) {
+    return { success: false, message: getErrorMessage(error, "Network error.") };
   }
 }
 
-export async function cancelScanJob(jobId: string, reason: string, expectedVersion: number): Promise<{ success: boolean; data?: any; message?: string }> {
+export async function cancelScanJob(
+  jobId: string,
+  reason: string,
+  expectedVersion: number,
+): Promise<ScanJobMutationResult> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/scans/jobs/${jobId}/cancel`, {
+    const res = await fetchWithAuth(`/api/v1/security/scans/jobs/${jobId}/cancel`, {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reason, expectedVersion }),
     });
-    const data = await res.json();
-    if (!res.ok) return { success: false, message: data.message ?? "Failed to cancel scan job." };
-    return { success: true, data };
-  } catch (err: any) {
-    return { success: false, message: err.message ?? "Network error." };
+    const body = await parseResponseBody(res);
+    if (!res.ok) {
+      return {
+        success: false,
+        message: getResponseMessage(body, "Failed to cancel scan job."),
+      };
+    }
+    return { success: true, data: body as ScanJobDetailDto };
+  } catch (error: unknown) {
+    return { success: false, message: getErrorMessage(error, "Network error.") };
   }
 }
 
@@ -473,9 +506,9 @@ export interface CampaignDiagnosticsDto {
 export async function getCampaigns(status?: string): Promise<ScanCampaignDto[]> {
   try {
     const query = status ? `?status=${encodeURIComponent(status)}` : "";
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/campaigns${query}`);
+    const res = await fetchWithAuth(`/api/v1/security/campaigns${query}`);
     if (!res.ok) return [];
-    return await res.json();
+    return (await parseJsonResponse<ScanCampaignDto[]>(res)) ?? [];
   } catch {
     return [];
   }
@@ -483,19 +516,25 @@ export async function getCampaigns(status?: string): Promise<ScanCampaignDto[]> 
 
 export async function getCampaignHealth(): Promise<CampaignOperationalHealthDto | null> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/campaigns/health`);
+    const res = await fetchWithAuth("/api/v1/security/campaigns/health");
     if (!res.ok) return null;
-    return await res.json();
+    return await parseJsonResponse<CampaignOperationalHealthDto>(res);
   } catch {
     return null;
   }
 }
 
-export async function getCampaignHistory(campaignId: string, page = 1, pageSize = 50): Promise<CampaignExecutionHistoryEntryDto[]> {
+export async function getCampaignHistory(
+  campaignId: string,
+  page = 1,
+  pageSize = 50,
+): Promise<CampaignExecutionHistoryEntryDto[]> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/campaigns/${campaignId}/history?page=${page}&pageSize=${pageSize}`);
+    const res = await fetchWithAuth(
+      `/api/v1/security/campaigns/${campaignId}/history?page=${page}&pageSize=${pageSize}`,
+    );
     if (!res.ok) return [];
-    return await res.json();
+    return (await parseJsonResponse<CampaignExecutionHistoryEntryDto[]>(res)) ?? [];
   } catch {
     return [];
   }
@@ -503,41 +542,55 @@ export async function getCampaignHistory(campaignId: string, page = 1, pageSize 
 
 export async function getCampaignDiagnostics(campaignId: string): Promise<CampaignDiagnosticsDto | null> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/campaigns/${campaignId}/diagnostics`);
+    const res = await fetchWithAuth(`/api/v1/security/campaigns/${campaignId}/diagnostics`);
     if (!res.ok) return null;
-    return await res.json();
+    return await parseJsonResponse<CampaignDiagnosticsDto>(res);
   } catch {
     return null;
   }
 }
 
-export async function pauseCampaign(campaignId: string, reason?: string): Promise<{ success: boolean; message?: string }> {
+export async function pauseCampaign(
+  campaignId: string,
+  reason?: string,
+): Promise<{ success: boolean; message?: string }> {
   try {
     const query = reason ? `?reason=${encodeURIComponent(reason)}` : "";
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/campaigns/${campaignId}/pause${query}`, { method: "POST" });
-    const data = await res.json();
-    return { success: res.ok, message: data.message };
-  } catch (err: any) {
-    return { success: false, message: err.message };
+    const res = await fetchWithAuth(`/api/v1/security/campaigns/${campaignId}/pause${query}`, {
+      method: "POST",
+    });
+    const body = await parseResponseBody(res);
+    return {
+      success: res.ok,
+      message: getResponseMessage(body, res.ok ? "Campaign paused." : "Failed to pause campaign."),
+    };
+  } catch (error: unknown) {
+    return { success: false, message: getErrorMessage(error, "Failed to pause campaign.") };
   }
 }
 
 export async function resumeCampaign(campaignId: string): Promise<{ success: boolean; message?: string }> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/campaigns/${campaignId}/resume`, { method: "POST" });
-    const data = await res.json();
-    return { success: res.ok, message: data.message };
-  } catch (err: any) {
-    return { success: false, message: err.message };
+    const res = await fetchWithAuth(`/api/v1/security/campaigns/${campaignId}/resume`, { method: "POST" });
+    const body = await parseResponseBody(res);
+    return {
+      success: res.ok,
+      message: getResponseMessage(body, res.ok ? "Campaign resumed." : "Failed to resume campaign."),
+    };
+  } catch (error: unknown) {
+    return { success: false, message: getErrorMessage(error, "Failed to resume campaign.") };
   }
 }
 
 export async function triggerCampaignRunNow(campaignId: string): Promise<{ success: boolean; message?: string }> {
   try {
-    const res = await fetchWithAuth(`${API_URL}/api/v1/security/campaigns/${campaignId}/run-now`, { method: "POST" });
-    const data = await res.json();
-    return { success: res.ok, message: data.message };
-  } catch (err: any) {
-    return { success: false, message: err.message };
+    const res = await fetchWithAuth(`/api/v1/security/campaigns/${campaignId}/run-now`, { method: "POST" });
+    const body = await parseResponseBody(res);
+    return {
+      success: res.ok,
+      message: getResponseMessage(body, res.ok ? "Campaign run dispatched." : "Failed to trigger run-now."),
+    };
+  } catch (error: unknown) {
+    return { success: false, message: getErrorMessage(error, "Failed to trigger run-now.") };
   }
 }

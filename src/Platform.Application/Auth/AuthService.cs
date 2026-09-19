@@ -3,17 +3,18 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Platform.Application.Common;
+using Platform.Application.Configuration;
 using Platform.Application.Permissions;
+using Platform.Application.Persistence;
 using Platform.Domain.Contracts;
 using Platform.Domain.Entities;
 using Platform.Domain.Enums;
-using Platform.Application.Persistence;
-using Platform.Application.Configuration;
 
 namespace Platform.Application.Auth;
 
 public record LoginCommand(string Email, string Password, string IpAddress, string UserAgent);
-public record LoginResult(Guid SessionId, string SessionToken, DateTime ExpiresAtUtc, bool IsPlatformAdmin);
+public record LoginResult(Guid UserId, Guid SessionId, DateTime ExpiresAtUtc, bool IsPlatformAdmin);
+public record ValidatedSession(Guid SessionId, Guid UserId, DateTime ExpiresAtUtc, bool IsPlatformAdmin);
 public record SessionDto(Guid Id, string IpAddress, string UserAgent, DateTime CreatedAtUtc, DateTime LastSeenAtUtc, bool IsCurrent);
 
 public class AuthService(
@@ -24,6 +25,7 @@ public class AuthService(
     IOptions<AuthenticationOptions> authOptions,
     ILogger<AuthService> logger)
 {
+    private static readonly TimeSpan LastSeenWriteInterval = TimeSpan.FromMinutes(5);
     private readonly AuthenticationOptions _authOpts = authOptions.Value;
 
     public async Task<Result<LoginResult>> LoginAsync(LoginCommand command, CancellationToken ct = default)
@@ -39,8 +41,9 @@ public class AuthService(
             return Result<LoginResult>.Failure("Invalid credentials", "INVALID_CREDENTIALS");
         }
 
-        // Check lockout
-        if (user.LockoutUntilUtc.HasValue && user.LockoutUntilUtc.Value > DateTime.UtcNow)
+        var now = DateTime.UtcNow;
+
+        if (user.LockoutUntilUtc.HasValue && user.LockoutUntilUtc.Value > now)
         {
             logger.LogWarning("Login attempt for locked account {UserId}", user.Id);
             await auditService.RecordAsync(AuditEventCode.UserLoginFailed, user.Id, null,
@@ -59,7 +62,7 @@ public class AuthService(
             user.FailedLoginCount++;
             if (user.FailedLoginCount >= _authOpts.LockoutThreshold)
             {
-                user.LockoutUntilUtc = DateTime.UtcNow.AddMinutes(_authOpts.LockoutDurationMinutes);
+                user.LockoutUntilUtc = now.AddMinutes(_authOpts.LockoutDurationMinutes);
                 user.FailedLoginCount = 0;
                 logger.LogWarning("Account {UserId} locked after {Attempts} failed attempts", user.Id, _authOpts.LockoutThreshold);
                 await auditService.RecordAsync(AuditEventCode.UserLocked, user.Id, null,
@@ -70,27 +73,44 @@ public class AuthService(
                 await auditService.RecordAsync(AuditEventCode.UserLoginFailed, user.Id, null,
                     command.IpAddress, new { reason = "invalid_password", attempt = user.FailedLoginCount }, ct);
             }
+
             await db.SaveChangesAsync(ct);
             return Result<LoginResult>.Failure("Invalid credentials", "INVALID_CREDENTIALS");
         }
 
-        // Successful login
         user.FailedLoginCount = 0;
         user.LockoutUntilUtc = null;
-        user.LastLoginAtUtc = DateTime.UtcNow;
+        user.LastLoginAtUtc = now;
 
         if (verification == PasswordVerificationResult.SuccessRehashNeeded)
         {
             user.PasswordHash = passwordHasher.HashPassword(user, command.Password);
         }
 
+        // Make room for the new session by revoking the oldest active rows first.
+        // This keeps the configured cap authoritative even when old cookies still exist.
+        var maxConcurrentSessions = Math.Max(1, _authOpts.MaxConcurrentSessions);
+        var activeSessions = await db.AuthenticationSessions
+            .Where(s => s.UserId == user.Id && s.RevokedAtUtc == null && s.ExpiresAtUtc > now)
+            .OrderBy(s => s.LastSeenAtUtc)
+            .ThenBy(s => s.CreatedAtUtc)
+            .ToListAsync(ct);
+
+        var sessionsToRevoke = Math.Max(0, activeSessions.Count - maxConcurrentSessions + 1);
+        foreach (var staleSession in activeSessions.Take(sessionsToRevoke))
+        {
+            staleSession.RevokedAtUtc = now;
+        }
+
         var session = new AuthenticationSession
         {
             SessionId = Guid.NewGuid().ToString("N"),
             UserId = user.Id,
-            ExpiresAtUtc = DateTime.UtcNow.AddMinutes(_authOpts.SessionDurationMinutes),
+            ExpiresAtUtc = now.AddMinutes(_authOpts.SessionDurationMinutes),
             IpAddress = command.IpAddress,
-            UserAgent = command.UserAgent
+            UserAgent = command.UserAgent,
+            CreatedAtUtc = now,
+            LastSeenAtUtc = now
         };
 
         db.AuthenticationSessions.Add(session);
@@ -102,8 +122,8 @@ public class AuthService(
         logger.LogInformation("User {UserId} logged in from {Ip}", user.Id, command.IpAddress);
 
         return Result<LoginResult>.Success(new LoginResult(
+            user.Id,
             session.Id,
-            session.SessionId,
             session.ExpiresAtUtc,
             user.IsPlatformAdmin));
     }
@@ -113,7 +133,7 @@ public class AuthService(
         var session = await db.AuthenticationSessions.FindAsync([sessionId], ct);
         if (session is null) return Result.Success();
 
-        session.RevokedAtUtc = DateTime.UtcNow;
+        session.RevokedAtUtc ??= DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
 
         await auditService.RecordAsync(AuditEventCode.UserLogout,
@@ -132,11 +152,10 @@ public class AuthService(
         if (session is null)
             return Result.Failure("Session not found", "NOT_FOUND");
 
-        // Users can only revoke their own sessions. Admins can revoke any.
         if (!currentUser.IsPlatformAdmin && session.UserId != currentUser.UserId)
             return Result.Failure("Access denied", "ACCESS_DENIED");
 
-        session.RevokedAtUtc = DateTime.UtcNow;
+        session.RevokedAtUtc ??= DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
 
         await auditService.RecordAsync(AuditEventCode.SessionRevoked,
@@ -162,21 +181,32 @@ public class AuthService(
             s.Id == currentSessionId)).ToList();
     }
 
-    public async Task<User?> ValidateSessionAsync(string sessionToken, CancellationToken ct = default)
+    public async Task<ValidatedSession?> ValidateSessionAsync(Guid sessionId, CancellationToken ct = default)
     {
         var session = await db.AuthenticationSessions
             .Include(s => s.User)
-            .FirstOrDefaultAsync(s => s.SessionId == sessionToken
-                                   && s.RevokedAtUtc == null
-                                   && s.ExpiresAtUtc > DateTime.UtcNow, ct);
+            .FirstOrDefaultAsync(s => s.Id == sessionId, ct);
 
-        if (session is null) return null;
+        var now = DateTime.UtcNow;
+        if (session is null ||
+            session.RevokedAtUtc.HasValue ||
+            session.ExpiresAtUtc <= now ||
+            !session.User.IsActive)
+        {
+            return null;
+        }
 
-        // Update last seen
-        session.LastSeenAtUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync(ct);
+        if (now - session.LastSeenAtUtc >= LastSeenWriteInterval)
+        {
+            session.LastSeenAtUtc = now;
+            await db.SaveChangesAsync(ct);
+        }
 
-        return session.User;
+        return new ValidatedSession(
+            session.Id,
+            session.UserId,
+            session.ExpiresAtUtc,
+            session.User.IsPlatformAdmin);
     }
 
     public async Task RevokeAllUserSessionsAsync(Guid userId, CancellationToken ct = default)
@@ -185,8 +215,11 @@ public class AuthService(
             .Where(s => s.UserId == userId && s.RevokedAtUtc == null)
             .ToListAsync(ct);
 
-        foreach (var s in sessions)
-            s.RevokedAtUtc = DateTime.UtcNow;
+        var revokedAtUtc = DateTime.UtcNow;
+        foreach (var session in sessions)
+        {
+            session.RevokedAtUtc = revokedAtUtc;
+        }
 
         await db.SaveChangesAsync(ct);
         logger.LogInformation("All sessions revoked for user {UserId}", userId);

@@ -1,0 +1,13 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+**/bin
+**/obj
+**/node_modules
+**/.next
+**/TestResults
+**/*.user
+**/*.suo
+semantic-review

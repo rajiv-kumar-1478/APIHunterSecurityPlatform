@@ -151,7 +151,8 @@ public class ScanPostExecutionProcessor
 
             // Find most recent previous terminal successful scan for the exact same target and compatible profile
             baselineJob = await _dbContext.SecurityScanJobs.AsNoTracking()
-                .Where(j => j.TargetId == currentJob.TargetId
+                .Where(j => j.TenantId == currentJob.TenantId
+                         && j.TargetId == currentJob.TargetId
                          && j.Id != currentJob.Id
                          && (j.Status == SecurityScanJobStatus.Completed || j.Status == SecurityScanJobStatus.CompletedWithWarnings)
                          && j.CreatedAtUtc < currentJob.CreatedAtUtc)

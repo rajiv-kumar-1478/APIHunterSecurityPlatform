@@ -1,57 +1,41 @@
-# BugHunter Integration & Provider Specification
+# BugHunter Provider Boundary
 
-## Overview
+## Availability
 
-BugHunter is an external security scanning toolchain integrated into the APIHunter Security Intelligence Platform via an isolated provider adapter (`IBugHunterProvider` / `BugHunterScanProvider`).
+BugHunter is a planned hosted-provider compatibility boundary, not an available scanner integration. `BugHunterScanProvider` returns `BUGHUNTER_CONTRACT_UNAVAILABLE` and a blocked/unavailable status for every operation.
 
-The platform orchestrates scans by requesting high-level capabilities (`SubdomainEnumeration`, `HttpProbing`, `UrlCrawling`, `VulnerabilityScanning`, `AiAssistedHunting`, `ReportGeneration`), rather than coupling business logic directly to BugHunter CLI internal syntax.
+Do not assign or advertise a version, image, capability set, credential requirement, external scan ID, progress model, result schema, artifact location, cancellation behavior, or health state until it is verified from an authoritative upstream contract.
 
----
+## Required contract before enablement
 
-## Architecture Boundary
+An operational BugHunter integration requires all of the following:
+
+1. Authoritative upstream repository/ownership and immutable release or commit.
+2. Digest-pinned OCI image or another explicitly approved execution artifact.
+3. Exact CLI or API commands, arguments, authentication, timeout, and exit-code semantics.
+4. Stable start/status/result/cancel behavior, including idempotency and retry rules.
+5. Versioned output schema and bounded parser fixtures from authentic output.
+6. Artifact retention, sanitization, provenance, and deletion semantics.
+7. Non-root sandbox, resource limits, process-tree cancellation, and enforced egress.
+8. Target-scope and tenant-isolation tests.
+9. Unavailable-by-default tests proving no host or generic fallback.
+10. Live comparison and failure-path validation in a Docker-capable environment.
+
+## Current compatibility behavior
 
 ```text
-                     APIHunter Security Platform
-                                 │
-                                 ▼
-                           IScanProvider
-                                 │
-                        IBugHunterProvider
-                                 │
-                       BugHunterScanProvider
-                        (Infrastructure Stub)
-                                 │
-               ┌─────────────────┴─────────────────┐
-               ▼                                   ▼
-        Hosted Worker                       CLI / Toolchain
+Platform request
+    └─ BugHunterScanProvider
+         └─ BUGHUNTER_CONTRACT_UNAVAILABLE (Blocked)
 ```
 
-- **Upstream Repository**: [shuvonsec/claude-bug-bounty](https://github.com/shuvonsec/claude-bug-bounty)
-- **Pinned Version / Commit**: Verified during Phase 8 Step 2 runtime installation.
-- **Provider Key**: `bughunter`
-- **Supported Capabilities**: `SubdomainEnumeration`, `DnsResolution`, `HttpProbing`, `UrlCrawling`, `VulnerabilityScanning`, `AiAssistedHunting`, `ReportGeneration`
+No secret lease or scanner process should be started by this path. This stable unavailable contract keeps API/UI behavior truthful while allowing a future implementation behind the same provider boundary.
 
----
+## Replacement or activation procedure
 
-## Key Security & Secret Principles
-
-1. **Zero Secret Persistence**: Raw API keys (e.g. `GROQ_API_KEY`, `VIRUSTOTAL_API_KEY`) are resolved at runtime via `IScanProviderSecretStore` and leased in-memory during execution.
-2. **Scope Authorization**: Scans are permitted only against authorized security targets registered in `SecurityTarget`.
-3. **Optimistic Concurrency**: `SecurityScanJob.Version` uses optimistic concurrency control to prevent duplicate or conflicting execution updates.
-
----
-
-## Step-by-Step Procedure to Replace BugHunter
-
-If BugHunter needs to be replaced with another scanner (e.g. `CustomSecurityScanner`, `ZAP`, `ProjectDiscovery Suite`):
-
-1. **Implement Provider Interface**: Create a new class implementing `IScanProvider` in `Platform.Infrastructure/Scanning/`.
-2. **Create Adapter**: Implement execution request handling, tool invocation, exit-code mapping, and artifact collection.
-3. **Map Canonical Results**: Normalize tool outputs into canonical `ScanResult` DTOs.
-4. **Implement Tool Health Check**: Register health probes in `IScanToolHealthService`.
-5. **Register Provider**: Register the new provider implementation in `Program.cs` under its own `ProviderKey`.
-6. **Publish Capability Manifest**: Register tool capability mappings in `ScanToolRegistryService`.
-7. **Run Contract Tests**: Execute `ScanProviderContractTests` to verify interface compliance.
-8. **Execute Parallel Comparison**: Run parallel comparison scans against test targets to validate findings accuracy.
-9. **Switch Active Provider**: Update default `ProviderKey` configuration or endpoint parameter to route scan jobs to the new provider.
-10. **Rollback Safety**: Maintain BugHunter provider registration in disabled state during the migration rollback window.
+Only after the contract above is approved:
+- implement the provider/adapter and canonical result mapping;
+- register immutable capabilities and health probes;
+- add parser, provider-contract, sandbox, egress, cancellation, and provenance tests;
+- run live comparison scans against authorized test targets;
+- enable the provider explicitly, with fail-closed rollback to unavailable behavior.

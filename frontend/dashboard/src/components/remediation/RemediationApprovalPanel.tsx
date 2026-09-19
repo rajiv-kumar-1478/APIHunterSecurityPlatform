@@ -1,7 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { RemediationActionDetailDto, approveRemediationAction, rejectRemediationAction } from "@/lib/remediation-api";
+import {
+  RemediationActionDetailDto,
+  approveRemediationAction,
+  isRemediationConcurrencyError,
+  rejectRemediationAction,
+} from "@/lib/remediation-api";
+import { getErrorMessage } from "@/lib/api-client";
 
 interface RemediationApprovalPanelProps {
   action: RemediationActionDetailDto;
@@ -28,12 +34,12 @@ export default function RemediationApprovalPanel({ action, onSuccess, onConcurre
     try {
       await approveRemediationAction(action.id, action.version, reason.trim());
       onSuccess();
-    } catch (err: any) {
-      if (err.isConcurrencyConflict) {
-        setError(err.message);
+    } catch (error: unknown) {
+      if (isRemediationConcurrencyError(error)) {
+        setError(error.message);
         onConcurrencyConflict();
       } else {
-        setError(err.message || "Approval failed.");
+        setError(getErrorMessage(error, "Approval failed."));
       }
     } finally {
       setIsSubmitting(false);
@@ -50,12 +56,12 @@ export default function RemediationApprovalPanel({ action, onSuccess, onConcurre
     try {
       await rejectRemediationAction(action.id, action.version, reason.trim());
       onSuccess();
-    } catch (err: any) {
-      if (err.isConcurrencyConflict) {
-        setError(err.message);
+    } catch (error: unknown) {
+      if (isRemediationConcurrencyError(error)) {
+        setError(error.message);
         onConcurrencyConflict();
       } else {
-        setError(err.message || "Rejection failed.");
+        setError(getErrorMessage(error, "Rejection failed."));
       }
     } finally {
       setIsSubmitting(false);

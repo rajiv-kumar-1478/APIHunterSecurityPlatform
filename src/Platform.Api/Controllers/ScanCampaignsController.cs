@@ -20,15 +20,18 @@ public class ScanCampaignsController : ControllerBase
     private readonly IScanCampaignService _campaignService;
     private readonly ICampaignObservabilityService _observabilityService;
     private readonly ICurrentUserContext _currentUser;
+    private readonly ITenantContext _tenantContext;
 
     public ScanCampaignsController(
         IScanCampaignService campaignService,
         ICampaignObservabilityService observabilityService,
-        ICurrentUserContext currentUser)
+        ICurrentUserContext currentUser,
+        ITenantContext tenantContext)
     {
         _campaignService = campaignService ?? throw new ArgumentNullException(nameof(campaignService));
         _observabilityService = observabilityService ?? throw new ArgumentNullException(nameof(observabilityService));
         _currentUser = currentUser ?? throw new ArgumentNullException(nameof(currentUser));
+        _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
     }
 
     [HttpGet("health")]
@@ -91,7 +94,8 @@ public class ScanCampaignsController : ControllerBase
         CancellationToken ct)
     {
         var tenantId = ResolveTenantId();
-        var userId = _currentUser.UserId ?? Guid.Empty;
+        var userId = _currentUser.UserId
+            ?? throw new InvalidOperationException("An authenticated user is required for this campaign operation.");
 
         try
         {
@@ -213,7 +217,8 @@ public class ScanCampaignsController : ControllerBase
     public async Task<ActionResult<CampaignRunNowResult>> TriggerRunNow(Guid id, CancellationToken ct)
     {
         var tenantId = ResolveTenantId();
-        var userId = _currentUser.UserId ?? Guid.Empty;
+        var userId = _currentUser.UserId
+            ?? throw new InvalidOperationException("An authenticated user is required for this campaign operation.");
 
         try
         {
@@ -258,17 +263,5 @@ public class ScanCampaignsController : ControllerBase
         }
     }
 
-    private Guid ResolveTenantId()
-    {
-        // Authenticated context is the authoritative tenant source.
-        // Only Platform Admins may impersonate another tenant via the X-Tenant-ID header.
-        if (_currentUser.IsPlatformAdmin &&
-            Request.Headers.TryGetValue("X-Tenant-ID", out var tenantHeader) &&
-            Guid.TryParse(tenantHeader.ToString(), out var headerTenantId))
-        {
-            return headerTenantId;
-        }
-
-        return _currentUser.UserId ?? Guid.Empty;
-    }
+    private Guid ResolveTenantId() => _tenantContext.TenantId;
 }

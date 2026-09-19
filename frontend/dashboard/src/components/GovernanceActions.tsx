@@ -5,7 +5,6 @@ import { updateFindingStatus } from "@/lib/security-api";
 
 interface Props {
   findingId: string;
-  currentStatus: string;
   lifecycleVersion: number;
   isAdmin: boolean;
   onStatusUpdated: () => void;
@@ -13,7 +12,6 @@ interface Props {
 
 export function GovernanceActions({
   findingId,
-  currentStatus,
   lifecycleVersion,
   isAdmin,
   onStatusUpdated,

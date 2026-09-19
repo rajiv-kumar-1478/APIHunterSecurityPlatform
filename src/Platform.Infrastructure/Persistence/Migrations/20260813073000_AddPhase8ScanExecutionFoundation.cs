@@ -1,4 +1,5 @@
 using System;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -6,6 +7,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Platform.Infrastructure.Persistence.Migrations
 {
     /// <inheritdoc />
+    [DbContext(typeof(PlatformDbContext))]
+    [Migration("20260813073000_AddPhase8ScanExecutionFoundation")]
     public partial class AddPhase8ScanExecutionFoundation : Migration
     {
         /// <inheritdoc />
@@ -171,6 +174,9 @@ namespace Platform.Infrastructure.Persistence.Migrations
 
             migrationBuilder.DropTable(
                 name: "security_scan_tools");
+
+            migrationBuilder.DropTable(
+                name: "security_targets");
         }
     }
 }

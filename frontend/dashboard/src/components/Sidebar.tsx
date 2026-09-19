@@ -2,6 +2,7 @@
 
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
+import { apiFetch, clearAuthClientState, getErrorMessage } from "@/lib/api-client";
 
 interface NavItem {
   label: string;
@@ -133,15 +134,14 @@ export function Sidebar({ isAdmin, userEmail }: SidebarProps) {
   const visibleItems = navItems.filter(item => !item.adminOnly || isAdmin);
 
   async function handleLogout() {
-    const csrf = sessionStorage.getItem("csrf_token") ?? "";
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
-    await fetch(`${apiUrl}/api/v1/auth/logout`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "X-CSRF-TOKEN": csrf },
-    });
-    sessionStorage.clear();
-    router.push("/login");
+    try {
+      await apiFetch("/api/v1/auth/logout", { method: "POST" });
+    } catch (error: unknown) {
+      console.error(getErrorMessage(error, "Logout request failed."));
+    } finally {
+      clearAuthClientState();
+      router.push("/login");
+    }
   }
 
   return (

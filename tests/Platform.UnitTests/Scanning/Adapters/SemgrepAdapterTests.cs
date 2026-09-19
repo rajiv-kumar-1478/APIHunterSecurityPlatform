@@ -140,7 +140,7 @@ public class SemgrepAdapterTests
         Assert.Equal("CWE-918", ssrf.CweId);
         Assert.Equal("src/Controllers/ProxyController.cs", ssrf.EndpointPath);
 
-        Assert.Equal(3, result.Coverage.EndpointsDiscovered); // Scanned files
+        Assert.Equal(3, result.Coverage!.EndpointsDiscovered); // Scanned files
     }
 
     [Fact]
@@ -159,7 +159,7 @@ public class SemgrepAdapterTests
         var result = await _adapter.ParseOutputAsync(context, raw);
 
         Assert.Empty(result.FindingCandidates);
-        Assert.True(result.Coverage.CoverageTruncated);
+        Assert.True(result.Coverage!.CoverageTruncated);
         Assert.Equal("MaxRawOutputBytesExceeded", result.Coverage.CoverageTruncationReason);
     }
 }

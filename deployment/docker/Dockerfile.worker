@@ -1,0 +1,21 @@
+FROM mcr.microsoft.com/dotnet/runtime:10.0 AS base
+WORKDIR /app
+
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+COPY ["src/Platform.Worker/Platform.Worker.csproj", "src/Platform.Worker/"]
+COPY ["src/Platform.Infrastructure/Platform.Infrastructure.csproj", "src/Platform.Infrastructure/"]
+COPY ["src/Platform.Application/Platform.Application.csproj", "src/Platform.Application/"]
+COPY ["src/Platform.Domain/Platform.Domain.csproj", "src/Platform.Domain/"]
+RUN dotnet restore "src/Platform.Worker/Platform.Worker.csproj"
+COPY . .
+WORKDIR /src/src/Platform.Worker
+RUN dotnet publish "Platform.Worker.csproj" -c Release -o /app/publish /p:UseAppHost=false
+
+FROM base AS final
+WORKDIR /app
+COPY --from=build /app/publish .
+RUN mkdir -p /app/dp-keys /app/logs \
+    && chown -R "$APP_UID:$APP_UID" /app
+USER $APP_UID
+ENTRYPOINT ["dotnet", "Platform.Worker.dll"]

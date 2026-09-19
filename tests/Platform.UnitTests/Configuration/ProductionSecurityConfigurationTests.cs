@@ -12,6 +12,7 @@ public class ProductionSecurityConfigurationTests
     private static Dictionary<string, string?> CreateValidProductionSettings() => new()
     {
         ["Authentication:RequireHttps"] = "true",
+        ["Tenant:Id"] = "11111111-1111-1111-1111-111111111111",
         ["Database:ConnectionString"] = "Host=prod-pg.internal;Database=apihunter;Username=api_user;Password=StrongSecretPassword123!",
         ["DataProtection:KeyPath"] = "/var/secrets/dp-keys",
         ["DataProtection:ApplicationName"] = "APIHunterPlatform",
@@ -41,6 +42,37 @@ public class ProductionSecurityConfigurationTests
         var act = () => ProductionSecurityConfigurationValidator.Validate(config);
 
         act.Should().NotThrow();
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not-a-guid")]
+    [InlineData("00000000-0000-0000-0000-000000000000")]
+    public void MissingOrInvalidTenantId_Fails(string? tenantId)
+    {
+        var settings = CreateValidProductionSettings();
+        settings["Tenant:Id"] = tenantId;
+        var config = BuildConfiguration(settings);
+
+        var act = () => ProductionSecurityConfigurationValidator.Validate(config);
+
+        var ex = act.Should().Throw<ProductionSecurityConfigurationException>().Which;
+        ex.Violations.Should().Contain(v => v.Contains("Tenant:Id"));
+    }
+
+    [Fact]
+    public void WorkerValidation_StillRequiresTenantId()
+    {
+        var settings = CreateValidProductionSettings();
+        settings["Tenant:Id"] = "";
+
+        var act = () => ProductionSecurityConfigurationValidator.Validate(
+            BuildConfiguration(settings),
+            requireHttps: false);
+
+        var ex = act.Should().Throw<ProductionSecurityConfigurationException>().Which;
+        ex.Violations.Should().Contain(v => v.Contains("Tenant:Id"));
     }
 
     [Fact]
@@ -208,6 +240,51 @@ public class ProductionSecurityConfigurationTests
 
         var ex = act.Should().Throw<ProductionSecurityConfigurationException>().Which;
         ex.Violations.Should().Contain(v => v.Contains("TrustedImageRegistries"));
+    }
+
+    [Fact]
+    public void DisabledScanner_WithConsumersAndCampaignsOff_Passes()
+    {
+        var settings = CreateValidProductionSettings();
+        settings["ScannerRuntime:RuntimeMode"] = "Disabled";
+        settings["ScannerRuntime:EgressGatewayMode"] = "None";
+        settings["ScannerRuntime:EgressGatewayEndpoint"] = "";
+        settings["ScannerRuntime:EgressNetworkName"] = "";
+        settings["ScanJobConsumer:Enabled"] = "false";
+        settings["CampaignScheduler:GlobalEnabled"] = "false";
+
+        var act = () => ProductionSecurityConfigurationValidator.Validate(BuildConfiguration(settings));
+
+        act.Should().NotThrow();
+    }
+
+    [Fact]
+    public void DisabledScanner_WithExecutionConsumerEnabled_Fails()
+    {
+        var settings = CreateValidProductionSettings();
+        settings["ScannerRuntime:RuntimeMode"] = "Disabled";
+        settings["ScannerRuntime:EgressGatewayMode"] = "None";
+        settings["ScannerRuntime:EgressGatewayEndpoint"] = "";
+        settings["ScannerRuntime:EgressNetworkName"] = "";
+        settings["ScanJobConsumer:Enabled"] = "true";
+
+        var act = () => ProductionSecurityConfigurationValidator.Validate(BuildConfiguration(settings));
+
+        act.Should().Throw<ProductionSecurityConfigurationException>()
+            .Which.Violations.Should().Contain(v => v.Contains("ScanJobConsumer:Enabled"));
+    }
+
+    [Fact]
+    public void WorkerValidation_DoesNotRequireWebHostHttpsSetting()
+    {
+        var settings = CreateValidProductionSettings();
+        settings.Remove("Authentication:RequireHttps");
+
+        var act = () => ProductionSecurityConfigurationValidator.Validate(
+            BuildConfiguration(settings),
+            requireHttps: false);
+
+        act.Should().NotThrow();
     }
 
     [Fact]

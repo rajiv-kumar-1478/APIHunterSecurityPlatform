@@ -117,12 +117,13 @@ public class EnforcedEgressGateway : IEnforcedEgressGateway, IEgressNetworkProxy
             return Task.FromResult(true);
         }
 
-        if (string.IsNullOrWhiteSpace(_options.EgressGatewayEndpoint))
-        {
-            return Task.FromResult(false);
-        }
-
-        return Task.FromResult(Uri.TryCreate(_options.EgressGatewayEndpoint, UriKind.Absolute, out _));
+        // This process is a policy/session coordinator, not a forwarding proxy host.
+        // Until a separately deployed gateway exposes an authenticated readiness
+        // contract, URI syntax or an open socket must never be reported as enforced
+        // egress readiness.
+        _logger.LogDebug(
+            "Egress gateway readiness is unavailable because no authenticated forwarding-gateway health contract is configured.");
+        return Task.FromResult(false);
     }
 
     private sealed class EnforcedEgressGatewaySession : IEnforcedEgressGatewaySession

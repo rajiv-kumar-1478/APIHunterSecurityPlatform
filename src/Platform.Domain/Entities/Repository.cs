@@ -20,9 +20,10 @@ public class Repository
     public DateTime UpdatedAtUtc { get; set; } = DateTime.UtcNow;
 
     /// <summary>
-    /// Concurrency token for EF Core optimistic concurrency.
+    /// PostgreSQL xmin optimistic-concurrency token. The Npgsql provider maps
+    /// uint properties configured with IsRowVersion() to the system xmin column.
     /// </summary>
-    public byte[] RowVersion { get; set; } = [];
+    public uint RowVersion { get; set; }
 
     // Navigation
     public ICollection<RepositorySource> Sources { get; set; } = [];

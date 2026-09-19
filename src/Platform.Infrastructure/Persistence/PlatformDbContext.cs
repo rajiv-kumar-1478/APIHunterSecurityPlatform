@@ -70,6 +70,10 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
     public DbSet<ScanPlanAuditRecord> ScanPlanAudits => Set<ScanPlanAuditRecord>();
     public DbSet<ScanToolInvocationRecord> ScanToolInvocations => Set<ScanToolInvocationRecord>();
 
+    // Step 9.4 — Deployment Webhook Registration & Idempotency
+    public DbSet<RegisteredApplication> RegisteredApplications => Set<RegisteredApplication>();
+    public DbSet<DeploymentWebhookRecord> DeploymentWebhookRecords => Set<DeploymentWebhookRecord>();
+
 
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -736,16 +740,19 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.ToTable("security_scan_jobs");
             e.HasKey(sj => sj.Id);
             e.HasIndex(sj => sj.Status);
+            e.HasIndex(sj => sj.TenantId);
+            e.HasIndex(sj => new { sj.TenantId, sj.Status, sj.CreatedAtUtc });
             e.HasIndex(sj => sj.TargetUrl);
             e.HasIndex(sj => sj.CreatedAtUtc);
             e.HasIndex(sj => sj.CampaignId);
+            e.HasIndex(sj => new { sj.CampaignId, sj.CampaignOutcomeProcessedAtUtc });
 
             // Phase 9.2 idempotency gate: prevents duplicate dispatch on scheduler retry
             // after ambiguous failures. Partial index (WHERE campaign_occurrence_key IS NOT NULL)
             // avoids indexing manual/run-now jobs that have no occurrence key.
             e.HasIndex(sj => new { sj.CampaignId, sj.CampaignOccurrenceKey })
              .IsUnique()
-             .HasFilter("campaign_occurrence_key IS NOT NULL")
+             .HasFilter("\"CampaignOccurrenceKey\" IS NOT NULL")
              .HasDatabaseName("IX_security_scan_jobs_campaign_occurrence_key");
 
             e.Property(sj => sj.TargetUrl).HasMaxLength(1024).IsRequired();
@@ -858,8 +865,12 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.HasIndex(c => c.SecurityTargetId);
             e.Property(c => c.Name).HasMaxLength(200).IsRequired();
             e.Property(c => c.Description).HasMaxLength(2000);
+            e.Property(c => c.Status).HasConversion<string>().HasMaxLength(50);
+            e.Property(c => c.ScanProfile).HasConversion<string>().HasMaxLength(50);
+            e.Property(c => c.ScheduleType).HasConversion<string>().HasMaxLength(50);
             e.Property(c => c.TimeZoneId).HasMaxLength(100).IsRequired();
             e.Property(c => c.CronExpression).HasMaxLength(100);
+            e.Property(c => c.ConcurrencyPolicy).HasConversion<string>().HasMaxLength(50);
             e.Property(c => c.LastCampaignOccurrenceKey).HasMaxLength(64);
 
             // Phase 9.2: ScheduleVersion is the optimistic concurrency token for scheduler dispatch.
@@ -898,6 +909,7 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.HasKey(a => a.Id);
             e.HasIndex(a => new { a.CampaignId, a.EvaluatedAtUtc });
             e.HasIndex(a => new { a.TenantId, a.EvaluatedAtUtc });
+            e.Property(a => a.Decision).HasConversion<string>().HasMaxLength(50);
             e.Property(a => a.TriggerSource).HasMaxLength(100).IsRequired();
             e.Property(a => a.Reason).HasMaxLength(1000).IsRequired();
 
@@ -939,7 +951,34 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.Property(i => i.ExecutionPhase).HasMaxLength(50).IsRequired();
             e.Property(i => i.Status).HasMaxLength(50).IsRequired();
         });
+
+        // Step 9.4 — Deployment Webhook Registration
+        modelBuilder.Entity<RegisteredApplication>(e =>
+        {
+            e.ToTable("registered_applications");
+            e.HasKey(a => a.Id);
+            e.HasIndex(a => new { a.TenantId, a.ApplicationId }).IsUnique();
+            e.HasIndex(a => a.Enabled);
+            e.Property(a => a.ApplicationId).HasMaxLength(256).IsRequired();
+            e.Property(a => a.DisplayName).HasMaxLength(500).IsRequired();
+            e.Property(a => a.AuthorizedTargetUrl).HasMaxLength(2048).IsRequired();
+            e.Property(a => a.Environment).HasMaxLength(100).IsRequired();
+            // EncryptedWebhookSecret is stored as text; length is variable (ASP.NET Core Data Protection output)
+            e.Property(a => a.EncryptedWebhookSecret).IsRequired();
+        });
+
+        // Step 9.4 — Deployment Webhook Idempotency Records
+        modelBuilder.Entity<DeploymentWebhookRecord>(e =>
+        {
+            e.ToTable("deployment_webhook_records");
+            // webhook_id is the natural unique key and PK — prevents duplicates at DB level.
+            e.HasKey(r => r.WebhookId);
+            e.Property(r => r.WebhookId).HasMaxLength(256).IsRequired();
+            e.Property(r => r.ApplicationId).HasMaxLength(256).IsRequired();
+            e.HasIndex(r => r.ProcessedAtUtc);
+        });
     }
+
 
     public override async Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
     {

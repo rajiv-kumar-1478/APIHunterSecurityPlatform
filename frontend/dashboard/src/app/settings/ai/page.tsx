@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
+import { apiRequest } from '@/lib/api-client';
 
 interface AiProviderDto {
   id: string;
@@ -33,6 +34,13 @@ interface AiTestResultDto {
   testedAtUtc: string;
 }
 
+async function requestAiSettings(): Promise<[AiProviderDto[], GlobalAiStateDto]> {
+  return Promise.all([
+    apiRequest<AiProviderDto[]>('/api/v1/ai/providers'),
+    apiRequest<GlobalAiStateDto>('/api/v1/ai/global-state'),
+  ]);
+}
+
 export default function AdminAiSettingsPage() {
   const [providers, setProviders] = useState<AiProviderDto[]>([]);
   const [globalState, setGlobalState] = useState<GlobalAiStateDto | null>(null);
@@ -43,78 +51,78 @@ export default function AdminAiSettingsPage() {
   const [editPriority, setEditPriority] = useState(100);
   const [editRawApiKey, setEditRawApiKey] = useState('');
 
-  const fetchAiSettings = async () => {
+  const fetchAiSettings = useCallback(async () => {
     try {
-      setLoading(true);
-      const [provRes, globalRes] = await Promise.all([
-        fetch('/api/v1/ai/providers'),
-        fetch('/api/v1/ai/global-state')
-      ]);
-
-      if (provRes.ok && globalRes.ok) {
-        const provData = await provRes.json();
-        const globalData = await globalRes.json();
-        setProviders(provData);
-        setGlobalState(globalData);
-      }
-    } catch (err) {
-      console.error('Failed to load AI provider settings:', err);
+      const [providerData, globalData] = await requestAiSettings();
+      setProviders(providerData);
+      setGlobalState(globalData);
+    } catch (error: unknown) {
+      console.error('Failed to load AI provider settings:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchAiSettings();
+    let cancelled = false;
+    void requestAiSettings()
+      .then(([providerData, globalData]) => {
+        if (cancelled) return;
+        setProviders(providerData);
+        setGlobalState(globalData);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) console.error('Failed to load AI provider settings:', error);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const toggleGlobalAi = async () => {
     if (!globalState) return;
     try {
-      const res = await fetch('/api/v1/ai/global-state', {
+      const data = await apiRequest<GlobalAiStateDto>('/api/v1/ai/global-state', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isEnabled: !globalState.isEnabled })
+        body: JSON.stringify({ isEnabled: !globalState.isEnabled }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        setGlobalState(data);
-        setActionMessage({
-          type: 'info',
-          text: data.isEnabled ? 'Global AI Analysis ENABLED.' : 'Global AI Analysis PAUSED. Queued jobs are preserved.'
-        });
-      }
-    } catch (err) {
+      setGlobalState(data);
+      setActionMessage({
+        type: 'info',
+        text: data.isEnabled ? 'Global AI Analysis ENABLED.' : 'Global AI Analysis PAUSED. Queued jobs are preserved.',
+      });
+    } catch {
       setActionMessage({ type: 'error', text: 'Failed to update global AI pause state.' });
     }
   };
 
   const toggleProvider = async (id: string, currentEnabled: boolean) => {
     try {
-      const res = await fetch(`/api/v1/ai/providers/${id}/toggle`, {
+      await apiRequest<unknown>(`/api/v1/ai/providers/${id}/toggle`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isEnabled: !currentEnabled })
+        body: JSON.stringify({ isEnabled: !currentEnabled }),
       });
-      if (res.ok) {
-        setActionMessage({ type: 'success', text: 'Provider enabled status updated.' });
-        fetchAiSettings();
-      }
-    } catch (err) {
+      setActionMessage({ type: 'success', text: 'Provider enabled status updated.' });
+      await fetchAiSettings();
+    } catch {
       setActionMessage({ type: 'error', text: 'Failed to toggle provider status.' });
     }
   };
 
   const resetCooldown = async (id: string) => {
     try {
-      const res = await fetch(`/api/v1/ai/providers/${id}/reset-cooldown`, {
-        method: 'POST'
+      await apiRequest<unknown>(`/api/v1/ai/providers/${id}/reset-cooldown`, {
+        method: 'POST',
       });
-      if (res.ok) {
-        setActionMessage({ type: 'success', text: 'Provider cooldown & health status reset.' });
-        fetchAiSettings();
-      }
-    } catch (err) {
+      setActionMessage({ type: 'success', text: 'Provider cooldown & health status reset.' });
+      await fetchAiSettings();
+    } catch {
       setActionMessage({ type: 'error', text: 'Failed to reset provider cooldown.' });
     }
   };
@@ -122,18 +130,15 @@ export default function AdminAiSettingsPage() {
   const testProvider = async (id: string) => {
     try {
       setActionMessage({ type: 'info', text: 'Testing provider connection...' });
-      const res = await fetch(`/api/v1/ai/providers/${id}/test`, {
-        method: 'POST'
+      const testResult = await apiRequest<AiTestResultDto>(`/api/v1/ai/providers/${id}/test`, {
+        method: 'POST',
       });
-      if (res.ok) {
-        const testResult: AiTestResultDto = await res.json();
-        setActionMessage({
-          type: testResult.isSuccess ? 'success' : 'error',
-          text: `[${testResult.status}] ${testResult.message}`
-        });
-        fetchAiSettings();
-      }
-    } catch (err) {
+      setActionMessage({
+        type: testResult.isSuccess ? 'success' : 'error',
+        text: `[${testResult.status}] ${testResult.message}`,
+      });
+      await fetchAiSettings();
+    } catch {
       setActionMessage({ type: 'error', text: 'Error testing provider connectivity.' });
     }
   };
@@ -141,22 +146,20 @@ export default function AdminAiSettingsPage() {
   const handleSaveEdit = async () => {
     if (!editingProvider) return;
     try {
-      const res = await fetch(`/api/v1/ai/providers/${editingProvider.id}`, {
+      await apiRequest<unknown>(`/api/v1/ai/providers/${editingProvider.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           modelName: editModelName,
           priority: editPriority,
-          rawApiKey: editRawApiKey ? editRawApiKey : null
-        })
+          rawApiKey: editRawApiKey ? editRawApiKey : null,
+        }),
       });
-      if (res.ok) {
-        setActionMessage({ type: 'success', text: 'Provider configuration saved successfully.' });
-        setEditingProvider(null);
-        setEditRawApiKey('');
-        fetchAiSettings();
-      }
-    } catch (err) {
+      setActionMessage({ type: 'success', text: 'Provider configuration saved successfully.' });
+      setEditingProvider(null);
+      setEditRawApiKey('');
+      await fetchAiSettings();
+    } catch {
       setActionMessage({ type: 'error', text: 'Failed to update provider configuration.' });
     }
   };

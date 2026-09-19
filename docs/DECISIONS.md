@@ -14,10 +14,10 @@
 
 ## DEC-002: Tech Stack Selection
 - **Date**: 2026-08-12
-- **Title**: .NET 10 + EF Core 10 + Next.js 15
-- **Context**: Selecting LTS runtime and modern web frontend stack.
-- **Decision**: Use .NET 10 Web API backend, EF Core 10 ORM, PostgreSQL database, and Next.js 15 (App Router) + Tailwind CSS frontend.
-- **Impact**: Provides supported long-term foundation through 2028.
+- **Title**: .NET 10 + EF Core 10 + Current Next.js App Router
+- **Context**: Selecting a supported backend runtime and modern web frontend stack.
+- **Decision**: Use .NET 10 Web API, EF Core 10, PostgreSQL, and the Next.js App Router. The original frontend version selection has been superseded; the current dashboard is pinned to Next.js 16.3.0 under DEC-022.
+- **Impact**: Provides a supported foundation while requiring explicit dependency upgrades and validation.
 
 ---
 
@@ -26,7 +26,7 @@
 - **Title**: Cookie-based Session Authentication with CSRF Tokens
 - **Context**: Securing browser-to-backend communication for the management dashboard.
 - **Decision**: Use HTTP-only SameSite cookies (`__ap_session`) backed by DB-persisted `AuthenticationSession` records, combined with ASP.NET Core `IAntiforgery` tokens sent via `X-CSRF-TOKEN` headers.
-- **Impact**: Complete protection against CSRF and XSS token theft. Allows instant session revocation by admin or user.
+- **Impact**: HttpOnly cookies reduce direct token theft and antiforgery protects unsafe cross-site requests; neither eliminates XSS. Persisted session state is revalidated on every request and supports immediate revocation.
 
 ---
 
@@ -182,7 +182,7 @@
   4. **Provider-Specific Response Classifiers**: `HTTP 200` does not universally mean `Valid`. Responses must confirm authenticated identity. `HTTP 403` maps to `ValidInsufficientScope`, `Revoked`, or `BlockedByPolicy` (not blindly `Invalid`). `HTTP 429` maps to `RateLimited` with provider cooldown retry.
   5. **Signed-Protocol AWS Validator**: Uses `AwsStsCredentialValidator` calling STS `GetCallerIdentity` without exposing or logging AWS secret keys or session tokens.
   6. **Historical Revalidation & Confidence**: Validation results are appended historical records. Stores `ValidationConfidence`, `ValidatorVersion`, and `PolicyVersion`.
-  7. **Narrow Decrypted Secret Scope**: Secrets are decrypted from AES-GCM storage in memory ONLY during validator execution and discarded immediately. ZERO secrets written to logs, DTOs, or database result fields.
+  7. **Narrow Decrypted Secret Scope**: Secrets are unprotected in transient memory through ASP.NET Core Data Protection purpose `Platform.SecretCandidate.RawValue` only during validator execution, then discarded. Raw secrets are never written to logs, DTOs, or validation-result fields.
 - **Impact**: Secure, non-destructive credential validation, complete SSRF protection, historical validation traceability, and zero secret leakage.
 
 ---
@@ -263,3 +263,44 @@
 
 
 
+
+---
+
+## DEC-020 and DEC-021: Scanner Provider and Generic CLI Boundaries
+- **Date**: 2026-09-05
+- **Authority**: See [`decisions/DEC-020-bughunter-provider-boundary.md`](./decisions/DEC-020-bughunter-provider-boundary.md) and [`decisions/DEC-021-generic-cli-tool-contract.md`](./decisions/DEC-021-generic-cli-tool-contract.md).
+- **Current interpretation**: BugHunter is unavailable until an authoritative provider contract exists. Generic CLI onboarding is configuration-only only when a tool already conforms to the approved generic executable/parser/runtime contract; typed adapters still require code and tests.
+
+---
+
+## DEC-022: Phase 9.1 Authentication, Tenant, Runtime, and Deployment Hardening
+- **Date**: 2026-09-05
+- **Context**: Production hardening exposed ambiguity between cookie identity and persisted sessions, request actors and tenant ownership, mocked scanner contracts and operational availability, and generated versus hand-authored EF history.
+- **Decision**:
+  1. Browser authentication is cookie-only. `sub` is the stable user ID and `sid` is `AuthenticationSession.Id`; every request revalidates session, enabled-user, identity, expiry/revocation, and current admin state from the database.
+  2. Cookies have fixed non-sliding expiry, active sessions are capped, and disablement/admin demotion revoke active sessions.
+  3. Authorization uses an authenticated fallback policy and explicit `PlatformAdmin` policy. Login is IP-rate-limited. Anonymous CSRF bootstrap plus global unsafe-request antiforgery returns stable `INVALID_CSRF_TOKEN` failures.
+  4. API and worker require one configured tenant. `SecurityScanJob.TenantId` is durable and required; `RequestedByUserId` is nullable provenance for scheduler/system jobs. Worker identity is never a synthetic platform admin.
+  5. The dashboard uses one credentialed, in-memory-CSRF API client and stores no browser bearer token or auth state in local/session storage.
+  6. API, worker, and frontend containers run non-root; API/worker share Data Protection keys/application identity; worker networking is private plus controlled outbound.
+  7. Scanner and BugHunter execution remain disabled/fail-closed until authoritative provider, image, authentication, output, cancellation, artifact, egress, and isolation contracts exist and pass live validation.
+  8. Migration history is reconciled through `20260906024820_FixPostgreSqlRowVersionTokens`; tenant backfill aborts rather than manufacturing empty ownership. `AddScanJobTenantOwnership` is a mandatory drain boundary for pre-tenant scan-job binaries. After that boundary, native `xmin`, generated legacy `bytea` columns, and synchronized physical scan-job counters provide temporary compatibility only for tenant-schema-compatible clients. `SSH.NET` is pinned to `2026.0.0` instead of suppressing its advisory.
+- **Supersedes/clarifies**:
+  - DEC-002's historical Next.js 15 wording; the dashboard now uses Next.js 16.3.0.
+  - DEC-003's claim of “complete” CSRF/XSS protection. HttpOnly cookies reduce direct token theft and antiforgery protects unsafe cross-site requests, but neither eliminates XSS.
+  - DEC-014 item 7's AES-GCM wording. Candidate secrets are unprotected only in transient memory through ASP.NET Core Data Protection purpose `Platform.SecretCandidate.RawValue`, then discarded.
+- **Impact**: Persisted database state is authoritative for identity and ownership, system jobs no longer fabricate users, unavailable scanners cannot silently fall back, and deployment/test evidence distinguishes code-level verification from Docker/PostgreSQL environment gates.
+
+---
+
+## DEC-023: PostgreSQL-Native Concurrency and Deterministic Campaign Races
+- **Date**: 2026-09-05
+- **Context**: Real PostgreSQL execution exposed behavior hidden by EF In-Memory and `EnsureCreated`: required `bytea` row-version columns had no generator, sub-microsecond timestamps changed occurrence hashes, a hand-written index name was folded differently from the EF contract, and Phase 9 added `JobVersion` without migrating the required legacy `Version` column. The original `Task.WhenAll` race did not guarantee both schedulers read the same version, failed tracked writes could be replayed into a later campaign, and a provider exception surfaced directly during commit could bypass the `DbUpdateException` boundary.
+- **Decision**:
+  1. `Repository.RowVersion` and `AnalysisJob.RowVersion` are `uint` properties mapped by Npgsql `IsRowVersion()` to PostgreSQL system `xmin`/`xid`. Migration `20260906024820_FixPostgreSqlRowVersionTokens` never creates, renames, or alters `xmin`; after pre-tenant scan-job binaries drain, it temporarily retains user `bytea` columns with transaction-derived defaults and update triggers for the immediately preceding tenant-aware model.
+  2. The migration merges physical `security_scan_jobs.Version` and `JobVersion` with `GREATEST`, synchronizes writes in both directions, and normalizes the quoted occurrence-index name. This column-level bridge is not support for the known pre-tenant binary. A later reviewed contract migration may remove compatibility objects only after tenant-aware legacy-token instances and their rollback window drain; automatic Down is intentionally rejected with SQLSTATE `0A000`.
+  3. Campaign v1 occurrence keys require UTC, truncate 100-nanosecond ticks to PostgreSQL's microsecond precision, then hash the invariant payload. This keeps database-loaded v1 keys compatible and stable across persistence.
+  4. Both classifier methods accept `Exception` so a provider failure counts identically whether EF wraps it or not, and the classifier is a required dispatch dependency rather than an optional one. Dispatch cleanup detaches failed writes before reconciliation or rethrow, whether EF wraps the failure or Npgsql surfaces it directly during commit. `SkippedClaimLost` requires either the exact PostgreSQL unique constraint or a transient unknown-commit outcome plus a complete durable tuple: matching job, campaign version/cursor/last key/last job/count/timestamps, and linked dispatch audit/metadata. Cancellation propagates; unrelated failures remain definitive and cannot contaminate the next campaign.
+  5. Real race tests use a two-party `SaveChangesInterceptor` barrier so both independent contexts stage the same persisted occurrence/version before either writes. The nine-test PostgreSQL gate also executes migrations and proves direct pre/post-commit failure handling, bidirectional scan-job counter fencing, stale `xmin`, legacy `bytea` rotation, non-vacuous precision normalization, and unrelated-error isolation.
+  6. External race connections require `TEST_POSTGRES_ALLOW_DATABASE_DROP=true` and a run-specific database matching `^apihunter_race_[0-9a-f]{32}$`. The fixture applies migrations, drops/recreates only that approved target, and deletes it after each test. Guessing passwords, accepting generic application connection variables, and targeting fixed/shared databases are forbidden.
+- **Impact**: Production inserts and stale-writer rejection work on migrated schemas; tenant-aware bytea/xmin clients remain mutually fenced, physical scan-job counters remain synchronized, pre-tenant application overlap is unsupported, occurrence identity survives PostgreSQL precision, and the authoritative PostgreSQL gate passes 9/9 without weakening scheduler behavior.

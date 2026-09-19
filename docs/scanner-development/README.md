@@ -2,61 +2,44 @@
 
 ## Overview
 
-The APIHunter Platform uses a **capability-driven scanner architecture** where security scanning tools (such as `httpx`, `nuclei`, `subfinder`, `jsminer`, `bughunter`, and `semgrep`) are integrated as decoupled plugins via the locked `IScanToolAdapter` contract.
+APIHunter uses capability-driven planning, canonical parser output, and platform-owned finding/provenance models. Tools with verified adapters include code-level implementations such as HTTP probing, static analysis, and secret scanning components; BugHunter is planned but currently unavailable.
 
-The core orchestration engine, campaign scheduler, and Phase 8 finding ingestion pipeline are **100% scanner-agnostic**. The platform plans scans dynamically by matching target asset kinds, security profiles, and requested capabilities without hardcoded tool invocations.
+The orchestration and ingestion layers do not consume scanner-specific output. That does not mean every scanner is configuration-only: a tool with a new CLI/output contract needs an adapter, parser, DI registration, planning policy, and tests. Configuration-only onboarding applies only to a tool already conforming to the approved generic CLI/parser/runtime contract.
 
----
+## Current availability boundary
 
-## Guide Index
+The checked-in production/Compose runtime is disabled and fail-closed. A valid manifest, parser, or unit test does not make a scanner operational. Runtime enablement additionally requires immutable artifact provenance, a physical sandbox/egress boundary, and successful live Docker validation.
+
+## Guide index
 
 | Document | Description |
 |---|---|
-| [`adapter-contract.md`](./adapter-contract.md) | Universal `IScanToolAdapter` interface, lifecycle, and execution contracts. |
-| [`manifest-and-provenance.md`](./manifest-and-provenance.md) | `ScanToolManifest` rules, OCI registry digests, and provenance validation. |
-| [`capability-taxonomy.md`](./capability-taxonomy.md) | Platform capability taxonomy tags, target asset types, and execution phases. |
-| [`output-parser-contract.md`](./output-parser-contract.md) | Bounded streaming parser requirements, resource limits, and error resilience. |
-| [`sandbox-requirements.md`](./sandbox-requirements.md) | `IScannerRuntimeSandbox` execution, capability dropping, and network isolation. |
-| [`finding-mapping.md`](./finding-mapping.md) | Mapping tool findings to `FindingCandidate`, evidence redaction, and canonical v1 fingerprinting. |
-| [`testing-requirements.md`](./testing-requirements.md) | Golden fixtures, adversarial parsing, manifest validation, and plan determinism tests. |
-| [`dashboard-integration.md`](./dashboard-integration.md) | Frontend UI decoupled read models, provenance display, and boundary invariants. |
-| [`adding-a-new-scanner.md`](./adding-a-new-scanner.md) | Step-by-step developer checklist for onboarding a new scanner plugin. |
+| [`adapter-contract.md`](./adapter-contract.md) | Typed and generic adapter responsibilities. |
+| [`manifest-and-provenance.md`](./manifest-and-provenance.md) | Immutable manifest and provenance rules. |
+| [`capability-taxonomy.md`](./capability-taxonomy.md) | Capability tags, target kinds, and phases. |
+| [`output-parser-contract.md`](./output-parser-contract.md) | Bounded parser and malformed-output requirements. |
+| [`sandbox-requirements.md`](./sandbox-requirements.md) | Normative isolation and live-validation gate. |
+| [`finding-mapping.md`](./finding-mapping.md) | Canonical findings, redaction, and active-verification authority. |
+| [`testing-requirements.md`](./testing-requirements.md) | Unit, integration, live-container, and PostgreSQL evidence tiers. |
+| [`dashboard-integration.md`](./dashboard-integration.md) | Canonical UI models and truthful availability states. |
+| [`adding-a-new-scanner.md`](./adding-a-new-scanner.md) | End-to-end onboarding checklist. |
 
----
-
-## Architectural Authority Flow
+## Authority flow
 
 ```text
-               Target & Scope Specification
-          (WebEndpoint / Repo / Contract / JS)
-                          │
-                          ▼
-                  ScanPlanningEngine
-           (Capability Matching & Policies)
-                          │
-                          ▼
-                  ResolvedScanPlan
-              (Audit PlanHash Generated)
-                          │
-                          ▼
-               IScannerRuntimeSandbox
-            (OCI Container / Drop-All Caps)
-                          │
-                          ▼
-                 Streaming Output Parser
-            (Resource Limits & Malformed Guard)
-                          │
-                          ▼
-                  FindingCandidate
-                          │
-                          ▼
-                  EvidenceSanitizer
-             (Multi-Layer Redaction Filter)
-                          │
-                          ▼
-              FindingFingerprintService
-              (Canonical v1 SHA-256 Digest)
-                          │
-                          ▼
-               Phase 8 Findings Ingestion
+registered tenant target + requested profile
+        ▼
+capability planner and immutable manifest
+        ▼
+IScannerRuntimeSandbox (must be operational)
+        ▼
+typed/generic adapter + bounded parser
+        ▼
+FindingCandidate + ScannerCoverage
+        ▼
+evidence sanitization and canonical ingestion
+        ▼
+platform DTOs, reports, provenance, and audit
 ```
+
+If the runtime, provenance, target scope, credentials, or egress boundary is unavailable, stop before execution and report a stable fail-closed status.

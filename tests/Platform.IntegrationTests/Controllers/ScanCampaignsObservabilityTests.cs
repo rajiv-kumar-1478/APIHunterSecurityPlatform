@@ -31,6 +31,7 @@ public class ScanCampaignsObservabilityTests : IDisposable
 
     private readonly Guid _tenantA = Guid.NewGuid();
     private readonly Guid _tenantB = Guid.NewGuid();
+    private readonly Guid _userId = Guid.NewGuid();
     private readonly Guid _repoId = Guid.NewGuid();
     private readonly Guid _targetId = Guid.NewGuid();
 
@@ -42,7 +43,7 @@ public class ScanCampaignsObservabilityTests : IDisposable
         _db = new PlatformDbContext(dbOptions);
 
         _mockUser = new Mock<ICurrentUserContext>();
-        _mockUser.Setup(u => u.UserId).Returns(_tenantA);
+        _mockUser.Setup(u => u.UserId).Returns(_userId);
         _mockUser.Setup(u => u.IsAuthenticated).Returns(true);
         _mockUser.Setup(u => u.IsPlatformAdmin).Returns(false);
 
@@ -56,7 +57,11 @@ public class ScanCampaignsObservabilityTests : IDisposable
         });
         _observabilityService = new CampaignObservabilityService(_db, options, NullLogger<CampaignObservabilityService>.Instance);
 
-        _controller = new ScanCampaignsController(_campaignService, _observabilityService, _mockUser.Object)
+        _controller = new ScanCampaignsController(
+            _campaignService,
+            _observabilityService,
+            _mockUser.Object,
+            new TestTenantContext(_tenantA))
         {
             ControllerContext = new ControllerContext
             {
@@ -142,6 +147,7 @@ public class ScanCampaignsObservabilityTests : IDisposable
         var scanJobId = Guid.NewGuid();
         _db.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = _tenantA,
             Id = scanJobId,
             CampaignId = campaignId,
             RepositoryId = _repoId,

@@ -83,7 +83,11 @@ public class ScanCampaignIntegrationTests : IDisposable
         var options = Options.Create(new CampaignSchedulerOptions());
         var obsService = new CampaignObservabilityService(_dbContext, options, NullLogger<CampaignObservabilityService>.Instance);
 
-        var controller = new ScanCampaignsController(_service, obsService, mockUser.Object)
+        var controller = new ScanCampaignsController(
+            _service,
+            obsService,
+            mockUser.Object,
+            new TestTenantContext(tenantId))
         {
             ControllerContext = new ControllerContext
             {

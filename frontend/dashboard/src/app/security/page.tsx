@@ -20,11 +20,17 @@ import { SecurityGraphView } from "@/components/SecurityGraphView";
 import { AlertingStatusCard } from "@/components/AlertingStatusCard";
 import { ScanManagementView } from "@/components/ScanManagementView";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { apiRequest } from "@/lib/api-client";
+
+interface CurrentUser {
+  isPlatformAdmin: boolean;
+  userId: string;
+  email?: string;
+}
 
 export default function SecurityCenterPage() {
   const router = useRouter();
-  const [user, setUser] = useState<{ isPlatformAdmin: boolean; userId: string; email?: string } | null>(null);
+  const [user, setUser] = useState<CurrentUser | null>(null);
 
   const [posture, setPosture] = useState<SecurityPosture | null>(null);
   const [alertingStatus, setAlertingStatus] = useState<AlertingStatus | null>(null);
@@ -52,12 +58,7 @@ export default function SecurityCenterPage() {
   useEffect(() => {
     async function init() {
       try {
-        const res = await fetch(`${API_URL}/api/v1/auth/me`, { credentials: "include" });
-        if (!res.ok) {
-          router.replace("/login");
-          return;
-        }
-        const data = await res.json();
+        const data = await apiRequest<CurrentUser>("/api/v1/auth/me");
         setUser(data);
 
         // Load posture and alerting status DTOs
@@ -75,24 +76,38 @@ export default function SecurityCenterPage() {
   }, [router]);
 
   // Load Findings Inventory
+  const requestFindings = useCallback(
+    () =>
+      getFindings({
+        severity: severity || undefined,
+        status: status || undefined,
+        findingType: findingType || undefined,
+        page,
+        pageSize: 20,
+      }),
+    [severity, status, findingType, page],
+  );
+
   const loadFindingsList = useCallback(async () => {
-    setLoadingFindings(true);
-    const data = await getFindings({
-      severity: severity || undefined,
-      status: status || undefined,
-      findingType: findingType || undefined,
-      page,
-      pageSize: 20,
-    });
+    const data = await requestFindings();
     setFindingsData(data);
     setLoadingFindings(false);
-  }, [severity, status, findingType, page]);
+  }, [requestFindings]);
 
   useEffect(() => {
-    if (user) {
-      loadFindingsList();
-    }
-  }, [user, loadFindingsList]);
+    if (!user) return;
+
+    let cancelled = false;
+    void requestFindings().then((data) => {
+      if (cancelled) return;
+      setFindingsData(data);
+      setLoadingFindings(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user, requestFindings]);
 
   if (!user) {
     return (
@@ -167,7 +182,7 @@ export default function SecurityCenterPage() {
         {/* Tab 1: Hosted Security Scans & Pipelines */}
         {activeTab === "scans" && (
           <div className="fade-in">
-            <ScanManagementView userIsAdmin={user.isPlatformAdmin} />
+            <ScanManagementView />
           </div>
         )}
 
@@ -179,14 +194,17 @@ export default function SecurityCenterPage() {
               status={status}
               findingType={findingType}
               onSeverityChange={(sev) => {
+                setLoadingFindings(true);
                 setSeverity(sev);
                 setPage(1);
               }}
               onStatusChange={(st) => {
+                setLoadingFindings(true);
                 setStatus(st);
                 setPage(1);
               }}
               onTypeChange={(t) => {
+                setLoadingFindings(true);
                 setFindingType(t);
                 setPage(1);
               }}
@@ -195,7 +213,10 @@ export default function SecurityCenterPage() {
             <FindingsTable
               data={findingsData}
               loading={loadingFindings}
-              onPageChange={(p) => setPage(p)}
+              onPageChange={(nextPage) => {
+                setLoadingFindings(true);
+                setPage(nextPage);
+              }}
               onSelectFinding={(f) => setSelectedFinding(f)}
             />
           </div>

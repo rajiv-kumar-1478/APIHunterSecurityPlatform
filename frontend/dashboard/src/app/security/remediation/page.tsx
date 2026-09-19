@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { getErrorMessage } from "@/lib/api-client";
 import {
   ActionFilterParams,
   RemediationActionListDto,
@@ -20,29 +21,59 @@ export default function RemediationCenterPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const requestData = useCallback(() => fetchRemediationActions(filters), [filters]);
+
   const loadData = useCallback(async () => {
-    setIsLoading(true);
-    setError(null);
     try {
-      const res = await fetchRemediationActions(filters);
+      const res = await requestData();
       setActions(res.actions);
       setSummary(res.summary);
-    } catch (err: any) {
-      setError(err.message || "Failed to load remediation center data");
+      setError(null);
+    } catch (loadError: unknown) {
+      setError(getErrorMessage(loadError, "Failed to load remediation center data"));
     } finally {
       setIsLoading(false);
     }
-  }, [filters]);
+  }, [requestData]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    let cancelled = false;
+    void requestData()
+      .then((res) => {
+        if (cancelled) return;
+        setActions(res.actions);
+        setSummary(res.summary);
+        setError(null);
+      })
+      .catch((loadError: unknown) => {
+        if (!cancelled) {
+          setError(getErrorMessage(loadError, "Failed to load remediation center data"));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requestData]);
+
+  const handleRefresh = () => {
+    setIsLoading(true);
+    setError(null);
+    void loadData();
+  };
 
   const handleSelectStatusCard = (statusKey: string) => {
+    setIsLoading(true);
+    setError(null);
     setFilters({ ...filters, status: statusKey || undefined, page: 1 });
   };
 
   const handleResetFilters = () => {
+    setIsLoading(true);
+    setError(null);
     setFilters({ page: 1, pageSize: 20 });
   };
 
@@ -65,7 +96,7 @@ export default function RemediationCenterPage() {
         </div>
 
         <button
-          onClick={loadData}
+          onClick={handleRefresh}
           disabled={isLoading}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-semibold transition-all border border-slate-800 shadow-lg disabled:opacity-50"
         >
@@ -95,7 +126,11 @@ export default function RemediationCenterPage() {
       {/* Filters Bar */}
       <RemediationFilters
         filters={filters}
-        onChange={setFilters}
+        onChange={(nextFilters) => {
+          setIsLoading(true);
+          setError(null);
+          setFilters(nextFilters);
+        }}
         onReset={handleResetFilters}
       />
 
@@ -116,7 +151,7 @@ export default function RemediationCenterPage() {
       <RemediationDetailDrawer
         actionId={selectedActionId}
         onClose={() => setSelectedActionId(null)}
-        onRefreshList={loadData}
+        onRefreshList={handleRefresh}
       />
     </div>
   );

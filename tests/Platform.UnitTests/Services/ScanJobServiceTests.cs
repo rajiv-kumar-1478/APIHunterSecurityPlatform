@@ -75,7 +75,7 @@ public class ScanJobServiceTests
 
         var userContext = new TestUserContext();
         var toolRegistry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        var service = new ScanJobService(db, userContext, toolRegistry, NullLogger<ScanJobService>.Instance);
+        var service = new ScanJobService(db, userContext, new TestTenantContext(), toolRegistry, NullLogger<ScanJobService>.Instance);
 
         var request = new CreateScanJobRequest(
             RepositoryId: null,
@@ -91,6 +91,7 @@ public class ScanJobServiceTests
         job.TargetUrl.Should().Be("https://example.com");
         job.Status.Should().Be(SecurityScanJobStatus.Queued);
         job.JobVersion.Should().Be(1);
+        job.TenantId.Should().Be(TestTenantContext.DefaultTenantId);
     }
 
     [Fact]
@@ -108,7 +109,7 @@ public class ScanJobServiceTests
 
         var userContext = new TestUserContext();
         var toolRegistry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        var service = new ScanJobService(db, userContext, toolRegistry, NullLogger<ScanJobService>.Instance);
+        var service = new ScanJobService(db, userContext, new TestTenantContext(), toolRegistry, NullLogger<ScanJobService>.Instance);
 
         var request = new CreateScanJobRequest(
             RepositoryId: null,
@@ -129,6 +130,7 @@ public class ScanJobServiceTests
         var jobId = Guid.NewGuid();
         db.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = jobId,
             TargetUrl = "https://example.com",
             Status = SecurityScanJobStatus.Queued,
@@ -139,7 +141,7 @@ public class ScanJobServiceTests
 
         var userContext = new TestUserContext();
         var toolRegistry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        var service = new ScanJobService(db, userContext, toolRegistry, NullLogger<ScanJobService>.Instance);
+        var service = new ScanJobService(db, userContext, new TestTenantContext(), toolRegistry, NullLogger<ScanJobService>.Instance);
 
         var job = await service.CancelScanJobAsync(jobId, "User requested cancellation", 1);
 
@@ -155,6 +157,7 @@ public class ScanJobServiceTests
         var jobId = Guid.NewGuid();
         db.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = jobId,
             TargetUrl = "https://example.com",
             Status = SecurityScanJobStatus.Queued,
@@ -165,7 +168,7 @@ public class ScanJobServiceTests
 
         var userContext = new TestUserContext();
         var toolRegistry = new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance);
-        var service = new ScanJobService(db, userContext, toolRegistry, NullLogger<ScanJobService>.Instance);
+        var service = new ScanJobService(db, userContext, new TestTenantContext(), toolRegistry, NullLogger<ScanJobService>.Instance);
 
         var act = async () => await service.CancelScanJobAsync(jobId, "User requested cancellation", 1);
         await act.Should().ThrowAsync<DbUpdateConcurrencyException>();

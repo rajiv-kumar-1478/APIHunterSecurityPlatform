@@ -27,6 +27,7 @@ public class SecurityScanControllerTests : IDisposable
     private readonly ScanToolHealthService _toolHealthService;
     private readonly InMemoryScanProviderSecretStore _secretStore;
     private readonly SecurityScanController _controller;
+    private readonly Guid _tenantId = Guid.NewGuid();
     private readonly Guid _adminUserId = Guid.NewGuid();
 
     public SecurityScanControllerTests()
@@ -42,7 +43,7 @@ public class SecurityScanControllerTests : IDisposable
         _mockUser.Setup(u => u.IsPlatformAdmin).Returns(true);
 
         _toolRegistryService = new ScanToolRegistryService(_dbContext, NullLogger<ScanToolRegistryService>.Instance);
-        _scanJobService = new ScanJobService(_dbContext, _mockUser.Object, _toolRegistryService, NullLogger<ScanJobService>.Instance);
+        _scanJobService = new ScanJobService(_dbContext, _mockUser.Object, new TestTenantContext(_tenantId), _toolRegistryService, NullLogger<ScanJobService>.Instance);
         _toolHealthService = new ScanToolHealthService(_toolRegistryService, NullLogger<ScanToolHealthService>.Instance);
         _secretStore = new InMemoryScanProviderSecretStore();
         var postProcessor = new ScanPostExecutionProcessor(_dbContext, _scanJobService, NullLogger<ScanPostExecutionProcessor>.Instance);
@@ -58,7 +59,8 @@ public class SecurityScanControllerTests : IDisposable
             postProcessor,
             reportBuilder,
             mockAuditService.Object,
-            mockExecutionEngine.Object);
+            mockExecutionEngine.Object,
+            new TestTenantContext(_tenantId));
     }
 
     public void Dispose()
@@ -85,8 +87,12 @@ public class SecurityScanControllerTests : IDisposable
         var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
         var providers = okResult.Value.Should().BeAssignableTo<IReadOnlyList<ScanProviderDto>>().Subject;
 
-        providers.Should().NotBeNull();
-        providers.Should().Contain(p => p.ProviderKey == "bughunter");
+        providers.Should().ContainSingle(p => p.ProviderKey == "bughunter");
+        var bugHunter = providers.Single(p => p.ProviderKey == "bughunter");
+        bugHunter.Enabled.Should().BeFalse();
+        bugHunter.AvailabilityStatus.Should().Be("ContractUnavailable");
+        bugHunter.UnavailableReason.Should().Be("BUGHUNTER_CONTRACT_UNAVAILABLE");
+        bugHunter.CredentialsConfigured.Should().BeTrue();
     }
 
     [Fact]
@@ -100,7 +106,7 @@ public class SecurityScanControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task Test4_CreateJob_Succeeds_ForAuthorizedTarget()
+    public async Task Test4_CreateJob_Returns503_WhenScannerRuntimeIsUnavailable()
     {
         _dbContext.SecurityTargets.Add(new SecurityTarget
         {
@@ -116,16 +122,15 @@ public class SecurityScanControllerTests : IDisposable
             TargetId: null,
             TargetUrl: "https://authorized.example.com",
             ScanProfile: SecurityScanProfileType.Recon,
-            ProviderKey: "bughunter"
-        );
+            ProviderKey: "bughunter");
 
         var result = await _controller.CreateJob(request, default);
-        var createdResult = result.Result.Should().BeOfType<CreatedAtActionResult>().Subject;
-        var job = createdResult.Value.Should().BeOfType<SecurityScanJob>().Subject;
+        var unavailable = result.Result.Should().BeOfType<ObjectResult>().Subject;
 
-        job.Should().NotBeNull();
-        job.TargetUrl.Should().Be("https://authorized.example.com");
-        job.Status.Should().Be(SecurityScanJobStatus.Queued);
+        unavailable.StatusCode.Should().Be(503);
+        System.Text.Json.JsonSerializer.Serialize(unavailable.Value)
+            .Should().Contain("SCANNER_RUNTIME_UNAVAILABLE");
+        _dbContext.SecurityScanJobs.Should().BeEmpty();
     }
 
     [Fact]
@@ -135,7 +140,8 @@ public class SecurityScanControllerTests : IDisposable
         var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
         var health = okResult.Value.Should().BeOfType<ScannerRuntimeHealthDto>().Subject;
 
-        health.Should().NotBeNull();
+        health.Status.Should().Be("NotConfigured");
+        health.ReadyForScans.Should().BeFalse();
         health.Runtime.Should().NotBeNull();
         health.Provenance.Should().NotBeNull();
         health.Provenance.ImageDigestRequired.Should().BeTrue();
@@ -164,6 +170,7 @@ public class SecurityScanControllerTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = receipt.JobId,
             TargetUrl = "https://api.example.com",
             ScanProfile = SecurityScanProfileType.Standard,
@@ -185,7 +192,7 @@ public class SecurityScanControllerTests : IDisposable
     }
 
     [Fact]
-    public async Task Test7_RetryJob_Returns200WithQueuedJob()
+    public async Task Test7_RetryJob_Returns503_WhenScannerRuntimeIsUnavailable()
     {
         _dbContext.SecurityTargets.Add(new SecurityTarget
         {
@@ -197,24 +204,26 @@ public class SecurityScanControllerTests : IDisposable
 
         var failedJob = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://retry.example.com",
             ScanProfile = SecurityScanProfileType.Recon,
             Status = SecurityScanJobStatus.Failed,
             FailureReason = "TOOL_FAILED",
-            RequestedByUserId = _adminUserId
+            RequestedByUserId = _adminUserId,
+            ProviderKey = "bughunter"
         };
 
         _dbContext.SecurityScanJobs.Add(failedJob);
         await _dbContext.SaveChangesAsync();
 
         var result = await _controller.RetryJob(failedJob.Id, default);
-        var okResult = result.Result.Should().BeOfType<OkObjectResult>().Subject;
-        var retriedJob = okResult.Value.Should().BeOfType<SecurityScanJob>().Subject;
+        var unavailable = result.Result.Should().BeOfType<ObjectResult>().Subject;
 
-        retriedJob.Status.Should().Be(SecurityScanJobStatus.Queued);
-        retriedJob.RetryOfJobId.Should().Be(failedJob.Id);
-        retriedJob.TargetUrl.Should().Be("https://retry.example.com");
+        unavailable.StatusCode.Should().Be(503);
+        System.Text.Json.JsonSerializer.Serialize(unavailable.Value)
+            .Should().Contain("SCANNER_RUNTIME_UNAVAILABLE");
+        _dbContext.SecurityScanJobs.Should().ContainSingle();
     }
 
     [Fact]
@@ -222,6 +231,7 @@ public class SecurityScanControllerTests : IDisposable
     {
         var runningJob = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://api.example.com",
             ScanProfile = SecurityScanProfileType.Recon,
@@ -260,6 +270,7 @@ public class SecurityScanControllerTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://api.example.com",
             ScanProfile = SecurityScanProfileType.Standard,
@@ -311,6 +322,7 @@ public class SecurityScanControllerTests : IDisposable
     {
         var job = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://api.example.com",
             ScanProfile = SecurityScanProfileType.Standard,
@@ -335,6 +347,7 @@ public class SecurityScanControllerTests : IDisposable
     {
         var job = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://api.example.com",
             ScanProfile = SecurityScanProfileType.Standard,
@@ -359,6 +372,7 @@ public class SecurityScanControllerTests : IDisposable
     {
         var job = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://api.example.com",
             ScanProfile = SecurityScanProfileType.Standard,
@@ -396,6 +410,7 @@ public class SecurityScanControllerTests : IDisposable
     {
         var job = new SecurityScanJob
         {
+            TenantId = _tenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://api.example.com",
             ScanProfile = SecurityScanProfileType.Standard,
@@ -410,5 +425,27 @@ public class SecurityScanControllerTests : IDisposable
         var result = await _controller.GetReport(job.Id, "unsupported_xyz", null, default);
         var badRequest = result.Should().BeOfType<BadRequestObjectResult>().Subject;
         badRequest.StatusCode.Should().Be(400);
+    }
+
+    [Fact]
+    public async Task Test15_PlatformAdmin_CannotAccessJobFromDifferentConfiguredTenant()
+    {
+        var job = new SecurityScanJob
+        {
+            TenantId = Guid.NewGuid(),
+            Id = Guid.NewGuid(),
+            TargetUrl = "https://api.example.com",
+            ScanProfile = SecurityScanProfileType.Standard,
+            Status = SecurityScanJobStatus.Completed,
+            RequestedByUserId = _adminUserId,
+            CreatedAtUtc = DateTime.UtcNow
+        };
+        _dbContext.SecurityScanJobs.Add(job);
+        await _dbContext.SaveChangesAsync();
+
+        var result = await _controller.GetJob(job.Id, default);
+
+        var forbidden = result.Result.Should().BeOfType<ObjectResult>().Subject;
+        forbidden.StatusCode.Should().Be(403);
     }
 }

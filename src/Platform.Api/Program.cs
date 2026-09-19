@@ -1,12 +1,16 @@
 using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Platform.Api.Filters;
 using Platform.Api.Middleware;
 using Platform.Application.Auth;
 using Platform.Application.Audit;
@@ -31,6 +35,7 @@ using Platform.Infrastructure.Authentication;
 using Platform.Infrastructure.Health;
 using Platform.Infrastructure.Notifications;
 using Platform.Infrastructure.Persistence;
+using Platform.Infrastructure.Tenancy;
 using Serilog;
 using Serilog.Events;
 
@@ -68,7 +73,19 @@ try
     // ─────────────────────────────────────────────────────────────────────────
     // Configuration Binding (strongly typed — no direct env var access below)
     // ─────────────────────────────────────────────────────────────────────────
-    builder.Services.Configure<AuthenticationOptions>(builder.Configuration.GetSection(AuthenticationOptions.SectionName));
+    builder.Services
+        .AddOptions<Platform.Application.Configuration.AuthenticationOptions>()
+        .Bind(builder.Configuration.GetSection(Platform.Application.Configuration.AuthenticationOptions.SectionName))
+        .Validate(options => options.SessionDurationMinutes > 0, "Authentication:SessionDurationMinutes must be greater than zero.")
+        .Validate(options => options.LockoutThreshold > 0, "Authentication:LockoutThreshold must be greater than zero.")
+        .Validate(options => options.LockoutDurationMinutes > 0, "Authentication:LockoutDurationMinutes must be greater than zero.")
+        .Validate(options => options.MaxConcurrentSessions > 0, "Authentication:MaxConcurrentSessions must be greater than zero.")
+        .ValidateOnStart();
+    builder.Services
+        .AddOptions<TenantOptions>()
+        .Bind(builder.Configuration.GetSection(TenantOptions.SectionName))
+        .Validate(options => options.Id != Guid.Empty, "Tenant:Id must be a non-empty GUID.")
+        .ValidateOnStart();
     builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(DatabaseOptions.SectionName));
     builder.Services.Configure<CorsOptions>(builder.Configuration.GetSection(CorsOptions.SectionName));
     builder.Services.Configure<Platform.Application.Configuration.DataProtectionOptions>(builder.Configuration.GetSection(Platform.Application.Configuration.DataProtectionOptions.SectionName));
@@ -129,19 +146,53 @@ try
             opts.Cookie.SecurePolicy = builder.Environment.IsProduction()
                 ? CookieSecurePolicy.Always
                 : CookieSecurePolicy.SameAsRequest;
+            opts.SlidingExpiration = false;
 
-            // Return 401 JSON for API endpoints — no redirect
+            // Return status codes for APIs instead of redirecting to HTML pages.
             opts.Events.OnRedirectToLogin = ctx =>
             {
-                ctx.Response.StatusCode = 401;
+                ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
                 return Task.CompletedTask;
             };
             opts.Events.OnRedirectToAccessDenied = ctx =>
             {
-                ctx.Response.StatusCode = 403;
+                ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
                 return Task.CompletedTask;
             };
+            opts.Events.OnValidatePrincipal = async ctx =>
+            {
+                var principal = ctx.Principal;
+                var sidValue = principal?.FindFirst("sid")?.Value;
+                var subValue = principal?.FindFirst("sub")?.Value;
+                var claimedAdmin = principal?.HasClaim("platform_admin", "true") == true;
+
+                var hasSessionId = Guid.TryParse(sidValue, out var sessionId);
+                var hasUserId = Guid.TryParse(subValue, out var userId);
+                var validatedSession = hasSessionId && hasUserId
+                    ? await ctx.HttpContext.RequestServices
+                        .GetRequiredService<AuthService>()
+                        .ValidateSessionAsync(sessionId, ctx.HttpContext.RequestAborted)
+                    : null;
+
+                if (validatedSession is null ||
+                    validatedSession.UserId != userId ||
+                    validatedSession.IsPlatformAdmin != claimedAdmin)
+                {
+                    ctx.RejectPrincipal();
+                    await ctx.HttpContext.SignOutAsync("Platform");
+                }
+            };
         });
+
+    builder.Services.AddAuthorization(options =>
+    {
+        options.FallbackPolicy = new AuthorizationPolicyBuilder()
+            .RequireAuthenticatedUser()
+            .Build();
+        options.AddPolicy("PlatformAdmin", policy => policy
+            .RequireAuthenticatedUser()
+            .RequireClaim("platform_admin", "true"));
+    });
 
     builder.Services.AddAntiforgery(opts =>
     {
@@ -225,6 +276,33 @@ try
     builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.SendGridCredentialValidator>();
     builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.MailgunCredentialValidator>();
     builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.SlackCredentialValidator>();
+
+    // Phase 5 extension providers. Keep this list identical to Platform.Worker/Program.cs so
+    // the API and worker agree on what is validatable, and keep Fallback registered last.
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.HuggingFaceCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.PerplexityCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.CohereCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.FireworksAiCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.ReplicateCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.OpenRouterCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.XaiCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.CerebrasCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.TavilyCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.FalAiCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.JinaAiCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.KlingAiCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.RunwayMlCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.RunPodCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.GoogleGeminiCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.ElevenLabsCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.TogetherAiCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.MistralCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.StabilityAiCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.Ai21CredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.AssemblyAiCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.DeepgramCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.LeonardoAiCredentialValidator>();
+
     builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.FallbackCredentialValidator>();
     builder.Services.AddScoped<CredentialValidationService>();
 
@@ -281,8 +359,6 @@ try
     builder.Services.AddScoped<ScanReportBuilderService>();
     builder.Services.AddSingleton<SecurityReportFormatterRegistry>();
     builder.Services.AddScoped<IScanToolHealthService, ScanToolHealthService>();
-    builder.Services.AddSingleton<IBugHunterProvider, BugHunterScanProvider>();
-    builder.Services.AddSingleton<IScanProvider, BugHunterScanProvider>();
     builder.Services.AddTransient<Func<string, IGenericCliToolAdapter>>(sp => toolKey =>
         new GenericCliToolAdapter(toolKey, sp.GetRequiredService<ILogger<GenericCliToolAdapter>>()));
     builder.Services.AddScoped<IScanWorker, GenericScanWorker>();
@@ -296,9 +372,14 @@ try
     builder.Services.AddSingleton<IScannerRuntimeSandbox>(sp =>
     {
         var options = sp.GetRequiredService<ScannerRuntimeOptions>();
+        if (options.RuntimeMode == ScannerRuntimeMode.Disabled)
+        {
+            return new UnavailableScannerRuntime(
+                sp.GetRequiredService<ILogger<UnavailableScannerRuntime>>());
+        }
+
         var egressGateway = sp.GetRequiredService<IEnforcedEgressGateway>();
         var cliAdapterFactory = sp.GetRequiredService<Func<string, IGenericCliToolAdapter>>();
-
         if (options.RuntimeMode == ScannerRuntimeMode.CloudManagedContainer)
         {
             var httpClient = new HttpClient
@@ -351,7 +432,6 @@ try
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.NucleiAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.SubfinderAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.JsMinerAdapter>();
-    builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.BugHunterAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.SemgrepAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolAdapter, Platform.Application.Scanning.Adapters.TruffleHogAdapter>();
     builder.Services.AddSingleton<Platform.Application.Scanning.Adapters.IScanToolRegistry, Platform.Application.Scanning.Adapters.ScanToolRegistry>();
@@ -367,6 +447,13 @@ try
     builder.Services.AddSingleton<Platform.Application.Scanning.Orchestration.IDeploymentScanOrchestrator, Platform.Application.Scanning.Orchestration.DeploymentScanOrchestrator>();
     builder.Services.AddScoped<Platform.Application.Scanning.Audit.IScanPlanAuditService, Platform.Application.Scanning.Audit.ScanPlanAuditService>();
     builder.Services.AddScoped<Platform.Application.Scanning.Execution.IScanExecutionEngine, Platform.Application.Scanning.Execution.ScanExecutionEngine>();
+
+    // Step 9.4 — Deployment Webhook Wiring
+    // IDeploymentLeaseStore was previously unregistered (concrete gate relied on it).
+    builder.Services.AddSingleton<Platform.Application.Scanning.Orchestration.IDeploymentLeaseStore, Platform.Infrastructure.Scanning.InMemoryDeploymentLeaseStore>();
+    builder.Services.AddScoped<Platform.Application.Scanning.Verification.IApplicationTargetResolver, Platform.Infrastructure.Scanning.DatabaseApplicationTargetResolver>();
+    builder.Services.AddScoped<Platform.Application.Scanning.Verification.IDeploymentScanJobEnqueuer, Platform.Infrastructure.Scanning.DatabaseDeploymentScanJobEnqueuer>();
+    builder.Services.AddScoped<Platform.Application.Scanning.Verification.IDeploymentWebhookHandler, Platform.Application.Scanning.Verification.DeploymentWebhookHandler>();
 
 
 
@@ -414,6 +501,7 @@ try
     // Current User Context
     // ─────────────────────────────────────────────────────────────────────────
     builder.Services.AddHttpContextAccessor();
+    builder.Services.AddSingleton<ITenantContext, ConfiguredTenantContext>();
     builder.Services.AddScoped<ICurrentUserContext, HttpCurrentUserContext>();
     builder.Services.AddScoped<ICurrentUserContextProvider>(sp =>
         (HttpCurrentUserContext)sp.GetRequiredService<ICurrentUserContext>());
@@ -429,7 +517,8 @@ try
     // ─────────────────────────────────────────────────────────────────────────
     // Controllers + OpenAPI
     // ─────────────────────────────────────────────────────────────────────────
-    builder.Services.AddControllersWithViews();
+    builder.Services.AddControllersWithViews(options =>
+        options.Filters.Add<ApiAntiforgeryAuthorizationFilter>());
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen(opts =>
     {

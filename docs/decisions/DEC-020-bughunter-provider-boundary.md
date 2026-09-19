@@ -1,13 +1,13 @@
 # DEC-020: BugHunter Scan Provider Boundary & Replacement Architecture
 
-- **Status**: Accepted & Locked (Phase 8 Step 1)
-- **Date**: 2026-08-13
-- **Context**:
-  The platform integrates BugHunter and associated ProjectDiscovery security tools (`subfinder`, `httpx`, `katana`, `nuclei`) for hosted scanning capability. BugHunter is an active external toolchain. The platform architecture must prevent BugHunter CLI syntax or package dependencies from leaking into core domain or application business logic.
+- **Status**: Accepted boundary; operational availability superseded/clarified by DEC-022
+- **Original date**: 2026-08-13
+- **Clarified**: 2026-09-05
+- **Context**: The platform needs a stable compatibility boundary for a possible BugHunter integration without allowing unverified CLI/API/package behavior into domain or application logic. No authoritative BugHunter image/API/CLI, authentication, output, cancellation, artifact, or isolation contract is currently available.
 - **Decision**:
-  1. **Provider Adapter Boundary**: BugHunter is integrated strictly via `IBugHunterProvider` / `IScanProvider` abstraction. No core domain or application logic invokes `bughunter` CLI commands directly.
-  2. **Capability-Based Scheduling**: Jobs request high-level capabilities (`SubdomainEnumeration`, `HttpProbing`, `VulnerabilityScanning`, `AiAssistedHunting`), mapped dynamically via `ScanToolRegistryService`.
-  3. **Secret Isolation**: Provider secrets (`GROQ_API_KEY`, `VIRUSTOTAL_API_KEY`) are resolved via `IScanProviderSecretStore`. `InMemoryScanProviderSecretStore` is strictly scoped for `Development/Test` environments; production uses `ConfigurationScanProviderSecretStore` integrated with `IDataProtectionProvider`.
-  4. **Reversible Provider Architecture**: Replacing BugHunter requires implementing `IScanProvider`, mapping canonical DTOs, and updating DI registration. Zero changes to security findings, graph intelligence, or core platform domain models are required.
-- **Impact**:
-  Guaranteed 100% provider isolation. BugHunter can be upgraded, swapped, or replaced without architectural drift or core engine refactoring.
+  1. **Provider boundary**: BugHunter remains behind `IBugHunterProvider` / `IScanProvider`; core code never invokes BugHunter-specific commands.
+  2. **Unavailable by default**: `BugHunterScanProvider` returns `BUGHUNTER_CONTRACT_UNAVAILABLE`/blocked for start, status, result, and cancellation. It must not fabricate state or fall back to host execution.
+  3. **Capability intent is not availability**: Capability mapping may describe a future provider, but planning/health cannot treat BugHunter as operational until authoritative contracts and live probes exist.
+  4. **Secret isolation**: Any future implementation must lease only required secrets in memory and keep them out of DTOs, logs, command lines, artifacts, and persistence.
+  5. **Reversible implementation**: A future provider may be implemented behind this boundary without changing canonical findings or graph models, but adapter/parser/DI/policy and contract tests are expected where required.
+- **Impact**: The architecture can accept a future verified implementation while current APIs and UI remain truthful and fail closed.

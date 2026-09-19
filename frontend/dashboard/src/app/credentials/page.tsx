@@ -1,10 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { ApiError, apiRequest } from "@/lib/api-client";
+
+interface CandidateListResponse {
+  items?: CandidateItem[];
+  totalCount?: number;
+}
+
+interface ValidationResult {
+  status: string;
+}
 
 interface CandidateItem {
   id: string;
@@ -57,81 +66,104 @@ export default function CredentialsPage() {
   const [validatingCandidateId, setValidatingCandidateId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  useEffect(() => {
-    async function init() {
-      try {
-        const res = await fetch(`${API_URL}/api/v1/auth/me`, { credentials: "include" });
-        if (!res.ok) {
-          router.replace("/login");
-          return;
-        }
-        const uData = await res.json();
-        setUser(uData);
+  const requestCandidates = useCallback(async () => {
+    const query = new URLSearchParams({
+      page: String(page),
+      pageSize: "15",
+    });
+    if (providerFilter !== "all") query.set("credentialType", providerFilter);
 
-        await fetchCandidates();
-      } catch {
-        router.replace("/login");
-      } finally {
-        setLoading(false);
-      }
+    const data = await apiRequest<CandidateListResponse>(`/api/v1/candidates?${query.toString()}`);
+    let items = data.items ?? [];
+
+    // Apply client-side status filter if specified
+    if (statusFilter !== "all") {
+      items = items.filter(
+        (candidate) =>
+          (candidate.latestValidationStatus ?? "Unvalidated").toLowerCase() === statusFilter.toLowerCase(),
+      );
     }
-    init();
-  }, [router, page, providerFilter, statusFilter]);
 
-  async function fetchCandidates() {
-    setLoading(true);
+    if (searchQuery.trim()) {
+      const queryText = searchQuery.toLowerCase();
+      items = items.filter(
+        (candidate) =>
+          candidate.maskedValue.toLowerCase().includes(queryText) ||
+          candidate.credentialType.toLowerCase().includes(queryText),
+      );
+    }
+
+    return { items, totalCount: data.totalCount ?? items.length };
+  }, [page, providerFilter, searchQuery, statusFilter]);
+
+  const fetchCandidates = useCallback(async () => {
     try {
-      let url = `${API_URL}/api/v1/candidates?page=${page}&pageSize=15`;
-      if (providerFilter !== "all") url += `&credentialType=${encodeURIComponent(providerFilter)}`;
-
-      const res = await fetch(url, { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        let items: CandidateItem[] = data.items ?? [];
-
-        // Apply client-side status filter if specified
-        if (statusFilter !== "all") {
-          items = items.filter(c => (c.latestValidationStatus ?? "Unvalidated").toLowerCase() === statusFilter.toLowerCase());
-        }
-
-        if (searchQuery.trim()) {
-          const q = searchQuery.toLowerCase();
-          items = items.filter(c => c.maskedValue.toLowerCase().includes(q) || c.credentialType.toLowerCase().includes(q));
-        }
-
-        setCandidates(items);
-        setTotalCount(data.totalCount ?? items.length);
-      }
-    } catch (e) {
-      console.error("Failed to fetch candidates", e);
+      const data = await requestCandidates();
+      setCandidates(data.items);
+      setTotalCount(data.totalCount);
+    } catch (error: unknown) {
+      console.error("Failed to fetch candidates", error);
     } finally {
       setLoading(false);
     }
-  }
+  }, [requestCandidates]);
+
+  useEffect(() => {
+    async function loadCurrentUser() {
+      try {
+        const userData = await apiRequest<{
+          isPlatformAdmin: boolean;
+          userId: string;
+          email?: string;
+        }>("/api/v1/auth/me");
+        setUser(userData);
+      } catch {
+        router.replace("/login");
+      }
+    }
+    void loadCurrentUser();
+  }, [router]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    let cancelled = false;
+    void requestCandidates()
+      .then((data) => {
+        if (cancelled) return;
+        setCandidates(data.items);
+        setTotalCount(data.totalCount);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) console.error("Failed to fetch candidates", error);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requestCandidates, user]);
 
   async function handleTriggerValidation(candidateId: string) {
     setValidatingCandidateId(candidateId);
     setActionMessage(null);
     try {
-      const res = await fetch(`${API_URL}/api/v1/validation/candidates/${candidateId}/validate`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" }
-      });
-
-      if (res.ok) {
-        const result = await res.json();
-        setActionMessage({ type: "success", text: `Validation Completed! Status: ${result.status}` });
-        await fetchCandidates();
-        if (selectedCandidate?.id === candidateId) {
-          await openHistoryModal(selectedCandidate);
-        }
-      } else {
-        const err = await res.json();
-        setActionMessage({ type: "error", text: err.message ?? "Validation request failed" });
+      const result = await apiRequest<ValidationResult>(
+        `/api/v1/validation/candidates/${candidateId}/validate`,
+        { method: "POST" },
+      );
+      setActionMessage({ type: "success", text: `Validation Completed! Status: ${result.status}` });
+      await fetchCandidates();
+      if (selectedCandidate?.id === candidateId) {
+        await openHistoryModal(selectedCandidate);
       }
-    } catch (e) {
-      setActionMessage({ type: "error", text: "Network error triggering validation" });
+    } catch (error: unknown) {
+      setActionMessage({
+        type: "error",
+        text: error instanceof ApiError ? error.message : "Network error triggering validation",
+      });
     } finally {
       setValidatingCandidateId(null);
     }
@@ -142,15 +174,12 @@ export default function CredentialsPage() {
     setHistoryLoading(true);
     setHistory([]);
     try {
-      const res = await fetch(`${API_URL}/api/v1/validation/candidates/${cand.id}/history`, {
-        credentials: "include"
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setHistory(data);
-      }
-    } catch (e) {
-      console.error("Failed to fetch validation history", e);
+      const data = await apiRequest<ValidationHistoryItem[]>(
+        `/api/v1/validation/candidates/${cand.id}/history`,
+      );
+      setHistory(data);
+    } catch (error: unknown) {
+      console.error("Failed to fetch validation history", error);
     } finally {
       setHistoryLoading(false);
     }
@@ -182,7 +211,7 @@ export default function CredentialsPage() {
     }
   }
 
-  function renderProvenancePill(type: string) {
+  function renderProvenancePill() {
     return (
       <div className="flex flex-wrap gap-1">
         <span className="px-2 py-0.5 text-[10px] font-medium rounded bg-indigo-950 text-indigo-300 border border-indigo-800/60">⚙️ Deterministic</span>
@@ -348,7 +377,7 @@ export default function CredentialsPage() {
 
                       {/* Discovery Provenance */}
                       <td className="px-6 py-4">
-                        {renderProvenancePill(cand.credentialType)}
+                        {renderProvenancePill()}
                       </td>
 
                       {/* Validation Truth */}

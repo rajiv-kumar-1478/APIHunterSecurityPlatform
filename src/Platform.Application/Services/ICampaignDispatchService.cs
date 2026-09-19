@@ -21,19 +21,18 @@ public interface ICampaignDispatchService
 
     /// <summary>
     /// Identifies SecurityScanJobs in Running state whose LastHeartbeatUtc has exceeded
-    /// the configured stuck threshold. Atomically claims each via JobVersion concurrency token:
-    ///   - if the live worker heartbeated first, DbUpdateConcurrencyException aborts recovery
-    ///   - if recovery wins: Status = TimedOut, reason = CAMPAIGN_JOB_STUCK
-    /// Increments ConsecutiveFailuresCount and auto-pauses campaign at threshold.
-    /// Returns the number of jobs successfully recovered.
+    /// the configured stuck threshold. JobVersion fences timeout recovery against a live
+    /// heartbeat. Recovery commits the TimedOut state and audit atomically, then routes
+    /// campaign accounting through ProcessJobOutcomeAsync.
+    /// Returns the number of jobs successfully recovered, independent of later accounting races.
     /// </summary>
     Task<int> RecoverStuckJobsAsync(CancellationToken ct = default);
 
     /// <summary>
-    /// Called by ScanPostExecutionProcessor after a campaign scan job completes.
-    /// On success: ConsecutiveFailuresCount = 0.
-    /// On failure: ConsecutiveFailuresCount++, auto-pauses at threshold.
-    /// No-op for jobs without a CampaignId.
+    /// Applies the earliest pending terminal outcome for a campaign. Durable job status,
+    /// not the compatibility success argument, determines success or failure. Campaign
+    /// counters/status and the per-job processed marker commit atomically.
+    /// No-op for jobs without a CampaignId and defers nonterminal or out-of-order jobs.
     /// </summary>
     Task ProcessJobOutcomeAsync(Guid scanJobId, bool success, CancellationToken ct = default);
 }

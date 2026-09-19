@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -5,6 +6,8 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Platform.Infrastructure.Persistence.Migrations
 {
     /// <inheritdoc />
+    [DbContext(typeof(PlatformDbContext))]
+    [Migration("20260813083000_AddExecutableToSecurityScanTool")]
     public partial class AddExecutableToSecurityScanTool : Migration
     {
         /// <inheritdoc />

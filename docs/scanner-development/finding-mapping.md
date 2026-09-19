@@ -1,61 +1,33 @@
 # Finding Candidate Mapping & Canonical Fingerprinting
 
-## `FindingCandidate` Record
+Parsers translate bounded scanner observations into platform-owned `FindingCandidate` records. Raw scanner output is never a finding by itself.
 
-Parsers convert scanner observations into standardized `FindingCandidate` records:
-
-```csharp
-public sealed record FindingCandidate(
-    string ToolKey,
-    string ToolVersion,
-    FindingType FindingType,
-    string Title,
-    string? Description,
-    string RawSeverity,
-    string TargetUrl,
-    string? CweId,
-    string? EndpointPath,
-    string? HttpMethod,
-    string? ParameterName,
-    string RuleOrTemplateId,
-    string RawEvidenceJson,
-    DateTime ObservedAtUtc
-);
-```
-
----
-
-## Authority & Ingestion Flow
+## Ingestion authority
 
 ```text
-FindingCandidate (Emitted by Parser)
-          │
-          ▼
-   EvidenceSanitizer
-          │
-          ├── 1. Redact Authorization / Cookie headers
-          ├── 2. Redact cleartext tokens (AKIA..., ghp_..., eyJ...)
-          └── 3. Bounded JSON encoding (16 KiB ceiling)
-          │
-          ▼
-FindingFingerprintService
-          │
-          ▼
-Canonical v1 SHA-256 Digest:
-SHA256("{FindingType}:{NormalizedTargetUrl}:{NormalizedEndpointPath}:{HttpMethod}:{ParameterName}:{RuleOrTemplateId}")
-          │
-          ▼
-Phase 8 Finding Ingestion Engine
-(Authoritative Deduplication, Status Transition, SLA Tracking)
+bounded parser output
+    ▼
+FindingCandidate + immutable tool provenance
+    ▼
+EvidenceSanitizer
+  - redact authorization/cookies/tokens/private keys
+  - bound JSON/evidence size
+    ▼
+tenant/repository/target-qualified fingerprint and deduplication
+    ▼
+authoritative finding, evidence, observation, risk, and audit persistence
 ```
 
----
+## Mapping rules
 
-## Static vs. Active Finding Classification
+- Preserve tool key/version/image digest and rule/template identifiers as provenance; do not expose raw secrets or unbounded output.
+- Normalize severity, finding type, endpoint, method, identifiers, and timestamps through platform rules.
+- Reject malformed or out-of-scope targets before persistence.
+- Static/SAST/recon observations describe potential or code-level conditions and must not claim confirmed exploitability.
+- Active verification may claim a confirmed dynamic condition only when an **operational, authorized runtime** produced reproducible sanitized evidence against the registered tenant target.
+- BugHunter is currently unavailable and therefore cannot emit authoritative active findings. Planned provider capability must not be represented as observed evidence.
+- AI output remains advisory and cannot create or upgrade an authoritative finding without deterministic evidence.
 
-- **Static Observations (SAST, AST, Recon)**:
-  - Must map to `FindingType.ProductionServiceExposed` with the specific `RuleOrTemplateId` (e.g. `cwe-89-sql-injection`, `dom-xss-potential`).
-  - Represents a code-level or attack-surface discovery; never claims active confirmed exploitability by itself.
+## Deduplication
 
-- **Active Dynamic Verification (DAST, BugHunter, Nuclei)**:
-  - When actively verified against a target with reproducible proof-of-concept HTTP traffic, maps to specific finding types (`SqlInjection`, `ServerSideRequestForgery`, `AuthenticationBypass`).
+Fingerprints must include the durable ownership/asset boundary and canonical security identity needed to prevent cross-tenant or cross-target mutation. Repeated observations update observation/provenance state without erasing finding lifecycle history.

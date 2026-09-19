@@ -1,4 +1,10 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import {
+  ApiError,
+  apiFetch,
+  getResponseMessage,
+  parseJsonResponse,
+  parseResponseBody,
+} from "@/lib/api-client";
 
 export type RemediationActionStatus =
   | "Proposed"
@@ -131,9 +137,70 @@ export interface ActionFilterParams {
   pageSize?: number;
 }
 
-function getAuthHeader(): Record<string, string> {
-  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
-  return token ? { Authorization: `Bearer ${token}` } : {};
+export interface RemediationTransitionResponse {
+  message: string;
+  actionId: string;
+  newVersion: number;
+  status: RemediationActionStatus;
+}
+
+export interface RemediationExecutionResponse {
+  message: string;
+  executionId: string;
+  status: string;
+  success: boolean;
+  failureReason?: string;
+}
+
+export interface RemediationVerificationResponse {
+  message: string;
+  verificationId: string;
+  status: string;
+  riskDelta: number;
+}
+
+export class RemediationConcurrencyError extends ApiError {
+  readonly isConcurrencyConflict = true;
+
+  constructor(message: string, response: Response, body: unknown) {
+    super(message, {
+      status: response.status,
+      statusText: response.statusText,
+      url: response.url,
+      body,
+    });
+    this.name = "RemediationConcurrencyError";
+  }
+}
+
+export function isRemediationConcurrencyError(error: unknown): error is RemediationConcurrencyError {
+  return error instanceof RemediationConcurrencyError;
+}
+
+async function parseRequiredJson<T>(response: Response, fallbackMessage: string): Promise<T> {
+  if (!response.ok) throw new Error(fallbackMessage);
+
+  const data = await parseJsonResponse<T>(response);
+  if (data === null) throw new Error(fallbackMessage);
+  return data;
+}
+
+async function parseMutationResponse<T>(response: Response, fallbackMessage: string): Promise<T> {
+  const body = await parseResponseBody(response);
+
+  if (response.status === 409) {
+    throw new RemediationConcurrencyError(
+      getResponseMessage(body, "Version conflict. Please refresh."),
+      response,
+      body,
+    );
+  }
+
+  if (!response.ok) {
+    throw ApiError.fromResponse(response, body, fallbackMessage);
+  }
+
+  return body as T;
 }
 
 export async function fetchRemediationActions(params: ActionFilterParams = {}): Promise<RemediationListResponse> {
@@ -146,89 +213,72 @@ export async function fetchRemediationActions(params: ActionFilterParams = {}): 
   if (params.page) query.append("page", params.page.toString());
   if (params.pageSize) query.append("pageSize", params.pageSize.toString());
 
-  const res = await fetch(`${API_URL}/api/v1/security/remediation?${query.toString()}`, {
-    headers: { ...getAuthHeader() },
-  });
-  if (!res.ok) throw new Error("Failed to fetch remediation actions");
-  return res.json();
+  const response = await apiFetch(`/api/v1/security/remediation?${query.toString()}`);
+  return parseRequiredJson<RemediationListResponse>(response, "Failed to fetch remediation actions");
 }
 
 export async function fetchRemediationActionById(id: string): Promise<RemediationActionDetailDto> {
-  const res = await fetch(`${API_URL}/api/v1/security/remediation/${id}`, {
-    headers: { ...getAuthHeader() },
-  });
-  if (!res.ok) throw new Error(`Failed to fetch remediation action ${id}`);
-  return res.json();
+  const response = await apiFetch(`/api/v1/security/remediation/${id}`);
+  return parseRequiredJson<RemediationActionDetailDto>(response, `Failed to fetch remediation action ${id}`);
 }
 
 export async function fetchRemediationHistory(id: string): Promise<RemediationActionHistoryDto[]> {
-  const res = await fetch(`${API_URL}/api/v1/security/remediation/${id}/history`, {
-    headers: { ...getAuthHeader() },
-  });
-  if (!res.ok) throw new Error(`Failed to fetch history for action ${id}`);
-  return res.json();
+  const response = await apiFetch(`/api/v1/security/remediation/${id}/history`);
+  return parseRequiredJson<RemediationActionHistoryDto[]>(response, `Failed to fetch history for action ${id}`);
 }
 
 export async function fetchRemediationVerification(id: string): Promise<RemediationVerificationDto> {
-  const res = await fetch(`${API_URL}/api/v1/security/remediation/${id}/verification`, {
-    headers: { ...getAuthHeader() },
-  });
-  if (!res.ok) throw new Error(`Failed to fetch verification for action ${id}`);
-  return res.json();
+  const response = await apiFetch(`/api/v1/security/remediation/${id}/verification`);
+  return parseRequiredJson<RemediationVerificationDto>(response, `Failed to fetch verification for action ${id}`);
 }
 
-export async function approveRemediationAction(id: string, expectedVersion: number, reason: string) {
-  const res = await fetch(`${API_URL}/api/v1/security/remediation/${id}/approve`, {
+export async function approveRemediationAction(
+  id: string,
+  expectedVersion: number,
+  reason: string,
+): Promise<RemediationTransitionResponse> {
+  const response = await apiFetch(`/api/v1/security/remediation/${id}/approve`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeader() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ expectedVersion, reason }),
   });
-  const data = await res.json();
-  if (res.status === 409) {
-    throw { isConcurrencyConflict: true, message: data.message || "Version conflict. Please refresh." };
-  }
-  if (!res.ok) throw new Error(data.message || "Failed to approve action");
-  return data;
+  return parseMutationResponse<RemediationTransitionResponse>(response, "Failed to approve action");
 }
 
-export async function rejectRemediationAction(id: string, expectedVersion: number, reason: string) {
-  const res = await fetch(`${API_URL}/api/v1/security/remediation/${id}/reject`, {
+export async function rejectRemediationAction(
+  id: string,
+  expectedVersion: number,
+  reason: string,
+): Promise<RemediationTransitionResponse> {
+  const response = await apiFetch(`/api/v1/security/remediation/${id}/reject`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeader() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ expectedVersion, reason }),
   });
-  const data = await res.json();
-  if (res.status === 409) {
-    throw { isConcurrencyConflict: true, message: data.message || "Version conflict. Please refresh." };
-  }
-  if (!res.ok) throw new Error(data.message || "Failed to reject action");
-  return data;
+  return parseMutationResponse<RemediationTransitionResponse>(response, "Failed to reject action");
 }
 
-export async function executeRemediationAction(id: string, expectedVersion: number) {
-  const res = await fetch(`${API_URL}/api/v1/security/remediation/${id}/execute`, {
+export async function executeRemediationAction(
+  id: string,
+  expectedVersion: number,
+): Promise<RemediationExecutionResponse> {
+  const response = await apiFetch(`/api/v1/security/remediation/${id}/execute`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeader() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ expectedVersion }),
   });
-  const data = await res.json();
-  if (res.status === 409) {
-    throw { isConcurrencyConflict: true, message: data.message || "Version conflict. Please refresh." };
-  }
-  if (!res.ok) throw new Error(data.message || "Failed to execute action");
-  return data;
+  return parseMutationResponse<RemediationExecutionResponse>(response, "Failed to execute action");
 }
 
-export async function verifyRemediationAction(id: string, expectedVersion: number, verificationReason?: string) {
-  const res = await fetch(`${API_URL}/api/v1/security/remediation/${id}/verify`, {
+export async function verifyRemediationAction(
+  id: string,
+  expectedVersion: number,
+  verificationReason?: string,
+): Promise<RemediationVerificationResponse> {
+  const response = await apiFetch(`/api/v1/security/remediation/${id}/verify`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...getAuthHeader() },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ expectedVersion, verificationReason }),
   });
-  const data = await res.json();
-  if (res.status === 409) {
-    throw { isConcurrencyConflict: true, message: data.message || "Version conflict. Please refresh." };
-  }
-  if (!res.ok) throw new Error(data.message || "Failed to verify action");
-  return data;
+  return parseMutationResponse<RemediationVerificationResponse>(response, "Failed to verify action");
 }

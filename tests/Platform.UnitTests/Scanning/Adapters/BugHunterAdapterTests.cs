@@ -91,7 +91,7 @@ public class BugHunterAdapterTests
         Assert.Equal("critical", tamperCandidate.RawSeverity);
         Assert.Equal("role", tamperCandidate.ParameterName);
 
-        Assert.Equal(25, result.Coverage.EndpointsDiscovered);
+        Assert.Equal(25, result.Coverage!.EndpointsDiscovered);
         Assert.Equal(80, result.Coverage.ParametersExtracted);
     }
 }

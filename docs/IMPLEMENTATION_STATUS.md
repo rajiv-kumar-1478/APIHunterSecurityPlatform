@@ -9,6 +9,42 @@ Legend:
 
 ---
 
+## Current Authoritative Status — Phase 9.1 Production Hardening
+
+> The phase sections below are retained as historical checkpoints. Their route and test counts describe the point at which each phase was completed; this section is the current authority.
+
+### Completed in the current worktree
+- [x] Browser authentication is cookie-only through `__ap_session`; `sub` is the stable user ID and `sid` is the persisted `AuthenticationSession.Id`.
+- [x] Every authenticated request revalidates the session row, expiry/revocation, enabled user state, identity match, and current platform-admin state. Cookies are non-sliding and concurrent sessions are capped.
+- [x] User disablement and platform-admin demotion revoke active sessions. Authorization uses an authenticated fallback policy plus the explicit `PlatformAdmin` policy.
+- [x] Login is IP rate-limited. Anonymous `GET /api/v1/auth/csrf` bootstraps antiforgery state, and every unsafe MVC request is validated globally with stable `INVALID_CSRF_TOKEN` failures.
+- [x] API and worker require one configured non-empty tenant. `SecurityScanJob.TenantId` is durable and required; `RequestedByUserId` is nullable for scheduler/system jobs; worker execution is tenant-scoped and has no synthetic admin authority.
+- [x] The dashboard uses one shared cookie/CSRF API client. It sends credentials, stores CSRF state only in module memory, retries once only for explicit antiforgery rejection, and has no bearer/local-storage/session-storage authentication path.
+- [x] API, worker, and frontend images run as non-root users. Compose provides a private worker, separate outbound network, shared API/worker Data Protection keys/application name, and PostgreSQL/API/frontend health checks.
+- [x] Production/Compose scanner execution fails closed. `UnavailableScannerRuntime` rejects execution with `SCANNER_RUNTIME_DISABLED`; BugHunter returns `BUGHUNTER_CONTRACT_UNAVAILABLE` until authoritative runtime/provider contracts and physical isolation are available.
+- [x] Thirty-three credential validators are implemented and registered identically in API and worker: the 10 original bespoke validators plus 23 declarative ones (HuggingFace, Perplexity, Cohere, FireworksAI, Replicate, OpenRouter, xAI, Cerebras, Tavily, FalAi, JinaAI, KlingAI, RunwayML, RunPod, GoogleGemini, ElevenLabs, TogetherAI, Mistral, StabilityAI, AI21, AssemblyAI, Deepgram, LeonardoAI). The remaining 1 provider in the 34-provider matrix stays deferred (customer-configured Azure OpenAI) and resolves through the zero-network unsupported fallback.
+- [x] Declarative providers share one tested engine (`ProviderValidationExecutor`) plus a server-controlled `ProviderValidationDescriptor`, so status mapping, rate-limit handling, and evidence sanitization are proven once instead of copied per provider. Tests assert every descriptor host matches its `ValidationEndpointRegistry` origin, since the SSRF handler pins the socket to the registry-resolved address.
+- [x] `SSH.NET` is pinned exactly to `2026.0.0`; the resolved direct/transitive NuGet audit reports no vulnerable packages.
+- [x] EF migration history and model snapshot are reconciled through `20260906024820_FixPostgreSqlRowVersionTokens`, including guarded tenant backfill, nullable system requester, campaign outcome state, current scanner persistence, native PostgreSQL `xmin`, and tenant-schema-scoped compatibility bridges.
+- [x] `20260905205518_AddScanJobTenantOwnership` is an explicit stop/drain boundary for every pre-tenant scan-job API, scheduler, and worker; the later token cutover does not make those binaries schema-compatible.
+- [x] **Step 9.4 — Deployment Webhook & Orchestration Wiring** is complete. `RegisteredApplication` (HMAC secret + authorized target URL per CI/CD application) and `DeploymentWebhookRecord` (idempotency log keyed by webhook ID) are new EF-mapped entities with a hand-authored migration (`20260920000001_AddDeploymentWebhookTables`) whose Down is irreversibly blocked at SQLSTATE `0A000`. `DatabaseApplicationTargetResolver` resolves registered applications, decrypts HMAC secrets via ASP.NET Core Data Protection, and records processed IDs only after job creation succeeds. `DatabaseDeploymentScanJobEnqueuer` persists `SecurityScanJob` rows tagged `TriggeredBy=CiCdWebhook` with null `RequestedByUserId` — identical to the campaign-scheduler contract. `InMemoryDeploymentLeaseStore` provides the missing concrete binding for `IDeploymentLeaseStore`, which `DeploymentConcurrencyGate` requires. `DeploymentWebhookController` (`POST /api/v1/webhooks/deployments`) is `[AllowAnonymous]`/`[IgnoreAntiforgeryToken]` with HMAC as the sole auth mechanism; error codes are mapped to 400/401/409/500. All four services are registered as Scoped (resolver and enqueuer respect DbContext lifetime) with `InMemoryDeploymentLeaseStore` as Singleton in both API and Worker `Program.cs`. 16 new unit tests cover `InMemoryDeploymentLeaseStore` (tenant isolation, CRUD) and `DatabaseDeploymentScanJobEnqueuer` (server-authoritative URL, TriggeredBy, null guards, empty-tenant/URL guards, unique IDs).
+
+### Current validation evidence (2026-09-05)
+- Verified inventory: **795 unit tests + 106 integration tests = 901 backend tests**, all passing with zero failures or skips. The integration total includes nine real-PostgreSQL `CampaignSchedulerRaceTests`; 97 integration tests remain environment-independent.
+- Strict warnings-as-errors builds passed for the API, worker, unit-test, and integration-test projects with zero warnings or errors.
+- The PostgreSQL hard gate passed **9/9** against an isolated PostgreSQL 18.4 cluster. A deterministic two-party barrier proves one complete dispatch and one verified `SkippedClaimLost`; additional facts prove migration execution, exact unique-constraint classification, direct transient failures before and after commit, bidirectional `Version`/`JobVersion` fencing, stale-`xmin` rejection, rotating legacy `bytea` tokens, non-vacuous timestamp normalization, and unrelated-error state isolation.
+- Migration-based validation exposed and fixed three PostgreSQL-only production defects: invalid non-generated `bytea` row versions, sub-microsecond occurrence-key drift, and an orphaned required `security_scan_jobs.Version` column left by the `JobVersion` transition.
+- Atomic dispatch now clears failed tracked writes for wrapped and direct provider exceptions. It suppresses an error only for the canonical unique constraint or a transient unknown-commit outcome when the complete linked job/campaign/audit state is verified.
+- `IDatabaseErrorClassifier` is a required dispatch dependency, so a missing registration fails fast instead of silently disabling classification. Both rules are proven directly by `PostgreSqlDatabaseErrorClassifierTests` in addition to the PostgreSQL gate.
+- Frontend lint and production build passed; Next.js 16.3.0 generated **16 static pages**, including all 13 application routes plus `/_not-found`.
+- EF discovers all 16 migrations through `20260906024820_FixPostgreSqlRowVersionTokens` and reports no pending model changes. Idempotent forward SQL retains generated legacy `RowVersion` columns, synchronizes `Version`/`JobVersion`, and normalizes the occurrence-index name; Down is deliberately irreversible with SQLSTATE `0A000`, and later bridge removal requires a reviewed contract migration after tenant-aware legacy-token instances and their rollback window drain.
+- Solution-wide NuGet auditing reports no vulnerable direct/transitive packages in all seven projects; `npm audit --omit=dev` reports zero production vulnerabilities.
+- [!] Live Docker/Compose/image validation remains blocked because `docker` is not installed or available on this machine. Scanner runtime, isolation, egress, and real BugHunter availability are therefore not claimed.
+
+---
+
+## Historical Phase Checkpoints
+
 ## Phase 1 — Foundation (VERIFIED & LOCKED)
 
 ### Solution & Scaffolding
@@ -27,7 +63,7 @@ Legend:
 - [x] PasswordHasher<User> (Identity)
 - [x] Account lockout & IP rate limiting
 - [x] CSRF protection (`IAntiforgery` & `X-CSRF-TOKEN`)
-- [x] Admin authorization bypass (`IsPlatformAdmin`)
+- [x] Authenticated fallback, explicit `PlatformAdmin` policy, and audited platform-admin permission override
 - [x] Field-level permissions foundation (ALLOW/DENY effects)
 
 ### Observability, Health & Notifications
@@ -381,7 +417,7 @@ Legend:
 
 ---
 
-## Phase 9 — Continuous Security Scan Campaigns (IN PROGRESS)
+## Phase 9 — Continuous Security Scan Campaigns (STEPS 9.1–9.3 IMPLEMENTED & VERIFIED)
 
 - [x] Step 9.1 — Campaign & Schedule Contract (FULLY IMPLEMENTED & VERIFIED):
   - [x] Complete Tenant Ownership Chain: `Tenant` $\rightarrow$ `Repository` $\rightarrow$ `SecurityTarget` $\rightarrow$ `ScanCampaign` $\rightarrow$ `SecurityScanJob` validated on creation, update, and execution.
@@ -394,6 +430,35 @@ Legend:
   - [x] Immutability: Pausing, resuming, or archiving a campaign never mutates or deletes historical scan jobs or findings.
   - [x] Automated Test Suite: **607 / 607 Automated Tests Passed (100%)** (530 Unit Tests + 77 Integration Tests) with 0 warnings (`-warnaserror`).
   - [x] Next.js Dashboard: Production build clean with 0 errors.
+
+- [x] Step 9.2 — Durable Scheduler Hardening & PostgreSQL Concurrency Contract (FULLY IMPLEMENTED & VERIFIED):
+  - [x] Atomic dispatch: `SecurityScanJob` INSERT + campaign cursor UPDATE + `CampaignExecutionAuditLog` INSERT commit in one `SaveChangesAsync`, with zero side effects from the losing instance.
+  - [x] Canonical v1 occurrence key requires UTC and truncates sub-microsecond ticks to PostgreSQL precision, enforced by partial unique index `IX_security_scan_jobs_campaign_occurrence_key`.
+  - [x] Claim loss requires exact SQLSTATE `23505`/constraint classification or a transient unknown-commit outcome **plus** the complete durable job/campaign/audit tuple. A job row alone is an integrity error.
+  - [x] Failed writes are detached for wrapped EF failures and provider exceptions surfaced directly during commit; cancellation propagates instead of being counted as an error.
+  - [x] `IDatabaseErrorClassifier` is a required dependency (both methods accept `Exception`), so a missing registration fails fast rather than silently disabling classification.
+  - [x] `Repository`/`AnalysisJob` concurrency uses PostgreSQL-native `xmin`; legacy `bytea` tokens and bidirectional `security_scan_jobs` `Version`/`JobVersion` synchronization remain as tenant-schema-scoped bridges.
+  - [x] Authoritative gate: **9/9** real-PostgreSQL `CampaignSchedulerRaceTests`, including a deterministic two-party barrier, pre/post-commit provider failures, and bidirectional counter fencing.
+
+- [x] Step 9.3 — Operational Campaign Lifecycle & Observability (FULLY IMPLEMENTED & VERIFIED):
+  - [x] Strict read boundary: `CampaignObservabilityService` observes Phase 9.2 state and contains zero dispatch, claim, retry, or mutation logic.
+  - [x] Deterministic health precedence: `FailClosed` > `Unavailable` > `Degraded` > `NotConfigured` > `Healthy`.
+  - [x] Endpoints on `/api/v1/security/campaigns`: `GET health`, `GET metrics` (`24h`/`7d`/`30d`), `GET {id}/history` (paginated, decision/since filters), `GET {id}/diagnostics`.
+  - [x] Authenticated identity is authoritative for tenant resolution; `X-Tenant-ID` spoofing by non-admins is blocked.
+  - [x] Diagnostics and recovery history are sourced from the immutable `CampaignExecutionAuditLog`; queries are index-bounded and pagination is capped.
+  - [x] Dashboard: campaigns tab in `ScanManagementView` with health card, history drawer, and diagnostics modal on visibility-aware polling.
+
+- [x] Step 9.4 — SPEC-008.5/008.6 Deployment Webhook & Orchestration Wiring (COMPLETED & VERIFIED):
+  - [x] `DeploymentWebhookHandler` validates required headers, ±5-minute timestamp tolerance, duplicate webhook IDs, payload JSON, server-side target authorization, and constant-time HMAC-SHA256 signatures.
+  - [x] Scan-job creation is delegated to a required `IDeploymentScanJobEnqueuer`. The handler no longer fabricates a job identifier, fails closed with `SCAN_JOB_ENQUEUE_FAILED`, and records webhook idempotency only after durable creation so a failed enqueue stays retryable.
+  - [x] `RegisteredApplication` (tenant-scoped HMAC secret + authorized target URL) and `DeploymentWebhookRecord` (idempotency log) entities mapped and migrated (`20260920000001_AddDeploymentWebhookTables`).
+  - [x] `DatabaseApplicationTargetResolver` implemented with ASP.NET Core Data Protection secret decryption and durable idempotency logging.
+  - [x] `DatabaseDeploymentScanJobEnqueuer` implemented, persisting durable `SecurityScanJob` with `TriggeredBy="CiCdWebhook"`, `RequestedByUserId=null`.
+  - [x] `InMemoryDeploymentLeaseStore` implemented providing thread-safe, tenant-isolated lease store for `DeploymentConcurrencyGate`.
+  - [x] `DeploymentWebhookController` (`POST /api/v1/webhooks/deployments`) exposed with `[AllowAnonymous]`/`[IgnoreAntiforgeryToken]`, HMAC-only authentication, and mapped error codes (400/401/409/500).
+  - [x] Registered all services in DI across both `Platform.Api` and `Platform.Worker`.
+  - [x] Unit test suite covering `DatabaseDeploymentScanJobEnqueuer` and `InMemoryDeploymentLeaseStore` (16 tests, 100% pass).
+  - [!] End-to-end deployment scan execution remains Docker-blocked because `IScannerRuntimeSandbox` resolves to `UnavailableScannerRuntime` (`SCANNER_RUNTIME_DISABLED`).
 
 
 

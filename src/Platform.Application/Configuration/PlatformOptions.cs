@@ -14,6 +14,12 @@ public class AuthenticationOptions
     public bool RequireHttps { get; set; } = true;
 }
 
+public class TenantOptions
+{
+    public const string SectionName = "Tenant";
+    public Guid Id { get; set; }
+}
+
 public class DatabaseOptions
 {
     public const string SectionName = "Database";

@@ -21,11 +21,7 @@ import { CampaignHealthCard } from "./campaigns/CampaignHealthCard";
 import { CampaignHistoryDrawer } from "./campaigns/CampaignHistoryDrawer";
 import { CampaignDiagnosticsModal } from "./campaigns/CampaignDiagnosticsModal";
 
-interface ScanManagementViewProps {
-  userIsAdmin?: boolean;
-}
-
-export function ScanManagementView({ userIsAdmin = false }: ScanManagementViewProps) {
+export function ScanManagementView() {
   const [activeTab, setActiveTab] = useState<"jobs" | "campaigns">("jobs");
 
   // Scan Jobs State
@@ -69,23 +65,42 @@ export function ScanManagementView({ userIsAdmin = false }: ScanManagementViewPr
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
     if (activeTab === "jobs") {
-      loadJobs();
+      void getScanJobs(statusFilter || undefined).then((data) => {
+        if (cancelled) return;
+        setJobs(data);
+        setLoading(false);
+      });
+
       const interval = setInterval(() => {
         if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-        loadJobs();
+        void loadJobs();
       }, 5000);
-      return () => clearInterval(interval);
-    } else {
-      loadCampaigns();
-      // Modest 15-second polling with visibility pause
-      const interval = setInterval(() => {
-        if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-        loadCampaigns();
-      }, 15000);
-      return () => clearInterval(interval);
+      return () => {
+        cancelled = true;
+        clearInterval(interval);
+      };
     }
-  }, [activeTab, loadJobs, loadCampaigns]);
+
+    void Promise.all([getCampaigns(), getCampaignHealth()]).then(([campaignData, healthData]) => {
+      if (cancelled) return;
+      setCampaigns(campaignData);
+      setCampaignHealth(healthData);
+      setCampaignsLoading(false);
+    });
+
+    // Modest 15-second polling with visibility pause
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void loadCampaigns();
+    }, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [activeTab, loadJobs, loadCampaigns, statusFilter]);
 
   // Inspect Receipt
   const handleInspectReceipt = async (job: ScanJobDetailDto) => {

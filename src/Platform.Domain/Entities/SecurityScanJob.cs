@@ -18,9 +18,17 @@ public class SecurityScanJob
 
     public SecurityScanJobStatus Status { get; set; } = SecurityScanJobStatus.Queued;
 
-    public Guid RequestedByUserId { get; set; }
+    /// <summary>
+    /// Required tenant boundary owning this job. It is independent from the requesting actor.
+    /// </summary>
+    public Guid TenantId { get; set; }
 
-    public string ProviderKey { get; set; } = "bughunter";
+    /// <summary>
+    /// User who requested the job, or null for scheduler-created system jobs.
+    /// </summary>
+    public Guid? RequestedByUserId { get; set; }
+
+    public string ProviderKey { get; set; } = string.Empty;
 
     public string CorrelationId { get; set; } = Guid.NewGuid().ToString("N");
 
@@ -84,6 +92,13 @@ public class SecurityScanJob
     /// prevents duplicate dispatch on scheduler retry after an ambiguous failure.
     /// </summary>
     public string? CampaignOccurrenceKey { get; set; }
+
+    /// <summary>
+    /// Marks that this job's terminal result has been applied to its parent campaign.
+    /// The marker is persisted in the same transaction as campaign counters so outcome
+    /// delivery can be retried safely after worker or database failures.
+    /// </summary>
+    public DateTime? CampaignOutcomeProcessedAtUtc { get; set; }
 
     // Navigation properties
     public Repository? Repository { get; set; }

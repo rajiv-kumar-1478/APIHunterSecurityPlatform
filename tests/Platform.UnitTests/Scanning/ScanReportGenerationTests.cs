@@ -40,7 +40,7 @@ public class ScanReportGenerationTests : IDisposable
         _dbContext = new PlatformDbContext(options);
         _userContext = new TestUserContext();
         _toolRegistry = new ScanToolRegistryService(_dbContext, NullLogger<ScanToolRegistryService>.Instance);
-        _scanJobService = new ScanJobService(_dbContext, _userContext, _toolRegistry, NullLogger<ScanJobService>.Instance);
+        _scanJobService = new ScanJobService(_dbContext, _userContext, new TestTenantContext(), _toolRegistry, NullLogger<ScanJobService>.Instance);
         _postProcessor = new ScanPostExecutionProcessor(_dbContext, _scanJobService, NullLogger<ScanPostExecutionProcessor>.Instance);
         _reportBuilder = new ScanReportBuilderService(_dbContext, _scanJobService, _postProcessor, NullLogger<ScanReportBuilderService>.Instance);
         _registry = new SecurityReportFormatterRegistry();
@@ -276,6 +276,7 @@ public class ScanReportGenerationTests : IDisposable
         // Create a different job
         var otherJob = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -366,6 +367,7 @@ public class ScanReportGenerationTests : IDisposable
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = receipt.JobId,
             RepositoryId = _repoId,
             TargetId = _targetId,

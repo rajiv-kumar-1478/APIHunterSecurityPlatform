@@ -40,7 +40,8 @@ public class AuthServiceTests
         {
             SessionDurationMinutes = 60,
             LockoutThreshold = 3,
-            LockoutDurationMinutes = 15
+            LockoutDurationMinutes = 15,
+            MaxConcurrentSessions = 2
         });
 
         _sut = new AuthService(
@@ -53,15 +54,15 @@ public class AuthServiceTests
     }
 
     [Fact]
-    public async Task LoginAsync_WithValidCredentials_ReturnsSuccessAndCreatesSession()
+    public async Task LoginAsync_WithValidCredentials_ReturnsRealUserAndSessionRowIds()
     {
-        // Arrange
         var user = new User
         {
             Email = "admin@test.com",
             Username = "admin",
             DisplayName = "Admin",
             PasswordHash = "hashed_pass",
+            IsActive = true,
             IsPlatformAdmin = true
         };
         _db.Users.Add(user);
@@ -73,28 +74,28 @@ public class AuthServiceTests
 
         var command = new LoginCommand("admin@test.com", "password123", "127.0.0.1", "TestAgent");
 
-        // Act
         var result = await _sut.LoginAsync(command);
 
-        // Assert
         result.IsSuccess.Should().BeTrue();
         result.Value.Should().NotBeNull();
+        result.Value!.UserId.Should().Be(user.Id);
 
-        var sessionInDb = await _db.AuthenticationSessions.FirstOrDefaultAsync(s => s.Id == result.Value!.SessionId);
-        sessionInDb.Should().NotBeNull();
-        sessionInDb!.IpAddress.Should().Be("127.0.0.1");
+        var sessionInDb = await _db.AuthenticationSessions.SingleAsync();
+        result.Value.SessionId.Should().Be(sessionInDb.Id);
+        sessionInDb.UserId.Should().Be(user.Id);
+        sessionInDb.IpAddress.Should().Be("127.0.0.1");
     }
 
     [Fact]
     public async Task LoginAsync_WithInvalidPassword_IncrementsFailedAttemptsAndFails()
     {
-        // Arrange
         var user = new User
         {
             Email = "user@test.com",
             Username = "user",
             DisplayName = "User",
             PasswordHash = "hashed_pass",
+            IsActive = true,
             IsPlatformAdmin = false
         };
         _db.Users.Add(user);
@@ -106,10 +107,8 @@ public class AuthServiceTests
 
         var command = new LoginCommand("user@test.com", "wrongpass", "127.0.0.1", "TestAgent");
 
-        // Act
         var result = await _sut.LoginAsync(command);
 
-        // Assert
         result.IsSuccess.Should().BeFalse();
         result.ErrorMessage.Should().Contain("Invalid");
 
@@ -120,13 +119,13 @@ public class AuthServiceTests
     [Fact]
     public async Task LoginAsync_ExceedingLockoutThreshold_LocksAccount()
     {
-        // Arrange
         var user = new User
         {
             Email = "locked@test.com",
             Username = "locked",
             DisplayName = "Locked User",
             PasswordHash = "hashed_pass",
+            IsActive = true,
             FailedLoginCount = 2
         };
         _db.Users.Add(user);
@@ -138,10 +137,8 @@ public class AuthServiceTests
 
         var command = new LoginCommand("locked@test.com", "wrongpass", "127.0.0.1", "TestAgent");
 
-        // Act
         var result = await _sut.LoginAsync(command);
 
-        // Assert
         result.IsSuccess.Should().BeFalse();
 
         var updatedUser = await _db.Users.FindAsync(user.Id);
@@ -152,11 +149,9 @@ public class AuthServiceTests
     [Fact]
     public async Task LogoutAsync_WithValidSession_RevokesSession()
     {
-        // Arrange
-        var userId = Guid.NewGuid();
         var session = new AuthenticationSession
         {
-            UserId = userId,
+            UserId = Guid.NewGuid(),
             SessionId = Guid.NewGuid().ToString("N"),
             IpAddress = "127.0.0.1",
             UserAgent = "Agent",
@@ -165,10 +160,8 @@ public class AuthServiceTests
         _db.AuthenticationSessions.Add(session);
         await _db.SaveChangesAsync();
 
-        // Act
         await _sut.LogoutAsync(session.Id);
 
-        // Assert
         var updatedSession = await _db.AuthenticationSessions.FindAsync(session.Id);
         updatedSession!.RevokedAtUtc.Should().NotBeNull();
     }
@@ -176,13 +169,10 @@ public class AuthServiceTests
     [Fact]
     public async Task LoginAsync_WithUnknownEmail_FailsSafely()
     {
-        // Arrange
         var command = new LoginCommand("nonexistent@test.com", "anypass", "127.0.0.1", "TestAgent");
 
-        // Act
         var result = await _sut.LoginAsync(command);
 
-        // Assert
         result.IsSuccess.Should().BeFalse();
         result.ErrorMessage.Should().Contain("Invalid");
     }
@@ -190,15 +180,15 @@ public class AuthServiceTests
     [Fact]
     public async Task LoginAsync_WithExpiredLockout_AllowsAttemptAndResetsLockout()
     {
-        // Arrange
         var user = new User
         {
             Email = "expiredlockout@test.com",
             Username = "expiredlock",
             DisplayName = "Expired Lock User",
             PasswordHash = "hashed_pass",
+            IsActive = true,
             FailedLoginCount = 3,
-            LockoutUntilUtc = DateTime.UtcNow.AddMinutes(-5) // Expired 5 mins ago
+            LockoutUntilUtc = DateTime.UtcNow.AddMinutes(-5)
         };
         _db.Users.Add(user);
         await _db.SaveChangesAsync();
@@ -209,13 +199,118 @@ public class AuthServiceTests
 
         var command = new LoginCommand("expiredlockout@test.com", "password123", "127.0.0.1", "TestAgent");
 
-        // Act
         var result = await _sut.LoginAsync(command);
 
-        // Assert
         result.IsSuccess.Should().BeTrue();
         var updatedUser = await _db.Users.FindAsync(user.Id);
         updatedUser!.FailedLoginCount.Should().Be(0);
         updatedUser.LockoutUntilUtc.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task ValidateSessionAsync_WithValidSession_ReturnsPersistedIdentity()
+    {
+        var user = await SeedUserAsync("valid-session@test.com", isActive: true, isPlatformAdmin: true);
+        var session = await SeedSessionAsync(user, DateTime.UtcNow.AddMinutes(30));
+
+        var validated = await _sut.ValidateSessionAsync(session.Id);
+
+        validated.Should().NotBeNull();
+        validated!.SessionId.Should().Be(session.Id);
+        validated.UserId.Should().Be(user.Id);
+        validated.IsPlatformAdmin.Should().BeTrue();
+        validated.ExpiresAtUtc.Should().Be(session.ExpiresAtUtc);
+    }
+
+    [Theory]
+    [InlineData("revoked")]
+    [InlineData("expired")]
+    [InlineData("disabled")]
+    public async Task ValidateSessionAsync_WithInvalidSessionState_ReturnsNull(string invalidState)
+    {
+        var user = await SeedUserAsync(
+            $"{invalidState}-session@test.com",
+            isActive: invalidState != "disabled");
+        var session = await SeedSessionAsync(
+            user,
+            invalidState == "expired" ? DateTime.UtcNow.AddMinutes(-1) : DateTime.UtcNow.AddMinutes(30),
+            invalidState == "revoked" ? DateTime.UtcNow.AddMinutes(-1) : null);
+
+        var validated = await _sut.ValidateSessionAsync(session.Id);
+
+        validated.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task LoginAsync_AtConcurrentSessionCap_RevokesOldestActiveSession()
+    {
+        var user = await SeedUserAsync("session-cap@test.com", isActive: true);
+        var oldest = await SeedSessionAsync(
+            user,
+            DateTime.UtcNow.AddMinutes(30),
+            createdAtUtc: DateTime.UtcNow.AddHours(-2));
+        var newer = await SeedSessionAsync(
+            user,
+            DateTime.UtcNow.AddMinutes(30),
+            createdAtUtc: DateTime.UtcNow.AddHours(-1));
+
+        _passwordHasherMock
+            .Setup(x => x.VerifyHashedPassword(user, user.PasswordHash, "password123"))
+            .Returns(PasswordVerificationResult.Success);
+
+        var result = await _sut.LoginAsync(
+            new LoginCommand(user.Email, "password123", "127.0.0.1", "CapTestAgent"));
+
+        result.IsSuccess.Should().BeTrue();
+        var sessions = await _db.AuthenticationSessions
+            .Where(s => s.UserId == user.Id)
+            .ToListAsync();
+        sessions.Count(s => s.RevokedAtUtc == null && s.ExpiresAtUtc > DateTime.UtcNow)
+            .Should().Be(2);
+        sessions.Single(s => s.Id == oldest.Id).RevokedAtUtc.Should().NotBeNull();
+        sessions.Single(s => s.Id == newer.Id).RevokedAtUtc.Should().BeNull();
+        sessions.Single(s => s.Id == result.Value!.SessionId).RevokedAtUtc.Should().BeNull();
+    }
+
+    private async Task<User> SeedUserAsync(
+        string email,
+        bool isActive,
+        bool isPlatformAdmin = false)
+    {
+        var user = new User
+        {
+            Email = email,
+            Username = email.Split('@')[0],
+            DisplayName = email,
+            PasswordHash = "hashed_pass",
+            IsActive = isActive,
+            IsPlatformAdmin = isPlatformAdmin
+        };
+        _db.Users.Add(user);
+        await _db.SaveChangesAsync();
+        return user;
+    }
+
+    private async Task<AuthenticationSession> SeedSessionAsync(
+        User user,
+        DateTime expiresAtUtc,
+        DateTime? revokedAtUtc = null,
+        DateTime? createdAtUtc = null)
+    {
+        var created = createdAtUtc ?? DateTime.UtcNow;
+        var session = new AuthenticationSession
+        {
+            UserId = user.Id,
+            SessionId = Guid.NewGuid().ToString("N"),
+            IpAddress = "127.0.0.1",
+            UserAgent = "TestAgent",
+            ExpiresAtUtc = expiresAtUtc,
+            RevokedAtUtc = revokedAtUtc,
+            CreatedAtUtc = created,
+            LastSeenAtUtc = created
+        };
+        _db.AuthenticationSessions.Add(session);
+        await _db.SaveChangesAsync();
+        return session;
     }
 }

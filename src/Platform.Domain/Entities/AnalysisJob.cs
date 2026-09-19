@@ -31,9 +31,10 @@ public class AnalysisJob
     public string CorrelationId { get; set; } = string.Empty;
 
     /// <summary>
-    /// EF Core Optimistic Concurrency token.
+    /// PostgreSQL xmin optimistic-concurrency token. The Npgsql provider maps
+    /// uint properties configured with IsRowVersion() to the system xmin column.
     /// </summary>
-    public byte[] RowVersion { get; set; } = [];
+    public uint RowVersion { get; set; }
 
     // Navigation
     public User? QueuedByUser { get; set; }

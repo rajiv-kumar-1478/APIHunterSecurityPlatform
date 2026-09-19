@@ -49,6 +49,8 @@ public class UserService(
         if (user is null) return Result<UserDto>.Failure("User not found", "NOT_FOUND");
 
         var changes = new Dictionary<string, object?>();
+        var wasActive = user.IsActive;
+        var wasPlatformAdmin = user.IsPlatformAdmin;
 
         if (command.DisplayName is not null && command.DisplayName != user.DisplayName)
         {
@@ -68,16 +70,36 @@ public class UserService(
             user.IsPlatformAdmin = command.IsPlatformAdmin.Value;
         }
 
+        if (changes.Count == 0)
+        {
+            return Result<UserDto>.Success(ToDto(user));
+        }
+
+        var becameDisabled = wasActive && !user.IsActive;
+        var wasDemoted = wasPlatformAdmin && !user.IsPlatformAdmin;
+        if (becameDisabled || wasDemoted)
+        {
+            var revokedAtUtc = DateTime.UtcNow;
+            var activeSessions = await db.AuthenticationSessions
+                .Where(session => session.UserId == user.Id && session.RevokedAtUtc == null)
+                .ToListAsync(ct);
+
+            foreach (var session in activeSessions)
+            {
+                session.RevokedAtUtc = revokedAtUtc;
+            }
+        }
+
         user.UpdatedAtUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
 
-        var eventCode = command.IsActive == false ? AuditEventCode.UserDisabled
-                      : command.IsActive == true  ? AuditEventCode.UserEnabled
+        var eventCode = becameDisabled ? AuditEventCode.UserDisabled
+                      : !wasActive && user.IsActive ? AuditEventCode.UserEnabled
                       : AuditEventCode.UserUpdated;
 
         await auditService.RecordAsync(eventCode,
             currentUser.UserId, null, currentUser.IpAddress,
-            new { targetUserId = command.Id, changes }, ct);
+            new { targetUserId = command.Id, sessionsRevoked = becameDisabled || wasDemoted, changes }, ct);
 
         return Result<UserDto>.Success(ToDto(user));
     }

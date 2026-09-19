@@ -232,7 +232,7 @@ public class ScanFindingIngestionEngine
         }
 
         // 12. Record Audit Event for Batch Ingestion
-        _dbContext.AuditEvents.Add(new AuditEvent
+        var batchAuditEvent = new AuditEvent
         {
             Id = Guid.NewGuid(),
             EventCode = AuditEventCode.ScanFindingsIngested,
@@ -252,18 +252,36 @@ public class ScanFindingIngestionEngine
                 outOfScopeDiscarded = outOfScopeCount,
                 invalidDiscarded = invalidCount
             })
-        });
+        };
+        _dbContext.AuditEvents.Add(batchAuditEvent);
 
-        // 13. Atomic Commit with Concurrency Recovery
+        // 13. Commit the finding batch atomically. A failed batch is never reported as ingested.
         try
         {
             await _dbContext.SaveChangesAsync(ct);
         }
         catch (DbUpdateException ex)
         {
-            _logger.LogWarning(ex, "Concurrency conflict or unique constraint collision detected during candidate batch ingestion for job '{JobId}'. Recovering via idempotent reload.", context.JobId);
-            diagnostics.Add("Concurrency conflict detected during ingestion; recovered via idempotent reload.");
-            await RecoverFromConcurrencyConflictAsync(cappedCandidates, context, bounds, ct);
+            _logger.LogError(
+                ex,
+                "Finding batch ingestion rolled back for job '{JobId}'. Pending finding entries are being detached before the failure is propagated.",
+                context.JobId);
+
+            var pendingBatchEntries = _dbContext.ChangeTracker
+                .Entries()
+                .Where(entry => entry.State != EntityState.Unchanged
+                    && entry.State != EntityState.Detached
+                    && (entry.Entity is SecurityFinding
+                        || entry.Entity is SecurityFindingEvidence
+                        || ReferenceEquals(entry.Entity, batchAuditEvent)))
+                .ToList();
+
+            foreach (var entry in pendingBatchEntries)
+            {
+                entry.State = EntityState.Detached;
+            }
+
+            throw;
         }
 
         _logger.LogInformation("Scan finding ingestion complete for job '{JobId}': {Accepted}/{Total} accepted ({New} new, {Updated} updated, {OutOfScope} out-of-scope, {Invalid} invalid).",
@@ -278,102 +296,6 @@ public class ScanFindingIngestionEngine
             ExistingFindingsUpdated: updatedFindingsCount,
             Diagnostics: diagnostics
         );
-    }
-
-    private async Task RecoverFromConcurrencyConflictAsync(
-        IReadOnlyList<FindingCandidate> candidates,
-        ScanJobContext context,
-        ParserResourceBounds bounds,
-        CancellationToken ct)
-    {
-        _dbContext.ChangeTracker.Clear();
-
-        foreach (var candidate in candidates)
-        {
-            if (string.IsNullOrWhiteSpace(candidate.Title) || string.IsNullOrWhiteSpace(candidate.TargetUrl))
-                continue;
-
-            if (!Uri.TryCreate(candidate.TargetUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? candidate.TargetUrl : $"https://{candidate.TargetUrl}", UriKind.Absolute, out var candUri))
-                continue;
-
-            var canonicalTarget = $"{candUri.Scheme.ToLowerInvariant()}://{candUri.Authority.ToLowerInvariant()}";
-            var canonicalLocation = string.IsNullOrWhiteSpace(candUri.AbsolutePath) ? "/" : candUri.AbsolutePath.ToLowerInvariant();
-            var safeTitle = EvidenceSanitizer.SanitizeEvidence(candidate.Title, 256);
-            var identifier = !string.IsNullOrWhiteSpace(candidate.CveId)
-                ? candidate.CveId.Trim().ToUpperInvariant()
-                : !string.IsNullOrWhiteSpace(candidate.TemplateId)
-                    ? candidate.TemplateId.Trim().ToLowerInvariant()
-                    : safeTitle.Trim().ToLowerInvariant();
-
-            var fingerprintPayload = $"{context.RepositoryId}:{context.TargetId}:{canonicalTarget}:{candidate.FindingType}:{canonicalLocation}:{identifier}";
-            var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(fingerprintPayload))).ToLowerInvariant();
-
-            var observedAtUtc = ValidateObservationTimestamp(candidate.ObservedAtUtc, context.JobStartedAtUtc);
-            var sanitizedTargetUrl = EvidenceSanitizer.SanitizeUrl(candidate.TargetUrl);
-            var safeAttributes = EvidenceSanitizer.SanitizeAttributes(candidate.Attributes, bounds);
-
-            var existingFinding = await _dbContext.SecurityFindings
-                .Include(f => f.Evidences)
-                .FirstOrDefaultAsync(f => f.FindingFingerprint == fingerprint, ct);
-
-            if (existingFinding != null)
-            {
-                existingFinding.LastObservedAtUtc = observedAtUtc;
-
-                var evidenceData = new
-                {
-                    toolKey = candidate.ToolKey,
-                    toolVersion = candidate.ToolVersion,
-                    containerImageRepository = candidate.ContainerImageRepository,
-                    containerImageDigest = candidate.ContainerImageDigest,
-                    executable = candidate.Executable,
-                    rawSeverity = candidate.RawSeverity,
-                    cveId = candidate.CveId,
-                    cweId = candidate.CweId,
-                    templateId = candidate.TemplateId,
-                    endpointPath = candidate.EndpointPath,
-                    httpMethod = candidate.HttpMethod,
-                    httpResponseStatusCode = candidate.HttpResponseStatusCode,
-                    extractedData = candidate.ExtractedData != null ? EvidenceSanitizer.SanitizeEvidence(candidate.ExtractedData, 4096) : null,
-                    attributes = safeAttributes,
-                    ingestedAtUtc = DateTime.UtcNow
-                };
-
-                var safeEvidenceJson = JsonSerializer.Serialize(evidenceData);
-                var evidenceFingerprintPayload = $"{existingFinding.Id}:{candidate.ToolKey}:{candidate.EndpointPath}:{DateTime.UtcNow.Ticks}";
-                var evidenceFingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(evidenceFingerprintPayload))).ToLowerInvariant();
-
-                var evidence = new SecurityFindingEvidence
-                {
-                    Id = Guid.NewGuid(),
-                    FindingId = existingFinding.Id,
-                    Finding = existingFinding,
-                    EvidenceType = FindingEvidenceType.DeterministicOccurrence,
-                    DiscoverySource = DiscoveryType.DeterministicDetector,
-                    EvidenceFingerprint = evidenceFingerprint,
-                    EvidenceReference = sanitizedTargetUrl,
-                    SafeEvidenceJson = safeEvidenceJson,
-                    CreatedAtUtc = DateTime.UtcNow
-                };
-
-                _dbContext.SecurityFindingEvidences.Add(evidence);
-
-                var allEvidences = (existingFinding.Evidences ?? Enumerable.Empty<SecurityFindingEvidence>()).Concat(new[] { evidence }).ToList();
-                var riskResult = _riskEngine.CalculateFindingRisk(existingFinding, allEvidences);
-                existingFinding.RiskScore = riskResult.Score;
-                existingFinding.Severity = riskResult.Severity;
-                existingFinding.RiskFactorBreakdownJson = riskResult.ToJson();
-
-                try
-                {
-                    await _dbContext.SaveChangesAsync(ct);
-                }
-                catch (DbUpdateException)
-                {
-                    // Ignore transient duplicate evidence if already persisted
-                }
-            }
-        }
     }
 
     /// <summary>

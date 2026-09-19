@@ -163,6 +163,7 @@ public class HostedScanWorkerIntegrationTests
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://example.com",
             ScanProfile = SecurityScanProfileType.Recon,
@@ -399,7 +400,7 @@ public class HostedScanWorkerIntegrationTests
         db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Authorized Target", BaseUrl = "https://authorized.com", Enabled = true });
         await db.SaveChangesAsync();
 
-        var service = new ScanJobService(db, new TestUserContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
+        var service = new ScanJobService(db, new TestUserContext(), new TestTenantContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
         var request = new CreateScanJobRequest(null, null, "https://unauthorized-evil.com", SecurityScanProfileType.Recon, "bughunter");
 
         Func<Task> act = async () => await service.CreateScanJobAsync(request);
@@ -417,6 +418,7 @@ public class HostedScanWorkerIntegrationTests
         var jobId = Guid.NewGuid();
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = jobId,
             TargetUrl = "https://example.com",
             ScanProfile = SecurityScanProfileType.Recon,
@@ -462,6 +464,7 @@ public class HostedScanWorkerIntegrationTests
         var jobId = Guid.NewGuid();
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = jobId,
             TargetUrl = "127.0.0.1",
             ScanProfile = SecurityScanProfileType.Recon,
@@ -538,6 +541,7 @@ public class HostedScanWorkerIntegrationTests
         var jobId = Guid.NewGuid();
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = jobId,
             TargetUrl = "version",
             ScanProfile = SecurityScanProfileType.Recon,
@@ -641,6 +645,7 @@ public class HostedScanWorkerIntegrationTests
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "http://169.254.169.254/latest/meta-data/",
             ScanProfile = SecurityScanProfileType.Recon,
@@ -689,6 +694,7 @@ public class HostedScanWorkerIntegrationTests
 
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://prohibited-target.local",
             ScanProfile = SecurityScanProfileType.Recon,

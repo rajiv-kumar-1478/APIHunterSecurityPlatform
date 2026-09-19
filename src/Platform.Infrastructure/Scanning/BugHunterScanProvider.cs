@@ -1,7 +1,3 @@
-using System;
-using System.Collections.Generic;
-using System.Threading;
-using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
@@ -9,60 +5,62 @@ using Platform.Domain.Enums;
 
 namespace Platform.Infrastructure.Scanning;
 
-public class BugHunterScanProvider : IBugHunterProvider
+/// <summary>
+/// Compatibility descriptor for the planned BugHunter integration.
+/// Execution remains fail-closed until an authoritative upstream image/CLI/API,
+/// authentication, output, cancellation, and artifact contract is verified.
+/// </summary>
+public sealed class BugHunterScanProvider(
+    ILogger<BugHunterScanProvider> logger) : IBugHunterProvider
 {
-    private readonly ILogger<BugHunterScanProvider> _logger;
+    public const string UnavailableCode = "BUGHUNTER_CONTRACT_UNAVAILABLE";
 
     public string ProviderKey => "bughunter";
 
-    public BugHunterScanProvider(ILogger<BugHunterScanProvider> logger)
+    public Task<ScanStartResult> StartAsync(
+        ScanExecutionRequest request,
+        CancellationToken ct = default)
     {
-        _logger = logger;
-    }
+        ArgumentNullException.ThrowIfNull(request);
 
-    public Task<ScanStartResult> StartAsync(ScanExecutionRequest request, CancellationToken ct = default)
-    {
-        var externalId = $"bughunter-scan-{request.ScanJobId:N}";
-        _logger.LogInformation("BugHunter provider contract start requested for job '{ScanJobId}' (Target: {TargetUrl}). External ID: {ExternalId}", request.ScanJobId, request.TargetUrl, externalId);
+        logger.LogWarning(
+            "BugHunter execution for job '{ScanJobId}' was rejected because no authoritative provider contract is configured.",
+            request.ScanJobId);
 
         return Task.FromResult(new ScanStartResult(
-            Success: true,
-            ExternalScanId: externalId,
-            ErrorMessage: null
-        ));
+            Success: false,
+            ExternalScanId: string.Empty,
+            ErrorMessage: UnavailableCode));
     }
 
-    public Task<ScanStatusResult> GetStatusAsync(string externalScanId, CancellationToken ct = default)
+    public Task<ScanStatusResult> GetStatusAsync(
+        string externalScanId,
+        CancellationToken ct = default)
     {
         return Task.FromResult(new ScanStatusResult(
             ExternalScanId: externalScanId,
-            Status: SecurityScanJobStatus.Running,
-            ProgressPercent: 50,
-            Message: "BugHunter provider stub contract status check"
-        ));
+            Status: SecurityScanJobStatus.Blocked,
+            ProgressPercent: 0,
+            Message: UnavailableCode));
     }
 
-    public Task<ScanResult> GetResultAsync(string externalScanId, CancellationToken ct = default)
+    public Task<ScanResult> GetResultAsync(
+        string externalScanId,
+        CancellationToken ct = default)
     {
-        var toolResults = new List<ToolExecutionResult>
-        {
-            new ToolExecutionResult("subfinder", "pinned-v2.14.0", ToolExecutionStatus.Success, 0, "artifacts/subfinder.json", null),
-            new ToolExecutionResult("httpx", "pinned-v1.6.0", ToolExecutionStatus.Success, 0, "artifacts/httpx.json", null),
-            new ToolExecutionResult("bughunter", "pinned-v1.0.0", ToolExecutionStatus.Success, 0, "artifacts/bughunter_summary.json", null)
-        };
-
         return Task.FromResult(new ScanResult(
             ExternalScanId: externalScanId,
-            Status: SecurityScanJobStatus.Completed,
-            ToolResults: toolResults,
-            ArtifactReference: $"artifacts/{externalScanId}.zip",
-            Summary: "BugHunter provider contract stub execution complete."
-        ));
+            Status: SecurityScanJobStatus.Blocked,
+            ToolResults: Array.Empty<ToolExecutionResult>(),
+            ArtifactReference: null,
+            Summary: UnavailableCode));
     }
 
     public Task CancelAsync(string externalScanId, CancellationToken ct = default)
     {
-        _logger.LogInformation("BugHunter provider contract cancellation requested for '{ExternalScanId}'.", externalScanId);
+        logger.LogInformation(
+            "BugHunter cancellation for '{ExternalScanId}' required no action because the provider is unavailable.",
+            externalScanId);
         return Task.CompletedTask;
     }
 }

@@ -3,7 +3,14 @@
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { ApiError, apiRequest, ensureCsrfToken, primeCsrfToken, refreshCsrfToken } from "@/lib/api-client";
+
+interface LoginResponse {
+  userId: string;
+  isPlatformAdmin: boolean;
+  expiresAt: string;
+  csrfToken?: string;
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -18,27 +25,26 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${API_URL}/api/v1/auth/login`, {
+      await ensureCsrfToken();
+      const data = await apiRequest<LoginResponse>("/api/v1/auth/login", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
       });
 
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.title ?? "Login failed. Check your credentials.");
-        return;
+      if (data.csrfToken) {
+        primeCsrfToken(data.csrfToken);
+      } else {
+        await refreshCsrfToken();
       }
 
-      const data = await res.json();
-      // Store CSRF token in sessionStorage for future requests
-      if (data.csrfToken) {
-        sessionStorage.setItem("csrf_token", data.csrfToken);
-      }
       router.push("/dashboard");
-    } catch {
-      setError("Unable to connect to the server. Please try again.");
+    } catch (error: unknown) {
+      if (error instanceof ApiError) {
+        setError(error.message || "Login failed. Check your credentials.");
+      } else {
+        setError("Unable to connect to the server. Please try again.");
+      }
     } finally {
       setLoading(false);
     }

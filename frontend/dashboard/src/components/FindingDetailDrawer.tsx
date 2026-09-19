@@ -130,7 +130,6 @@ export function FindingDetailDrawer({
         {/* Admin Governance Actions */}
         <GovernanceActions
           findingId={finding.id}
-          currentStatus={finding.status}
           lifecycleVersion={finding.lifecycleVersion}
           isAdmin={isAdmin}
           onStatusUpdated={() => {

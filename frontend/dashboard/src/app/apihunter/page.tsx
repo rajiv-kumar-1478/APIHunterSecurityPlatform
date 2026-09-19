@@ -4,7 +4,22 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { apiRequest } from "@/lib/api-client";
+
+interface ApiHunterRecordListResponse {
+  items: ApiHunterRecord[];
+  totalCount: number;
+}
+
+interface ApiHunterSyncResult {
+  status: string;
+  recordsImported: number;
+  recordsUpdated: number;
+}
+
+interface RevealedKeyResponse {
+  rawKey: string;
+}
 
 interface SummaryData {
   source: {
@@ -54,7 +69,6 @@ export default function ApiHunterPage() {
   const [user, setUser] = useState<{ isPlatformAdmin: boolean; userId: string; email?: string } | null>(null);
   const [summary, setSummary] = useState<SummaryData | null>(null);
   const [records, setRecords] = useState<ApiHunterRecord[]>([]);
-  const [totalRecords, setTotalRecords] = useState(0);
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -65,10 +79,12 @@ export default function ApiHunterPage() {
   useEffect(() => {
     async function init() {
       try {
-        const res = await fetch(`${API_URL}/api/v1/auth/me`, { credentials: "include" });
-        if (!res.ok) { router.replace("/login"); return; }
-        const uData = await res.json();
-        setUser(uData);
+        const userData = await apiRequest<{
+          isPlatformAdmin: boolean;
+          userId: string;
+          email?: string;
+        }>("/api/v1/auth/me");
+        setUser(userData);
 
         await fetchSummary();
         await fetchRecords(statusFilter, page);
@@ -83,23 +99,26 @@ export default function ApiHunterPage() {
 
   async function fetchSummary() {
     try {
-      const res = await fetch(`${API_URL}/api/v1/apihunter/summary`, { credentials: "include" });
-      if (res.ok) setSummary(await res.json());
-    } catch (e) {
-      console.error("Failed to fetch APIHunter summary", e);
+      const data = await apiRequest<SummaryData>("/api/v1/apihunter/summary");
+      setSummary(data);
+    } catch (error: unknown) {
+      console.error("Failed to fetch APIHunter summary", error);
     }
   }
 
-  async function fetchRecords(filter: string, p: number) {
+  async function fetchRecords(filter: string, currentPage: number) {
     try {
-      const res = await fetch(`${API_URL}/api/v1/apihunter/records?status=${filter}&page=${p}&pageSize=15`, { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        setRecords(data.items);
-        setTotalRecords(data.totalCount);
-      }
-    } catch (e) {
-      console.error("Failed to fetch records", e);
+      const query = new URLSearchParams({
+        status: filter,
+        page: String(currentPage),
+        pageSize: "15",
+      });
+      const data = await apiRequest<ApiHunterRecordListResponse>(
+        `/api/v1/apihunter/records?${query.toString()}`,
+      );
+      setRecords(data.items);
+    } catch (error: unknown) {
+      console.error("Failed to fetch records", error);
     }
   }
 
@@ -107,20 +126,14 @@ export default function ApiHunterPage() {
     setSyncing(true);
     setSyncMessage(null);
     try {
-      const csrf = sessionStorage.getItem("csrf_token") ?? "";
-      const res = await fetch(`${API_URL}/api/v1/apihunter/sync`, {
+      const result = await apiRequest<ApiHunterSyncResult>("/api/v1/apihunter/sync", {
         method: "POST",
-        credentials: "include",
-        headers: { "X-CSRF-TOKEN": csrf }
       });
-      if (res.ok) {
-        const result = await res.json();
-        setSyncMessage(`Sync ${result.status}! Imported: ${result.recordsImported}, Updated: ${result.recordsUpdated}`);
-        await fetchSummary();
-        await fetchRecords(statusFilter, page);
-      } else {
-        setSyncMessage("Failed to trigger synchronization.");
-      }
+      setSyncMessage(
+        `Sync ${result.status}! Imported: ${result.recordsImported}, Updated: ${result.recordsUpdated}`,
+      );
+      await fetchSummary();
+      await fetchRecords(statusFilter, page);
     } catch {
       setSyncMessage("Synchronization error occurred.");
     } finally {
@@ -130,16 +143,10 @@ export default function ApiHunterPage() {
 
   async function handleReveal(id: string) {
     try {
-      const csrf = sessionStorage.getItem("csrf_token") ?? "";
-      const res = await fetch(`${API_URL}/api/v1/apihunter/records/${id}/reveal`, {
+      const data = await apiRequest<RevealedKeyResponse>(`/api/v1/apihunter/records/${id}/reveal`, {
         method: "POST",
-        credentials: "include",
-        headers: { "X-CSRF-TOKEN": csrf }
       });
-      if (res.ok) {
-        const data = await res.json();
-        setRevealedKey({ id, key: data.rawKey });
-      }
+      setRevealedKey({ id, key: data.rawKey });
     } catch {
       alert("Failed to reveal key");
     }

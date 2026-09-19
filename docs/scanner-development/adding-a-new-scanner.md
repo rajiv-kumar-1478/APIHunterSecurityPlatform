@@ -1,64 +1,27 @@
-# Step-by-Step Guide: Adding a New Scanner to APIHunter
+# Adding a New Scanner
 
-Follow this checklist to onboard a new scanner (e.g. **TruffleHog**, **OWASP ZAP**, **ffuf**, **Trivy**, or custom security tools):
+A scanner is not operational until both its software contract and live isolation boundary are verified.
 
----
+## Onboarding checklist
 
-## 15-Step Developer Checklist
+1. Identify canonical capability tags and target asset kinds.
+2. Decide whether the tool conforms to the existing generic CLI/parser contract. If not, plan a typed adapter and parser.
+3. Identify the authoritative upstream owner/repository and immutable release.
+4. Obtain an official OCI image or approved artifact and record the exact `sha256:` digest; never use `:latest` or an invented version.
+5. Document exact CLI/API arguments, authentication, exit codes, timeout, cancellation, artifacts, and output schema.
+6. Define `ScanToolManifest` with verified version, digest, profiles, capabilities, asset types, and execution phase.
+7. Implement a bounded parser with authentic golden fixtures, byte/candidate/evidence limits, and malformed-record diagnostics.
+8. Implement the typed adapter when the generic contract is insufficient. Arguments must be deterministic and secret-free.
+9. Register parser/adapter in API and worker DI only where required.
+10. Add selection policy only when the tool is an approved provider for a capability.
+11. Add manifest, argument, parser, resource-limit, scope, and `PlanHash` determinism tests.
+12. Add unavailable-by-default tests proving missing runtime/provenance/credentials/egress fail closed with no host fallback.
+13. Add integration tests for canonical ingestion, provenance, cancellation, scratch cleanup, and secret redaction.
+14. Validate the image runs non-root with read-only root, dropped capabilities, finite CPU/memory/PID/time limits, and controlled writable mounts.
+15. Prove egress permits only authorized targets and denies private, loopback, link-local, IMDS, DNS-rebinding, and unrelated public destinations.
+16. Run live Docker tests and relevant PostgreSQL race tests. If the environment is missing, mark enablement blocked.
+17. Update capability, operations, dashboard, and deployment documentation; then explicitly enable the tool through configuration.
 
-1. **Identify Capability Tags**:
-   - Determine the capabilities provided (e.g. `secret.deep_scan`, `git.history`, `dast.active_fuzz`).
-   - Add new capability tags to [`capability-taxonomy.md`](./capability-taxonomy.md) if introducing new categories.
+## Configuration-only exception
 
-2. **Determine Target Asset Kind**:
-   - Classify targets: `WebEndpoint`, `Domain`, `SourceRepository`, `JavaScriptBundle`, or `ApiContract`.
-
-3. **Obtain Authentic Container Image & Digest**:
-   - Find the official OCI image from Docker Hub or GitHub Container Registry.
-   - Run `docker pull <image>:<tag>` or query the registry API to get the exact multi-arch SHA-256 digest (`sha256:...`).
-
-4. **Define `ScanToolManifest`**:
-   - Set `ToolKey`, `Version`, `ContainerImageDigest`, `SupportedProfiles`, `Capabilities`, `DiscoveredAssetTypes`, and `ExecutionPhase`.
-
-5. **Implement `XxxOutputParser.cs`**:
-   - Create parser in `src/Platform.Application/Scanning/Parsers/`.
-   - Implement streaming JSON/JSONL reader.
-   - Enforce `MaxRawOutputBytes` (10 MiB), `MaxCandidates` (1,000), and `MaxEvidenceBytes` (16 KiB).
-   - Return `ToolParsedOutputResult` with `ScannerCoverage`.
-
-6. **Implement `XxxAdapter.cs`**:
-   - Create adapter in `src/Platform.Application/Scanning/Adapters/` implementing `IScanToolAdapter`.
-   - Formulate sandbox CLI execution arguments in `PrepareExecution`.
-   - Delegate output parsing to `_parser.ParseAsync()`.
-
-7. **Add Deterministic Rule/Execution Policies (Optional)**:
-   - If the tool uses external rule packs (like Semgrep, Nuclei, or ZAP), define an immutable policy record (e.g. `XxxRulePolicy`) with versioned rule sets.
-
-8. **Register in Dependency Injection**:
-   - Register parser and adapter in `src/Platform.Api/Program.cs` and `src/Platform.Worker/Program.cs`:
-     ```csharp
-     builder.Services.AddSingleton<XxxOutputParser>();
-     builder.Services.AddSingleton<IScanToolAdapter, XxxAdapter>();
-     ```
-
-9. **Configure Selection Policy in `ScanPlanningEngine`**:
-   - Add default preference mapping in `ScanPlanningEngine.BuildPolicyLookup()` if the tool serves as a primary provider for its capabilities.
-
-10. **Create Golden JSON Test Fixtures**:
-    - Add real sample scanner output to `tests/Platform.UnitTests/Scanning/Adapters/XxxAdapterTests.cs`.
-
-11. **Write Comprehensive Unit Tests**:
-    - Validate Manifest, CLI arguments generation, golden parsing, and adversarial resource limit protections.
-
-12. **Write Capability Planning Unit Tests**:
-    - Add a test in `ScanPlanningEngineTests.cs` asserting that `PlanScan()` selects your new adapter for its target asset kind and capabilities.
-
-13. **Run Full Test Suite**:
-    - `dotnet test tests/Platform.UnitTests/`
-    - `dotnet test tests/Platform.IntegrationTests/`
-
-14. **Verify PlanHash Determinism**:
-    - Ensure `PlanHash` remains deterministic and reproducible across identical target inputs.
-
-15. **Document the New Adapter**:
-    - Update `docs/SPEC-008_SCANNER_CAPABILITY_EXPANSION_CONTRACT.md` with the new tool's capability profile and container digest.
+Steps involving new code may be skipped only when the tool already conforms to an approved generic executable, existing parser/output schema, capability policy, and runtime contract. It still requires authoritative provenance, security tests, live isolation/egress evidence, and explicit enablement.

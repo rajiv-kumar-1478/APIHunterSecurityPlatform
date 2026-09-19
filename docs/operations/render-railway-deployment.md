@@ -1,172 +1,71 @@
-# Scanner Runtime Sandbox Deployment Guide (Render, Railway & Local Docker)
+# Scanner-Enabled Deployment Acceptance Guide
 
-This document specifies the deployment architecture, configuration contracts, and secret isolation guarantees for the APIHunter Security Scanner Runtime Sandbox across primary cloud hosting targets (Render and Railway) and local development/CI environments.
+## Status
 
----
+This is a **proposed scanner-enabled reference architecture**, not the current deployment state. The checked-in Compose deployment runs PostgreSQL, API, worker, and frontend with scanner execution, scan consumption, and campaign scheduling disabled/fail-closed.
 
-## 1. Deployment Model Architecture (Option A)
+Current verified configuration properties:
+- API, worker, and frontend images run as non-root users.
+- Worker exposes no public port and joins private backend plus outbound networks.
+- API and worker share persisted ASP.NET Core Data Protection keys and the same application name.
+- PostgreSQL, API, and frontend have health checks.
 
-```
-                            ┌──────────────────────────────────────┐
-                            │    Web Dashboard / API Service       │
-                            │  (Render Web Service / Railway App)  │
-                            └──────────────────┬───────────────────┘
-                                               │
-                                               ▼
-                            ┌──────────────────────────────────────┐
-                            │      GenericScanWorker Service       │
-                            │    (Render Worker / Railway Worker)  │
-                            └──────────────────┬───────────────────┘
-                                               │
-                                               │ X-Scanner-Service-Key (Private Mesh)
-                                               ▼
-                            ┌──────────────────────────────────────┐
-                            │   Dedicated Scanner Private Service  │
-                            │  (Render Private / Railway Private)  │
-                            └──────────────────┬───────────────────┘
-                                               │
-                                               │ All Outbound Traffic
-                                               ▼
-                            ┌──────────────────────────────────────┐
-                            │       Enforced Egress Gateway        │
-                            │  (Dedicated Proxy Network Boundary)  │
-                            └──────────────────┬───────────────────┘
-                                               │
-                       ┌───────────────────────┴───────────────────────┐
-                       ▼                                               ▼
-             Approved Target IP                               Unapproved IP / Private / IMDS
-                 [ ALLOW ]                                              [ DENY ]
+Live Compose/image validation is currently blocked because Docker is unavailable on the validation machine.
+
+## Required scanner-enabled topology
+
+```text
+Public frontend/API
+        │ private authenticated control plane
+        ▼
+Tenant-configured worker
+        │
+        ▼
+Dedicated non-root scanner executor
+        │ all target traffic
+        ▼
+Enforced egress boundary
+   ├─ authorized target IPs: allow
+   └─ private/link-local/IMDS/unapproved: deny
 ```
 
----
+The scanner executor and egress gateway must be distinct, authoritative services. Application-level destination checks alone are not a physical isolation boundary.
 
-## 2. Configuration Contracts Matrix
+## Required configuration
 
-### Configuration Reference (`appsettings.json` / Environment Variables)
+| Setting | Requirement |
+|---|---|
+| `ScannerRuntime__RuntimeMode` | Explicit supported executor mode; never implicit host execution |
+| `ScannerRuntime__EgressGatewayMode` | Enforced gateway mode |
+| `ScannerRuntime__EgressGatewayEndpoint` | Private authenticated endpoint |
+| `ScannerRuntime__HostedScannerServiceEndpoint` | Private executor endpoint for managed mode |
+| `ScannerRuntime__HostedScannerServiceKey` | Secret-managed authentication material |
+| `ScannerRuntime__EnforceImageProvenance` | `true` |
+| CPU/memory/PID/timeout settings | Finite and enforced by the executor |
+| Tool images | Exact repository plus immutable `sha256:` digest; mutable tags such as `:latest` are forbidden |
 
-| Variable Name | Required | Default (Local Docker) | Render / Railway Value | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| `ScannerRuntime__RuntimeMode` | **Yes** | `LocalDocker` | `CloudManagedContainer` | Execution runtime mode. |
-| `ScannerRuntime__EgressGatewayMode` | **Yes** | `EnforcedGateway` | `EnforcedGateway` | Active network proxy enforcement mode. |
-| `ScannerRuntime__EgressGatewayEndpoint` | **Yes** | `http://127.0.0.1:8888` | `http://egress-gateway.internal:8888` | Gateway service endpoint. |
-| `ScannerRuntime__HostedScannerServiceEndpoint` | Cloud Only | *(empty)* | `http://scanner-service.internal:8080` | Private scanner service endpoint. |
-| `ScannerRuntime__HostedScannerServiceKey` | Cloud Only | *(empty)* | `[SECRET_ENV_VAR]` | Pre-shared key for scanner authentication. |
-| `ScannerRuntime__EnforceImageProvenance` | **Yes** | `true` | `true` | Mandates pinned SHA-256 image digests. |
-| `ScannerRuntime__MaxCpuCores` | Optional | `2.0` | `2.0` | Container CPU core limit. |
-| `ScannerRuntime__MaxMemoryBytes` | Optional | `1073741824` | `1073741824` | Container memory limit (1 GiB). |
-| `ScannerRuntime__MaxPids` | Optional | `100` | `100` | Process limit per container. |
+## Render/Railway acceptance
 
----
+Render or Railway may be used only when the deployment supplies:
+1. a private worker and private scanner service;
+2. authenticated control-plane requests;
+3. a separately enforced outbound gateway with private/link-local/IMDS denial;
+4. digest-pinned scanner and gateway images;
+5. non-root, read-only, capability-dropped scanner containers with resource limits;
+6. durable shared Data Protection keys for API/worker;
+7. truthful readiness that remains false until every boundary is healthy.
 
-## 3. Render Deployment Specification (`render.yaml`)
+Any `render.yaml` or Railway service definition is an environment-specific artifact and must be reviewed separately. No such checked-in artifact currently proves this topology.
 
-```yaml
-services:
-  # 1. Platform API & Dashboard
-  - type: web
-    name: apihunter-platform-api
-    runtime: dotnet
-    plan: standard
-    buildCommand: dotnet publish src/Platform.Api -c Release -o out
-    startCommand: ./out/Platform.Api
-    envVars:
-      - key: ASPNETCORE_ENVIRONMENT
-        value: Production
-      - key: ScannerRuntime__RuntimeMode
-        value: CloudManagedContainer
-      - key: ScannerRuntime__HostedScannerServiceEndpoint
-        fromService:
-          type: pserv
-          name: apihunter-scanner-service
-          property: hostport
-      - key: ScannerRuntime__HostedScannerServiceKey
-        generateValue: true
-      - key: ScannerRuntime__EgressGatewayEndpoint
-        fromService:
-          type: pserv
-          name: apihunter-egress-gateway
-          property: hostport
+## Live validation gate
 
-  # 2. Dedicated Scanner Private Service (No Public Route)
-  - type: pserv
-    name: apihunter-scanner-service
-    runtime: image
-    image:
-      url: ghcr.io/apihunter-security/scanner-service:latest
-    envVars:
-      - key: SCANNER_SERVICE_KEY
-        fromService:
-          type: web
-          name: apihunter-platform-api
-          envVarKey: ScannerRuntime__HostedScannerServiceKey
-      - key: HTTP_PROXY
-        fromService:
-          type: pserv
-          name: apihunter-egress-gateway
-          property: hostport
-      - key: HTTPS_PROXY
-        fromService:
-          type: pserv
-          name: apihunter-egress-gateway
-          property: hostport
-      - key: NO_PROXY
-        value: ""
+Before changing runtime mode from `Disabled`:
+- validate Compose/config rendering;
+- build API, worker, and frontend images and inspect their effective users;
+- prove scanner containers are non-root, read-only, capability-dropped, and resource-limited;
+- prove allowed target egress succeeds and private/link-local/IMDS/unapproved egress fails;
+- prove cancellation kills the exact process/container tree;
+- prove missing credentials, gateway, image digest, or provider contract fails closed;
+- run PostgreSQL distributed scheduler races against a real database.
 
-  # 3. Dedicated Egress Gateway Boundary
-  - type: pserv
-    name: apihunter-egress-gateway
-    runtime: image
-    image:
-      url: ghcr.io/apihunter-security/egress-gateway:latest
-    envVars:
-      - key: EGRESS_ALLOW_PRIVATE_IPS
-        value: "false"
-      - key: EGRESS_ALLOW_IMDS
-        value: "false"
-```
-
----
-
-## 4. Railway Deployment Specification (`railway.json` / Service Mesh)
-
-In Railway, services communicate over the internal private network (`*.railway.internal`):
-
-1. **`apihunter-api` Service**:
-   - `ScannerRuntime__RuntimeMode` = `CloudManagedContainer`
-   - `ScannerRuntime__HostedScannerServiceEndpoint` = `http://scanner-service.railway.internal:8080`
-   - `ScannerRuntime__HostedScannerServiceKey` = `${{ secrets.SCANNER_SERVICE_KEY }}`
-   - `ScannerRuntime__EgressGatewayEndpoint` = `http://egress-gateway.railway.internal:8888`
-2. **`scanner-service` Service**:
-   - Private service exposing port `8080`.
-   - `X-Scanner-Service-Key` validation middleware enabled.
-   - Outbound HTTP/HTTPS proxy configured to `http://egress-gateway.railway.internal:8888` with `NO_PROXY=""`.
-
----
-
-## 5. Local Docker Development Specification
-
-For local development and CI test runners:
-```bash
-# Start local egress gateway and sandbox network
-docker network create apihunter-sandbox-net
-docker run -d --name apihunter-local-gateway --network apihunter-sandbox-net -p 127.0.0.1:8888:8888 ghcr.io/apihunter-security/egress-gateway:latest
-```
-Configuration in `appsettings.Development.json`:
-```json
-{
-  "ScannerRuntime": {
-    "RuntimeMode": "LocalDocker",
-    "EgressGatewayMode": "EnforcedGateway",
-    "EgressNetworkName": "apihunter-sandbox-net",
-    "EgressGatewayEndpoint": "http://127.0.0.1:8888",
-    "EnforceImageProvenance": true
-  }
-}
-```
-
----
-
-## 6. Secret Sanitization & Observability Guarantee
-
-- **Zero Plaintext Exposure**: `HostedScannerServiceKey` is never returned in `GET /api/v1/security/scans/runtime/health` or rendered on the dashboard.
-- **Fail Closed**: If `HostedScannerServiceEndpoint` or `HostedScannerServiceKey` is missing or unauthenticated, the runtime health probe marks `Available: false` and `ReadyForScans: false`, preventing unmonitored job creation.
+If Docker/PostgreSQL is unavailable, record these checks as **blocked**, not passed, and keep scanner execution disabled.

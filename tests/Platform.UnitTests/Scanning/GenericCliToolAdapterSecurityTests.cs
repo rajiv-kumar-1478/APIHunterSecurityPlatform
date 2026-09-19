@@ -207,6 +207,7 @@ public class GenericCliToolAdapterSecurityTests
         var service = new ScanJobService(
             db,
             new TestUserContext(),
+            new TestTenantContext(),
             new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance),
             NullLogger<ScanJobService>.Instance
         );
@@ -238,6 +239,7 @@ public class GenericCliToolAdapterSecurityTests
         var service = new ScanJobService(
             db,
             new TestUserContext(),
+            new TestTenantContext(),
             new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance),
             NullLogger<ScanJobService>.Instance
         );
@@ -295,6 +297,7 @@ public class GenericCliToolAdapterSecurityTests
 
         db.SecurityScanJobs.Add(new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://example.com",
             ScanProfile = SecurityScanProfileType.Recon,
@@ -344,7 +347,7 @@ public class GenericCliToolAdapterSecurityTests
         db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "https://example.com", Enabled = true });
         await db.SaveChangesAsync();
 
-        var service = new ScanJobService(db, new TestUserContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
+        var service = new ScanJobService(db, new TestUserContext(), new TestTenantContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
         var request = new CreateScanJobRequest(null, null, "https://example.com", SecurityScanProfileType.Recon, "bughunter");
 
         var job = await service.CreateScanJobAsync(request);
@@ -358,7 +361,7 @@ public class GenericCliToolAdapterSecurityTests
         db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "https://example.com", Enabled = true });
         await db.SaveChangesAsync();
 
-        var service = new ScanJobService(db, new TestUserContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
+        var service = new ScanJobService(db, new TestUserContext(), new TestTenantContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
         var request = new CreateScanJobRequest(null, null, "https://api.example.com", SecurityScanProfileType.Recon, "bughunter");
 
         var job = await service.CreateScanJobAsync(request);
@@ -372,7 +375,7 @@ public class GenericCliToolAdapterSecurityTests
         db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "https://example.com", Enabled = true });
         await db.SaveChangesAsync();
 
-        var service = new ScanJobService(db, new TestUserContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
+        var service = new ScanJobService(db, new TestUserContext(), new TestTenantContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
         var request = new CreateScanJobRequest(null, null, "https://evil-example.com", SecurityScanProfileType.Recon, "bughunter");
 
         Func<Task> act = async () => await service.CreateScanJobAsync(request);
@@ -386,7 +389,7 @@ public class GenericCliToolAdapterSecurityTests
         db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "https://example.com", Enabled = true });
         await db.SaveChangesAsync();
 
-        var service = new ScanJobService(db, new TestUserContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
+        var service = new ScanJobService(db, new TestUserContext(), new TestTenantContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
         var request = new CreateScanJobRequest(null, null, "https://example.com.evil.com", SecurityScanProfileType.Recon, "bughunter");
 
         Func<Task> act = async () => await service.CreateScanJobAsync(request);
@@ -400,7 +403,7 @@ public class GenericCliToolAdapterSecurityTests
         db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "https://example.com", Enabled = true });
         await db.SaveChangesAsync();
 
-        var service = new ScanJobService(db, new TestUserContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
+        var service = new ScanJobService(db, new TestUserContext(), new TestTenantContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
         var request = new CreateScanJobRequest(null, null, "https://example.com.attacker.io", SecurityScanProfileType.Recon, "bughunter");
 
         Func<Task> act = async () => await service.CreateScanJobAsync(request);
@@ -414,7 +417,7 @@ public class GenericCliToolAdapterSecurityTests
         db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Target", BaseUrl = "https://example.com", Enabled = true });
         await db.SaveChangesAsync();
 
-        var service = new ScanJobService(db, new TestUserContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
+        var service = new ScanJobService(db, new TestUserContext(), new TestTenantContext(), new ScanToolRegistryService(db, NullLogger<ScanToolRegistryService>.Instance), NullLogger<ScanJobService>.Instance);
         var request = new CreateScanJobRequest(null, null, "https://another-domain.com", SecurityScanProfileType.Recon, "bughunter");
 
         Func<Task> act = async () => await service.CreateScanJobAsync(request);

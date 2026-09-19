@@ -84,7 +84,7 @@ public class ScanProductionAcceptanceTests : IDisposable
             NullLogger<ScanExecutionOrchestrator>.Instance
         );
 
-        _scanJobService = new ScanJobService(_dbContext, _mockUser.Object, _toolRegistryService, NullLogger<ScanJobService>.Instance);
+        _scanJobService = new ScanJobService(_dbContext, _mockUser.Object, new TestTenantContext(_tenantAId), _toolRegistryService, NullLogger<ScanJobService>.Instance);
         _toolHealthService = new ScanToolHealthService(_toolRegistryService, NullLogger<ScanToolHealthService>.Instance);
         _secretStore = new InMemoryScanProviderSecretStore();
         _postProcessor = new ScanPostExecutionProcessor(_dbContext, _scanJobService, NullLogger<ScanPostExecutionProcessor>.Instance);
@@ -102,6 +102,7 @@ public class ScanProductionAcceptanceTests : IDisposable
             _reportBuilder,
             mockAuditService.Object,
             mockExecutionEngine.Object,
+            new TestTenantContext(_tenantAId),
             _formatterRegistry);
 
         // Seed Repository and SecurityTarget
@@ -185,12 +186,11 @@ public class ScanProductionAcceptanceTests : IDisposable
             RepositoryId: _repoId,
             TargetId: _targetId,
             TargetUrl: "https://api.enterprise.com",
-            ScanProfile: SecurityScanProfileType.Standard
+            ScanProfile: SecurityScanProfileType.Standard,
+            ProviderKey: "test-fixture-provider"
         );
 
-        var createResult = await _controller.CreateJob(createRequest, default);
-        var createdAction = createResult.Result.Should().BeOfType<CreatedAtActionResult>().Subject;
-        var createdJob = createdAction.Value.Should().BeOfType<SecurityScanJob>().Subject;
+        var createdJob = await _scanJobService.CreateScanJobAsync(createRequest);
         createdJob.Status.Should().Be(SecurityScanJobStatus.Queued);
         createdJob.RequestedByUserId.Should().Be(_tenantAId);
 
@@ -336,12 +336,11 @@ public class ScanProductionAcceptanceTests : IDisposable
             RepositoryId: _repoId,
             TargetId: _targetId,
             TargetUrl: "https://api.enterprise.com",
-            ScanProfile: SecurityScanProfileType.Standard
+            ScanProfile: SecurityScanProfileType.Standard,
+            ProviderKey: "test-fixture-provider"
         );
 
-        var createResult = await _controller.CreateJob(createRequest, default);
-        var createdAction = createResult.Result.Should().BeOfType<CreatedAtActionResult>().Subject;
-        var createdJob = createdAction.Value.Should().BeOfType<SecurityScanJob>().Subject;
+        var createdJob = await _scanJobService.CreateScanJobAsync(createRequest);
 
         // Ingest Candidates for Job 1
         var job1Start = DateTime.UtcNow.AddMinutes(-30);
@@ -408,6 +407,7 @@ public class ScanProductionAcceptanceTests : IDisposable
         var job2End = DateTime.UtcNow.AddMinutes(-15);
         var job2 = new SecurityScanJob
         {
+            TenantId = _tenantAId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,
@@ -441,6 +441,7 @@ public class ScanProductionAcceptanceTests : IDisposable
         var job3End = DateTime.UtcNow.AddMinutes(-5);
         var job3 = new SecurityScanJob
         {
+            TenantId = _tenantAId,
             Id = Guid.NewGuid(),
             RepositoryId = _repoId,
             TargetId = _targetId,

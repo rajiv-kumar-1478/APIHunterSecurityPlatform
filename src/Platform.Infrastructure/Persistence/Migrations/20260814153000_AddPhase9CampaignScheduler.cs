@@ -1,4 +1,5 @@
 using System;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -26,6 +27,8 @@ namespace Platform.Infrastructure.Persistence.Migrations
     ///   Enforces at the database level that a scheduled occurrence produces at most one SecurityScanJob,
     ///   even when the scheduler retries after an ambiguous network failure.
     /// </summary>
+    [DbContext(typeof(PlatformDbContext))]
+    [Migration("20260814153000_AddPhase9CampaignScheduler")]
     public partial class AddPhase9CampaignScheduler : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -153,7 +156,7 @@ namespace Platform.Infrastructure.Persistence.Migrations
                 nullable: true);
 
             // CampaignOccurrenceKey: 64-char lowercase hex SHA256 idempotency key.
-            // SHA256("v1\n" + CampaignId:D + "\n" + ScheduledOccurrenceUtc:O + "\n" + ScheduleVersion)
+            // v1 hashes CampaignId, UTC occurrence truncated to PostgreSQL microseconds, and ScheduleVersion.
             migrationBuilder.AddColumn<string>(
                 name: "CampaignOccurrenceKey",
                 table: "security_scan_jobs",

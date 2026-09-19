@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { RemediationActionDetailDto, executeRemediationAction } from "@/lib/remediation-api";
+import {
+  RemediationActionDetailDto,
+  executeRemediationAction,
+  isRemediationConcurrencyError,
+} from "@/lib/remediation-api";
+import { getErrorMessage } from "@/lib/api-client";
 
 interface RemediationExecutionStatusProps {
   action: RemediationActionDetailDto;
@@ -22,12 +27,12 @@ export default function RemediationExecutionStatus({ action, onSuccess, onConcur
     try {
       await executeRemediationAction(action.id, action.version);
       onSuccess();
-    } catch (err: any) {
-      if (err.isConcurrencyConflict) {
-        setError(err.message);
+    } catch (error: unknown) {
+      if (isRemediationConcurrencyError(error)) {
+        setError(error.message);
         onConcurrencyConflict();
       } else {
-        setError(err.message || "Provider execution failed.");
+        setError(getErrorMessage(error, "Provider execution failed."));
       }
     } finally {
       setIsExecuting(false);

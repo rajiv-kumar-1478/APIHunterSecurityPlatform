@@ -71,6 +71,10 @@ public interface IPlatformDbContext
     DbSet<ScanPlanAuditRecord> ScanPlanAudits { get; }
     DbSet<ScanToolInvocationRecord> ScanToolInvocations { get; }
 
+    // Step 9.4 — Deployment Webhook Registration & Idempotency
+    DbSet<RegisteredApplication> RegisteredApplications { get; }
+    DbSet<DeploymentWebhookRecord> DeploymentWebhookRecords { get; }
+
     Microsoft.EntityFrameworkCore.ChangeTracking.ChangeTracker ChangeTracker { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);

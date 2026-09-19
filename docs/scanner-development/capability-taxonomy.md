@@ -1,45 +1,41 @@
 # Scanner Capability Taxonomy & Execution Phases
 
-## Execution Phases (`ScannerExecutionPhase`)
+Capability entries describe planning intent. A listed example is not proof that the tool is installed, healthy, or operational. BugHunter and ZAP examples below are planned/unavailable unless an authoritative runtime contract is later enabled.
 
-The planner arranges tool invocations into strictly ordered phases:
+## Execution phases (`ScannerExecutionPhase`)
 
 ```text
-Discovery (1) ──────► StaticAnalysis (2) ──────► AttackSurfaceAnalysis (3) ──────► ActiveVerification (4)
+Discovery → StaticAnalysis → AttackSurfaceAnalysis → ActiveVerification
 ```
 
-| Phase | Value | Typical Tools | Responsibilities |
-|---|---|---|---|
-| **`Discovery`** | `1` | `httpx`, `subfinder`, `jsminer` | Network probing, DNS resolution, JavaScript crawling, URL discovery. |
-| **`StaticAnalysis`** | `2` | `semgrep`, `trufflehog` | Code-level SAST, git history scanning, config auditing. |
-| **`AttackSurfaceAnalysis`** | `3` | `UnifiedJsAnalyzer` | AST parsing, client-side route extraction, secret deduplication, DOM-XSS. |
-| **`ActiveVerification`** | `4` | `nuclei`, `bughunter`, `zap` | Active HTTP probing, BOLA verification, payload injection verification. |
-
----
-
-## Canonical Capability Tags
-
-| Capability Tag | Category | Satisfying Tools (Examples) |
+| Phase | Typical implemented/planned examples | Responsibility |
 |---|---|---|
-| `http.probe` | Network Discovery | `httpx` |
-| `subdomain.enumerate` | Reconnaissance | `subfinder` |
-| `js.crawl` | Asset Discovery | `jsminer` |
-| `endpoint.extract` | Surface Discovery | `jsminer`, `UnifiedJsAnalyzer` |
-| `sast.scan` | Static Analysis | `semgrep` |
-| `code.vulnerability` | Static Analysis | `semgrep` |
-| `secret.detect` | Secret Intelligence | `jsminer`, `JsSecretAnalyzer` |
-| `secret.deep_scan` | Secret Intelligence | `trufflehog` |
-| `template.vulnerability` | Active Vulnerability | `nuclei` |
-| `api.fuzz` | Active Verification | `bughunter` |
-| `bola.verify` | Active Verification | `bughunter` |
-| `dast.active_fuzz` | Active Verification | `zap` |
+| `Discovery` | `httpx`, `subfinder`, `jsminer` | HTTP/DNS probing, crawling, and asset discovery. |
+| `StaticAnalysis` | `semgrep`, `trufflehog` | SAST, history, secret, and configuration analysis. |
+| `AttackSurfaceAnalysis` | `UnifiedJsAnalyzer` | AST/routes/client-side attack-surface analysis. |
+| `ActiveVerification` | `nuclei`; planned `bughunter`, `zap` | Controlled active verification against an authorized target. |
 
----
+## Canonical capability tags
 
-## Target Asset Kinds (`TargetAssetKind`)
+| Capability | Example provider intent |
+|---|---|
+| `http.probe` | `httpx` |
+| `subdomain.enumerate` | `subfinder` |
+| `js.crawl` | `jsminer` |
+| `endpoint.extract` | `jsminer`, `UnifiedJsAnalyzer` |
+| `sast.scan`, `code.vulnerability` | `semgrep` |
+| `secret.detect` | `jsminer`, `JsSecretAnalyzer` |
+| `secret.deep_scan` | `trufflehog` |
+| `template.vulnerability` | `nuclei` |
+| `api.fuzz`, `bola.verify` | planned BugHunter compatibility |
+| `dast.active_fuzz` | planned ZAP compatibility |
 
-1. **`WebEndpoint`**: Single URL or web application service.
-2. **`Domain`**: Top-level domain or wildcard host.
-3. **`SourceRepository`**: Git repository or local source directory.
-4. **`JavaScriptBundle`**: Static or bundled JavaScript artifact.
-5. **`ApiContract`**: OpenAPI/Swagger or GraphQL schema specification.
+## Target asset kinds
+
+- `WebEndpoint`: one web/API endpoint.
+- `Domain`: domain or authorized subdomain scope.
+- `SourceRepository`: source repository/artifact.
+- `JavaScriptBundle`: JavaScript asset.
+- `ApiContract`: OpenAPI/GraphQL contract.
+
+Planning must select only enabled, healthy, provenance-valid tools supported by an operational runtime. Otherwise it fails closed.

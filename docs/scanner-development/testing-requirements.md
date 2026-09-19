@@ -1,33 +1,37 @@
 # Scanner Plugin Testing Requirements
 
-## Test Verification Standards
+Scanner readiness has separate evidence tiers. Passing an earlier tier does not imply operational availability.
 
-Every scanner adapter submitted to APIHunter must include a comprehensive unit test fixture covering:
+## Tier 1 — deterministic unit contracts
+- Validate authoritative manifest fields, exact version, repository, and `sha256:` digest.
+- Validate deterministic, shell-free, secret-free execution arguments.
+- Parse authentic golden output into canonical findings and coverage.
+- Enforce raw-byte, candidate-count, evidence-size, malformed-record, and cancellation bounds.
+- Verify capability selection and deterministic `PlanHash`.
+- Verify unavailable/missing configuration returns stable fail-closed results.
 
----
+## Tier 2 — application integration
+- Verify tenant target/scope authorization before secrets or execution.
+- Verify canonical ingestion, deduplication, sanitized evidence, reports, provenance, and invocation records.
+- Verify secret leases and scratch directories are cleaned on success, failure, timeout, cancellation, and lease loss.
+- Verify disabled runtime/provider never launches a host process or fabricates external state.
+- Verify UI/API expose `Unavailable`, `NotConfigured`, and fail-closed diagnostics truthfully.
 
-## Required Test Matrix
+## Tier 3 — live container and network boundary
+Requires Docker or the real managed executor:
+- inspect non-root UID, read-only root, dropped capabilities, mounts, and CPU/memory/PID limits;
+- execute a digest-pinned image and reject mutable/unapproved artifacts;
+- prove authorized target egress succeeds;
+- prove loopback/private/link-local/IMDS/DNS-rebinding/unapproved egress fails;
+- prove timeout/cancellation kills the exact process/container tree and removes scratch/artifacts;
+- prove missing gateway/credentials/provider contract keeps readiness false.
 
-### 1. Manifest Supply Chain Validation
-- Verify `ScanToolManifestValidator.Validate(adapter.Manifest).IsValid == true`.
-- Assert exact SemVer, valid container image repository, and valid 64-char hex SHA-256 digest (`sha256:...`).
-- Assert supported profile flags (`Standard`, `Deep`).
+## Tier 4 — relational concurrency and migration
+Requires real PostgreSQL:
+- apply the full migration chain to an empty database and inspect the final schema;
+- run idempotency, claim, heartbeat/recovery, and scheduler race tests with independent DbContexts/processes;
+- prove exactly-once campaign occurrence and retry-safe outcome markers.
 
-### 2. CLI Execution Plan Generation
-- Verify command line arguments produced by `adapter.PrepareExecution(context)`.
-- Assert profile-specific arguments (e.g. standard rule packs vs. deep framework rules).
-- Assert environment variables (e.g. metrics disabled).
+## Reporting rule
 
-### 3. Golden JSON Fixture Parsing
-- Parse authentic tool output fixture.
-- Verify accurate mapping of `FindingCandidate` properties: `RawSeverity`, `CweId`, `EndpointPath`, `RuleOrTemplateId`, and evidence snippets.
-- Verify `ScannerCoverage` calculations.
-
-### 4. Adversarial & Resource Limit Guard Tests
-- **Excessive Payload**: Feed `MaxRawOutputBytes + 1` bytes $\rightarrow$ verify safe truncation without OOM.
-- **Excessive Candidates**: Feed 2,000 items $\rightarrow$ verify candidate capping at `MaxCandidates = 1,000`.
-- **Corrupt Lines**: Feed malformed lines interleaved with valid JSON $\rightarrow$ verify parser skips corrupt lines and records `MalformedRecordCount`.
-
-### 5. PlanHash & Capability Resolution Tests
-- Verify that `ScanPlanningEngine.PlanScan()` correctly includes the new adapter when matching required capabilities and target kinds.
-- Verify deterministic `PlanHash` across identical inputs.
+Mock/in-memory checks may pass while live Docker or PostgreSQL checks are blocked. Report each tier separately. Never relabel a blocked environment gate as passed, and never enable a scanner based only on unit/parser/manifest evidence.

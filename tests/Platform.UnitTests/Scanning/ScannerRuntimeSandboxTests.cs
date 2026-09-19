@@ -94,7 +94,8 @@ public class ScannerRuntimeSandboxTests
     {
         var defaultOptions = new ScannerRuntimeOptions();
         defaultOptions.AllowUnsafeProcessFallback.Should().BeFalse("Unsafe host process fallback must be strictly disabled by default");
-        defaultOptions.RuntimeMode.Should().Be(ScannerRuntimeMode.LocalDocker);
+        defaultOptions.RuntimeMode.Should().Be(ScannerRuntimeMode.Disabled);
+        defaultOptions.EgressGatewayMode.Should().Be(EgressGatewayMode.None);
         defaultOptions.EnforceImageProvenance.Should().BeTrue();
     }
 
@@ -258,6 +259,7 @@ public class ScannerRuntimeSandboxTests
         db.SecurityTargets.Add(new SecurityTarget { Id = Guid.NewGuid(), Name = "Authorized Target", BaseUrl = "https://example.com", Enabled = true });
         var job = new SecurityScanJob
         {
+            TenantId = TestTenantContext.DefaultTenantId,
             Id = Guid.NewGuid(),
             TargetUrl = "https://example.com",
             ScanProfile = SecurityScanProfileType.Recon,
@@ -316,6 +318,8 @@ public class ScannerRuntimeSandboxTests
         var options = new ScannerRuntimeOptions
         {
             RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
+            EgressGatewayMode = EgressGatewayMode.EnforcedGateway,
+            EgressGatewayEndpoint = "http://egress-gateway.internal:8888",
             HostedScannerServiceEndpoint = "https://scanner.internal",
             HostedScannerServiceKey = "SECRET_KEY_123"
         };
@@ -342,6 +346,8 @@ public class ScannerRuntimeSandboxTests
         var options = new ScannerRuntimeOptions
         {
             RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
+            EgressGatewayMode = EgressGatewayMode.EnforcedGateway,
+            EgressGatewayEndpoint = "http://egress-gateway.internal:8888",
             HostedScannerServiceEndpoint = "https://scanner.internal",
             HostedScannerServiceKey = "SECRET_KEY_123"
         };
@@ -368,6 +374,8 @@ public class ScannerRuntimeSandboxTests
         var options = new ScannerRuntimeOptions
         {
             RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
+            EgressGatewayMode = EgressGatewayMode.EnforcedGateway,
+            EgressGatewayEndpoint = "http://egress-gateway.internal:8888",
             HostedScannerServiceEndpoint = "https://scanner.internal",
             HostedScannerServiceKey = "SECRET_KEY_123"
         };
@@ -390,6 +398,8 @@ public class ScannerRuntimeSandboxTests
         var options = new ScannerRuntimeOptions
         {
             RuntimeMode = ScannerRuntimeMode.CloudManagedContainer,
+            EgressGatewayMode = EgressGatewayMode.EnforcedGateway,
+            EgressGatewayEndpoint = "http://egress-gateway.internal:8888",
             HostedScannerServiceEndpoint = null,
             HostedScannerServiceKey = null
         };

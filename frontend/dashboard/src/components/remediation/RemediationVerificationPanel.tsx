@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { RemediationActionDetailDto, verifyRemediationAction } from "@/lib/remediation-api";
+import {
+  RemediationActionDetailDto,
+  isRemediationConcurrencyError,
+  verifyRemediationAction,
+} from "@/lib/remediation-api";
+import { getErrorMessage } from "@/lib/api-client";
 
 interface RemediationVerificationPanelProps {
   action: RemediationActionDetailDto;
@@ -22,12 +27,12 @@ export default function RemediationVerificationPanel({ action, onSuccess, onConc
     try {
       await verifyRemediationAction(action.id, action.version);
       onSuccess();
-    } catch (err: any) {
-      if (err.isConcurrencyConflict) {
-        setError(err.message);
+    } catch (error: unknown) {
+      if (isRemediationConcurrencyError(error)) {
+        setError(error.message);
         onConcurrencyConflict();
       } else {
-        setError(err.message || "Verification failed.");
+        setError(getErrorMessage(error, "Verification failed."));
       }
     } finally {
       setIsVerifying(false);

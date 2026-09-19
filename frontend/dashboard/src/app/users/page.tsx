@@ -4,7 +4,15 @@ import { useEffect, useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { ApiError, apiRequest } from "@/lib/api-client";
+
+interface CurrentUser {
+  isPlatformAdmin: boolean;
+}
+
+interface UserListResponse {
+  items?: UserDto[];
+}
 
 interface UserDto {
   id: string;
@@ -19,7 +27,7 @@ interface UserDto {
 
 export default function UsersPage() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<{ isPlatformAdmin: boolean } | null>(null);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [users, setUsers] = useState<UserDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -35,24 +43,26 @@ export default function UsersPage() {
 
   useEffect(() => {
     async function init() {
-      const meRes = await fetch(`${API_URL}/api/v1/auth/me`, { credentials: "include" });
-      if (!meRes.ok) { router.replace("/login"); return; }
-      const me = await meRes.json();
-      if (!me.isPlatformAdmin) { router.replace("/dashboard"); return; }
-      setCurrentUser(me);
-      await loadUsers();
+      try {
+        const me = await apiRequest<CurrentUser>("/api/v1/auth/me");
+        if (!me.isPlatformAdmin) {
+          router.replace("/dashboard");
+          return;
+        }
+        setCurrentUser(me);
+        await loadUsers();
+      } catch {
+        router.replace("/login");
+      }
     }
-    init();
+    void init();
   }, [router]);
 
   async function loadUsers() {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/v1/users?page=1&pageSize=50`, { credentials: "include" });
-      if (res.ok) {
-        const data = await res.json();
-        setUsers(data.items ?? []);
-      }
+      const data = await apiRequest<UserListResponse>("/api/v1/users?page=1&pageSize=50");
+      setUsers(data.items ?? []);
     } finally {
       setLoading(false);
     }
@@ -62,41 +72,37 @@ export default function UsersPage() {
     e.preventDefault();
     setFormError("");
     setFormLoading(true);
-    const csrf = sessionStorage.getItem("csrf_token") ?? "";
-
     try {
-      const res = await fetch(`${API_URL}/api/v1/users`, {
+      await apiRequest<unknown>("/api/v1/users", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", "X-CSRF-TOKEN": csrf },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, username, displayName, password, isPlatformAdmin: isAdmin }),
       });
-
-      if (!res.ok) {
-        const err = await res.json();
-        setFormError(err.title ?? "Failed to create user");
-        return;
-      }
 
       setShowCreateModal(false);
       setEmail(""); setUsername(""); setDisplayName(""); setPassword(""); setIsAdmin(false);
       await loadUsers();
-    } catch {
-      setFormError("Network error occurred.");
+    } catch (error: unknown) {
+      setFormError(error instanceof ApiError ? error.message : "Network error occurred.");
     } finally {
       setFormLoading(false);
     }
   }
 
   async function toggleUserStatus(user: UserDto) {
-    const csrf = sessionStorage.getItem("csrf_token") ?? "";
-    await fetch(`${API_URL}/api/v1/users/${user.id}`, {
-      method: "PATCH",
-      credentials: "include",
-      headers: { "Content-Type": "application/json", "X-CSRF-TOKEN": csrf },
-      body: JSON.stringify({ displayName: user.displayName, isActive: !user.isActive, isPlatformAdmin: user.isPlatformAdmin }),
-    });
-    await loadUsers();
+    try {
+      await apiRequest<unknown>(`/api/v1/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName: user.displayName,
+          isActive: !user.isActive,
+          isPlatformAdmin: user.isPlatformAdmin,
+        }),
+      });
+    } finally {
+      await loadUsers();
+    }
   }
 
   if (!currentUser) return (

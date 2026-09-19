@@ -10,6 +10,7 @@ using Platform.Application.Scanning;
 using Platform.Application.Scanning.Contracts;
 using Platform.Application.Scanning.Reporting.Formatters;
 using Platform.Application.Services;
+using Platform.Domain.Contracts;
 using Platform.Domain.Entities;
 using Platform.Domain.Enums;
 
@@ -20,6 +21,8 @@ namespace Platform.Api.Controllers;
 [Authorize]
 public class SecurityScanController : ControllerBase
 {
+    private const string BugHunterUnavailableCode = "BUGHUNTER_CONTRACT_UNAVAILABLE";
+
     private readonly ScanJobService _scanJobService;
     private readonly ScanToolRegistryService _toolRegistryService;
     private readonly IScanToolHealthService _toolHealthService;
@@ -29,6 +32,7 @@ public class SecurityScanController : ControllerBase
     private readonly SecurityReportFormatterRegistry _formatterRegistry;
     private readonly Platform.Application.Scanning.Audit.IScanPlanAuditService _auditService;
     private readonly Platform.Application.Scanning.Execution.IScanExecutionEngine _executionEngine;
+    private readonly ITenantContext _tenantContext;
 
     public SecurityScanController(
         ScanJobService scanJobService,
@@ -39,6 +43,7 @@ public class SecurityScanController : ControllerBase
         ScanReportBuilderService reportBuilder,
         Platform.Application.Scanning.Audit.IScanPlanAuditService auditService,
         Platform.Application.Scanning.Execution.IScanExecutionEngine executionEngine,
+        ITenantContext tenantContext,
         SecurityReportFormatterRegistry? formatterRegistry = null)
     {
         _scanJobService = scanJobService ?? throw new ArgumentNullException(nameof(scanJobService));
@@ -49,6 +54,7 @@ public class SecurityScanController : ControllerBase
         _reportBuilder = reportBuilder ?? throw new ArgumentNullException(nameof(reportBuilder));
         _auditService = auditService ?? throw new ArgumentNullException(nameof(auditService));
         _executionEngine = executionEngine ?? throw new ArgumentNullException(nameof(executionEngine));
+        _tenantContext = tenantContext ?? throw new ArgumentNullException(nameof(tenantContext));
         _formatterRegistry = formatterRegistry ?? new SecurityReportFormatterRegistry();
     }
 
@@ -76,24 +82,38 @@ public class SecurityScanController : ControllerBase
     [HttpGet("providers")]
     public async Task<ActionResult<IReadOnlyList<ScanProviderDto>>> GetProviders(CancellationToken ct)
     {
-        var bughunterSecretStatus = await _secretStore.GetStatusAsync("bughunter", ct);
-
-        var providers = new List<ScanProviderDto>
-        {
+        var bugHunterCredentials = await _secretStore.GetStatusAsync("bughunter", ct);
+        IReadOnlyList<ScanProviderDto> providers =
+        [
             new ScanProviderDto(
                 ProviderKey: "bughunter",
-                DisplayName: "BugHunter AI Scan Provider (Contract Foundation)",
-                Enabled: bughunterSecretStatus.Configured,
-                SupportedCapabilities: new[] { "SubdomainEnumeration", "DnsResolution", "HttpProbing", "UrlCrawling", "VulnerabilityScanning", "AiAssistedHunting", "ReportGeneration" },
-                RequiredTools: new[] { "subfinder", "httpx", "bughunter" }
-            )
-        };
+                DisplayName: "BugHunter Scan Provider",
+                Enabled: false,
+                SupportedCapabilities:
+                [
+                    "SubdomainEnumeration",
+                    "DnsResolution",
+                    "HttpProbing",
+                    "UrlCrawling",
+                    "VulnerabilityScanning",
+                    "AiAssistedHunting",
+                    "ReportGeneration"
+                ],
+                RequiredTools: ["subfinder", "httpx", "bughunter"],
+                AvailabilityStatus: "ContractUnavailable",
+                UnavailableReason: BugHunterUnavailableCode,
+                CredentialsConfigured: bugHunterCredentials.Configured)
+        ];
 
         return Ok(providers);
     }
 
     [HttpGet("jobs")]
-    public async Task<ActionResult<IReadOnlyList<ScanJobDetailDto>>> ListJobs([FromQuery] int page = 1, [FromQuery] int pageSize = 50, [FromQuery] SecurityScanJobStatus? status = null, CancellationToken ct = default)
+    public async Task<ActionResult<IReadOnlyList<ScanJobDetailDto>>> ListJobs(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 50,
+        [FromQuery] SecurityScanJobStatus? status = null,
+        CancellationToken ct = default)
     {
         var jobs = await _scanJobService.ListJobsDetailAsync(page, pageSize, status, ct);
         return Ok(jobs);
@@ -156,7 +176,10 @@ public class SecurityScanController : ControllerBase
     }
 
     [HttpGet("jobs/{id:guid}/diff")]
-    public async Task<ActionResult<ScanDiff>> GetJobDiff(Guid id, [FromQuery] Guid? baselineJobId = null, CancellationToken ct = default)
+    public async Task<ActionResult<ScanDiff>> GetJobDiff(
+        Guid id,
+        [FromQuery] Guid? baselineJobId = null,
+        CancellationToken ct = default)
     {
         try
         {
@@ -178,13 +201,16 @@ public class SecurityScanController : ControllerBase
     }
 
     [HttpGet("jobs/{id:guid}/report")]
-    public async Task<IActionResult> GetReport(Guid id, [FromQuery] string format = "json", [FromQuery] Guid? baselineJobId = null, CancellationToken ct = default)
+    public async Task<IActionResult> GetReport(
+        Guid id,
+        [FromQuery] string format = "json",
+        [FromQuery] Guid? baselineJobId = null,
+        CancellationToken ct = default)
     {
         try
         {
             var canonicalReport = await _reportBuilder.BuildCanonicalReportAsync(id, baselineJobId, ct);
             var result = _formatterRegistry.FormatReport(format, canonicalReport);
-
             return Content(result.Content, result.ContentType, Encoding.UTF8);
         }
         catch (ArgumentException ex)
@@ -222,8 +248,16 @@ public class SecurityScanController : ControllerBase
         => GetReport(id, "html", baselineJobId, ct);
 
     [HttpPost("jobs")]
-    public async Task<ActionResult<SecurityScanJob>> CreateJob([FromBody] CreateScanJobRequest request, CancellationToken ct)
+    public async Task<ActionResult<SecurityScanJob>> CreateJob(
+        [FromBody] CreateScanJobRequest request,
+        CancellationToken ct)
     {
+        var admissionFailure = await GetAdmissionFailureAsync(request.ProviderKey, ct);
+        if (admissionFailure != null)
+        {
+            return admissionFailure;
+        }
+
         try
         {
             var job = await _scanJobService.CreateScanJobAsync(request, ct);
@@ -248,6 +282,18 @@ public class SecurityScanController : ControllerBase
     {
         try
         {
+            var originalJob = await _scanJobService.GetJobByIdAsync(id, ct);
+            if (originalJob == null)
+            {
+                return NotFound(new { message = $"Scan job '{id}' not found." });
+            }
+
+            var admissionFailure = await GetAdmissionFailureAsync(originalJob.ProviderKey, ct);
+            if (admissionFailure != null)
+            {
+                return admissionFailure;
+            }
+
             var job = await _scanJobService.RetryScanJobAsync(id, ct);
             return Ok(job);
         }
@@ -266,7 +312,10 @@ public class SecurityScanController : ControllerBase
     }
 
     [HttpPost("jobs/{id:guid}/cancel")]
-    public async Task<ActionResult<SecurityScanJob>> CancelJob(Guid id, [FromBody] CancelScanJobApiRequest request, CancellationToken ct)
+    public async Task<ActionResult<SecurityScanJob>> CancelJob(
+        Guid id,
+        [FromBody] CancelScanJobApiRequest request,
+        CancellationToken ct)
     {
         try
         {
@@ -288,7 +337,9 @@ public class SecurityScanController : ControllerBase
     }
 
     [HttpGet("jobs/{id:guid}/provenance")]
-    public async Task<ActionResult<Platform.Application.Scanning.Audit.Contracts.ScanProvenanceResponse>> GetProvenance(Guid id, CancellationToken ct)
+    public async Task<ActionResult<Platform.Application.Scanning.Audit.Contracts.ScanProvenanceResponse>> GetProvenance(
+        Guid id,
+        CancellationToken ct)
     {
         var tenantId = ResolveTenantId();
         var provenance = await _auditService.GetProvenanceAsync(id, tenantId, ct);
@@ -301,7 +352,9 @@ public class SecurityScanController : ControllerBase
     }
 
     [HttpGet("jobs/{id:guid}/invocations")]
-    public async Task<ActionResult<Platform.Application.Scanning.Execution.Contracts.ScanJobExecutionSummaryDto>> GetInvocations(Guid id, CancellationToken ct)
+    public async Task<ActionResult<Platform.Application.Scanning.Execution.Contracts.ScanJobExecutionSummaryDto>> GetInvocations(
+        Guid id,
+        CancellationToken ct)
     {
         var tenantId = ResolveTenantId();
         var summary = await _executionEngine.GetExecutionSummaryAsync(id, tenantId, ct);
@@ -313,26 +366,42 @@ public class SecurityScanController : ControllerBase
         return Ok(summary);
     }
 
-    private Guid ResolveTenantId()
+    private async Task<ObjectResult?> GetAdmissionFailureAsync(
+        string? providerKey,
+        CancellationToken ct)
     {
-        if (User.IsInRole("Admin") &&
-            Request.Headers.TryGetValue("X-Tenant-ID", out var tenantHeader) &&
-            Guid.TryParse(tenantHeader.ToString(), out var headerTenantId))
+        if (string.IsNullOrWhiteSpace(providerKey))
         {
-            return headerTenantId;
+            return BadRequest(new
+            {
+                code = "SCAN_PROVIDER_REQUIRED",
+                message = "A registered and enabled scan provider must be selected."
+            });
         }
 
-        var claim = User.FindFirst("tenant_id")?.Value
-            ?? User.FindFirst("TenantId")?.Value
-            ?? User.FindFirst(System.Security.Claims.ClaimTypes.GroupSid)?.Value;
-
-        if (Guid.TryParse(claim, out var parsedTenantId))
+        var runtimeHealth = await _toolHealthService.GetScannerRuntimeHealthAsync(ct);
+        if (!runtimeHealth.ReadyForScans)
         {
-            return parsedTenantId;
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+            {
+                code = "SCANNER_RUNTIME_UNAVAILABLE",
+                message = "Scanner execution is not currently available.",
+                runtimeStatus = runtimeHealth.Status
+            });
         }
 
-        return Guid.Empty;
+        var providerUnavailableCode = string.Equals(providerKey, "bughunter", StringComparison.OrdinalIgnoreCase)
+            ? BugHunterUnavailableCode
+            : "SCAN_PROVIDER_UNAVAILABLE";
+
+        return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+        {
+            code = providerUnavailableCode,
+            message = "The selected scan provider is not registered with a verified executable contract."
+        });
     }
+
+    private Guid ResolveTenantId() => _tenantContext.TenantId;
 }
 
 public record CancelScanJobApiRequest(string Reason, int ExpectedVersion);

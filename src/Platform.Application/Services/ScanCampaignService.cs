@@ -411,6 +411,25 @@ public class ScanCampaignService : IScanCampaignService
         var runningJob = activeJobs.FirstOrDefault(j => j.Status == SecurityScanJobStatus.Running);
         var queuedJob = activeJobs.FirstOrDefault(j => j.Status == SecurityScanJobStatus.Queued);
 
+        if (campaign.ConcurrencyPolicy == CampaignConcurrencyPolicy.QueueNext && queuedJob != null)
+        {
+            var auditQueueFull = new CampaignExecutionAuditLog
+            {
+                Id = Guid.NewGuid(),
+                CampaignId = campaign.Id,
+                TenantId = tenantId,
+                Decision = SchedulerDecision.SkippedQueueFull,
+                TriggerSource = "ManualRunNow",
+                ScheduleVersion = campaign.ScheduleVersion,
+                EvaluatedAtUtc = now,
+                Reason = $"Pending scan job '{queuedJob.Id}' is already queued. QueueNext depth is capped at 1."
+            };
+            _dbContext.CampaignExecutionAuditLogs.Add(auditQueueFull);
+            await _dbContext.SaveChangesAsync(ct);
+
+            return new CampaignRunNowResult(campaign.Id, SchedulerDecision.SkippedQueueFull, null, auditQueueFull.Reason, now);
+        }
+
         if (runningJob != null)
         {
             if (campaign.ConcurrencyPolicy == CampaignConcurrencyPolicy.SkipIfRunning)
@@ -453,26 +472,7 @@ public class ScanCampaignService : IScanCampaignService
 
             if (campaign.ConcurrencyPolicy == CampaignConcurrencyPolicy.QueueNext)
             {
-                if (queuedJob != null)
-                {
-                    var auditQueueFull = new CampaignExecutionAuditLog
-                    {
-                        Id = Guid.NewGuid(),
-                        CampaignId = campaign.Id,
-                        TenantId = tenantId,
-                        Decision = SchedulerDecision.SkippedQueueFull,
-                        TriggerSource = "ManualRunNow",
-                        ScheduleVersion = campaign.ScheduleVersion,
-                        EvaluatedAtUtc = now,
-                        Reason = $"Pending scan job '{queuedJob.Id}' is already queued. QueueNext depth is capped at 1."
-                    };
-                    _dbContext.CampaignExecutionAuditLogs.Add(auditQueueFull);
-                    await _dbContext.SaveChangesAsync(ct);
-
-                    return new CampaignRunNowResult(campaign.Id, SchedulerDecision.SkippedQueueFull, null, auditQueueFull.Reason, now);
-                }
-
-                // Enqueue 1 pending job for after the running job completes
+                // Enqueue one pending job for after the running job completes.
                 var queuedExecutionJob = new SecurityScanJob
                 {
                     Id = Guid.NewGuid(),
@@ -482,6 +482,7 @@ public class ScanCampaignService : IScanCampaignService
                     TargetUrl = campaign.SecurityTarget.BaseUrl,
                     ScanProfile = campaign.ScanProfile,
                     Status = SecurityScanJobStatus.Queued,
+                    TenantId = campaign.TenantId,
                     RequestedByUserId = requestedByUserId,
                     TriggeredBy = "CampaignRunNow",
                     CorrelationId = Guid.NewGuid().ToString("N"),
@@ -489,6 +490,10 @@ public class ScanCampaignService : IScanCampaignService
                 };
 
                 _dbContext.SecurityScanJobs.Add(queuedExecutionJob);
+
+                // The campaign token serializes manual enqueue decisions with scheduler and outcome writers.
+                campaign.ScheduleVersion++;
+                campaign.UpdatedAtUtc = now;
 
                 var auditQueued = new CampaignExecutionAuditLog
                 {
@@ -520,6 +525,7 @@ public class ScanCampaignService : IScanCampaignService
             TargetUrl = campaign.SecurityTarget.BaseUrl,
             ScanProfile = campaign.ScanProfile,
             Status = SecurityScanJobStatus.Queued,
+            TenantId = campaign.TenantId,
             RequestedByUserId = requestedByUserId,
             TriggeredBy = "CampaignRunNow",
             CorrelationId = Guid.NewGuid().ToString("N"),
@@ -528,6 +534,7 @@ public class ScanCampaignService : IScanCampaignService
 
         _dbContext.SecurityScanJobs.Add(dispatchedJob);
 
+        campaign.ScheduleVersion++;
         campaign.TotalRunsCount++;
         campaign.LastRunUtc = now;
         campaign.LastScanJobId = dispatchedJob.Id;

@@ -4,7 +4,17 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { apiRequest } from "@/lib/api-client";
+
+interface CurrentUser {
+  isPlatformAdmin: boolean;
+  userId: string;
+}
+
+interface HealthSummary {
+  status: string;
+  isHealthy: boolean;
+}
 
 interface StatCard {
   label: string;
@@ -16,19 +26,17 @@ interface StatCard {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [user, setUser] = useState<{ isPlatformAdmin: boolean; userId: string } | null>(null);
-  const [health, setHealth] = useState<{ status: string; isHealthy: boolean } | null>(null);
+  const [user, setUser] = useState<CurrentUser | null>(null);
+  const [health, setHealth] = useState<HealthSummary | null>(null);
 
   useEffect(() => {
     async function init() {
       try {
-        const res = await fetch(`${API_URL}/api/v1/auth/me`, { credentials: "include" });
-        if (!res.ok) { router.replace("/login"); return; }
-        const data = await res.json();
+        const data = await apiRequest<CurrentUser>("/api/v1/auth/me");
         setUser(data);
 
-        const hRes = await fetch(`${API_URL}/api/v1/health`);
-        if (hRes.ok) setHealth(await hRes.json());
+        const healthData = await apiRequest<HealthSummary>("/api/v1/health");
+        setHealth(healthData);
       } catch {
         router.replace("/login");
       }

@@ -8,4 +8,10 @@ namespace Platform.Application.Scanning;
 public interface IScanWorker
 {
     Task<ScanExecutionResult> ExecuteScanJobAsync(Guid scanJobId, CancellationToken ct = default);
+
+    Task<ScanExecutionResult> ExecuteClaimedScanJobAsync(
+        Guid scanJobId,
+        string expectedWorkerInstanceId,
+        int expectedJobVersion,
+        CancellationToken ct = default);
 }

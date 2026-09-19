@@ -255,14 +255,14 @@ public class ScanReportBuilderService
         var completedAtStr = (job.CompletedAtUtc ?? job.CreatedAtUtc).ToString("O");
 
         // Canonical deterministic provenance signature based strictly on immutable scan metadata
-        var signaturePayload = $"ReportSignatureVersion=v1\nScanJobId={job.Id:D}\nTenantId={job.RequestedByUserId:D}\nTargetId={job.TargetId:D}\nCoverageHash={toolCoverageHash}\nScanCompletedAtUtc={completedAtStr}";
+        var signaturePayload = $"ReportSignatureVersion=v1\nScanJobId={job.Id:D}\nTenantId={job.TenantId:D}\nTargetId={job.TargetId:D}\nCoverageHash={toolCoverageHash}\nScanCompletedAtUtc={completedAtStr}";
         var provenanceSignature = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signaturePayload))).ToLowerInvariant();
 
         var metadata = new ReportMetadata(
             ReportId: Guid.NewGuid(),
             SignatureVersion: "v1",
             ScanJobId: job.Id,
-            TenantId: job.RequestedByUserId,
+            TenantId: job.TenantId,
             TargetId: job.TargetId,
             RepositoryName: repository?.FullName ?? "Unknown Repository",
             TargetUrl: job.TargetUrl,

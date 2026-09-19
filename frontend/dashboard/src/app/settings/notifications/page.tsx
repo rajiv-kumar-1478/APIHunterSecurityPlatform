@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000";
+import { ApiError, apiRequest } from "@/lib/api-client";
+
+interface NotificationTestResponse {
+  message?: string;
+}
 
 interface ProviderStatus {
   name: string;
@@ -25,37 +29,42 @@ export default function NotificationsPage() {
 
   useEffect(() => {
     async function init() {
-      const meRes = await fetch(`${API_URL}/api/v1/auth/me`, { credentials: "include" });
-      if (!meRes.ok) { router.replace("/login"); return; }
-      const me = await meRes.json();
-      if (!me.isPlatformAdmin) { router.replace("/dashboard"); return; }
-      setUser(me);
-      await loadProviders();
+      try {
+        const me = await apiRequest<{ isPlatformAdmin: boolean }>("/api/v1/auth/me");
+        if (!me.isPlatformAdmin) {
+          router.replace("/dashboard");
+          return;
+        }
+        setUser(me);
+        await loadProviders();
+      } catch {
+        router.replace("/login");
+      }
     }
-    init();
+    void init();
   }, [router]);
 
   async function loadProviders() {
-    const res = await fetch(`${API_URL}/api/v1/notifications/providers`, { credentials: "include" });
-    if (res.ok) setProviders(await res.json());
+    const data = await apiRequest<ProviderStatus[]>("/api/v1/notifications/providers");
+    setProviders(data);
   }
 
   async function sendTest() {
     if (!testEmail) return;
     setSending(true);
     setTestResult(null);
-    const csrf = sessionStorage.getItem("csrf_token") ?? "";
     try {
-      const res = await fetch(`${API_URL}/api/v1/notifications/test`, {
+      const data = await apiRequest<NotificationTestResponse>("/api/v1/notifications/test", {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", "X-CSRF-TOKEN": csrf },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ recipientEmail: testEmail }),
       });
-      const data = await res.json();
-      setTestResult({ ok: res.ok, message: res.ok ? data.message : data.title });
-    } catch {
-      setTestResult({ ok: false, message: "Network error" });
+      setTestResult({ ok: true, message: data.message ?? "Test notification sent." });
+    } catch (error: unknown) {
+      setTestResult({
+        ok: false,
+        message: error instanceof ApiError ? error.message : "Network error",
+      });
     } finally {
       setSending(false);
     }

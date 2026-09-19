@@ -133,7 +133,10 @@ public record ScanProviderDto(
     string DisplayName,
     bool Enabled,
     IReadOnlyList<string> SupportedCapabilities,
-    IReadOnlyList<string> RequiredTools
+    IReadOnlyList<string> RequiredTools,
+    string AvailabilityStatus = "Available",
+    string? UnavailableReason = null,
+    bool CredentialsConfigured = false
 );
 
 public record CreateScanJobRequest(
@@ -141,7 +144,7 @@ public record CreateScanJobRequest(
     Guid? TargetId,
     string TargetUrl,
     SecurityScanProfileType ScanProfile = SecurityScanProfileType.Recon,
-    string ProviderKey = "bughunter"
+    string ProviderKey = ""
 );
 
 public sealed record EgressTarget(
