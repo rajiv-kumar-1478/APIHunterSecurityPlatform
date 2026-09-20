@@ -236,7 +236,11 @@ builder.Services.AddScoped<Platform.Application.Scanning.Verification.IDeploymen
 builder.Services.AddScoped<Platform.Application.Scanning.Verification.IDeploymentWebhookHandler, Platform.Application.Scanning.Verification.DeploymentWebhookHandler>();
 builder.Services.AddScoped<Platform.Application.Scanning.Verification.IRegisteredApplicationService, Platform.Infrastructure.Scanning.RegisteredApplicationService>();
 
-// Phase 10 — Operations AI & Autonomous Incident Engine
+// Phase 4 & Phase 10 — AI Investigation & Operations AI Engine
+builder.Services.AddHttpClient("AiProviderHttpClient");
+builder.Services.AddScoped<Platform.Domain.Contracts.IAiModelRouter, Platform.Infrastructure.Adapters.AI.AiModelRouter>();
+builder.Services.AddScoped<Platform.Application.Services.AiProviderRegistryService>();
+builder.Services.AddScoped<Platform.Infrastructure.Services.AiInvestigationEngine>();
 builder.Services.AddSingleton<Platform.Application.Operations.IOperationalPromptSanitizer, Platform.Infrastructure.Operations.OperationalPromptSanitizer>();
 builder.Services.AddScoped<Platform.Application.Operations.IIncidentEngineService, Platform.Infrastructure.Operations.IncidentEngineService>();
 builder.Services.AddScoped<Platform.Application.Operations.IAiOperationalDiagnosisService, Platform.Infrastructure.Operations.AiOperationalDiagnosisService>();
