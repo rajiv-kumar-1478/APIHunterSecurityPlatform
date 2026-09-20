@@ -65,7 +65,7 @@ public class AiOperationalDiagnosisService(
         try
         {
             var promptRequest = new AiPromptRequest(systemPrompt, userPrompt, Temperature: 0.1, MaxTokens: 1000, RequireJsonOutput: true);
-            var (response, providerName, _) = await aiModelRouter.ExecuteWithFallbackAsync(promptRequest, cancellationToken: ct);
+            var (response, providerName, usedModelName) = await aiModelRouter.ExecuteWithFallbackAsync(promptRequest, ct: ct);
 
             if (response.IsSuccess && !string.IsNullOrWhiteSpace(response.NormalizedJsonContent ?? response.RawResponseContent))
             {

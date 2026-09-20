@@ -22,20 +22,20 @@ public class IncidentEngineService(
         var staleThreshold = now.AddMinutes(-5);
         var staleScanJobs = await dbContext.SecurityScanJobs
             .Where(j => j.Status == SecurityScanJobStatus.Running &&
-                        ((j.WorkerHeartbeatUtc != null && j.WorkerHeartbeatUtc < staleThreshold) ||
-                         (j.WorkerHeartbeatUtc == null && j.StartedAtUtc != null && j.StartedAtUtc < staleThreshold)))
+                        ((j.LastHeartbeatUtc != null && j.LastHeartbeatUtc < staleThreshold) ||
+                         (j.LastHeartbeatUtc == null && j.StartedAtUtc != null && j.StartedAtUtc < staleThreshold)))
             .Take(50)
             .ToListAsync(ct);
 
         foreach (var job in staleScanJobs)
         {
-            var fingerprint = $"stale_worker_lease_{job.WorkerId ?? "unknown"}_{job.Id}";
-            var title = $"Worker lease lost for Scan Job {job.Id} (Worker: {job.WorkerId ?? "unknown"})";
+            var fingerprint = $"stale_worker_lease_{job.WorkerInstanceId ?? "unknown"}_{job.Id}";
+            var title = $"Worker lease lost for Scan Job {job.Id} (Worker: {job.WorkerInstanceId ?? "unknown"})";
 
-            logger.LogWarning("Detected stale scan job {JobId} on worker {WorkerId}. Revoking lease.", job.Id, job.WorkerId);
+            logger.LogWarning("Detected stale scan job {JobId} on worker {WorkerId}. Revoking lease.", job.Id, job.WorkerInstanceId);
 
-            // Autonomous self-healing: return job to Pending or TimedOut
-            if (job.RetryCount >= 3)
+            // Autonomous self-healing: return job to Queued or TimedOut
+            if (job.JobVersion >= 3)
             {
                 job.Status = SecurityScanJobStatus.TimedOut;
                 job.FailureReason = "Automated lease recovery: job exceeded max retries after worker stall.";
@@ -44,10 +44,10 @@ public class IncidentEngineService(
             }
             else
             {
-                job.Status = SecurityScanJobStatus.Pending;
-                job.RetryCount++;
-                job.WorkerId = null;
-                job.WorkerHeartbeatUtc = null;
+                job.Status = SecurityScanJobStatus.Queued;
+                job.JobVersion++;
+                job.WorkerInstanceId = null;
+                job.LastHeartbeatUtc = null;
             }
 
             var incident = await RecordOrUpdateIncidentAsync(
@@ -56,7 +56,7 @@ public class IncidentEngineService(
                 IncidentCategory.WorkerHeartbeatLost,
                 IncidentSeverity.High,
                 job.TenantId,
-                detailsJson: $"{{\"jobId\":\"{job.Id}\",\"workerId\":\"{job.WorkerId}\",\"retries\":{job.RetryCount}}}",
+                detailsJson: $"{{\"jobId\":\"{job.Id}\",\"workerId\":\"{job.WorkerInstanceId}\",\"version\":{job.JobVersion}}}",
                 ct: ct);
 
             incident.MitigationActionTaken = $"Autonomous self-healing: Lease revoked and status set to {job.Status}";
@@ -67,7 +67,7 @@ public class IncidentEngineService(
         // 2. Detect campaign stalls (active campaigns overdue by > 15 minutes)
         var campaignStallThreshold = now.AddMinutes(-15);
         var stalledCampaigns = await dbContext.ScanCampaigns
-            .Where(c => c.Status == ScanCampaignStatus.Active &&
+            .Where(c => c.Status == CampaignStatus.Active &&
                         c.NextRunUtc != null &&
                         c.NextRunUtc < campaignStallThreshold)
             .Take(20)
@@ -92,11 +92,11 @@ public class IncidentEngineService(
 
         // 3. Update telemetry gauges
         var pendingDepth = await dbContext.SecurityScanJobs
-            .CountAsync(j => j.Status == SecurityScanJobStatus.Pending, ct);
+            .CountAsync(j => j.Status == SecurityScanJobStatus.Queued, ct);
         PlatformMetrics.SetPendingQueueDepth(pendingDepth);
 
         var overdueCampaigns = await dbContext.ScanCampaigns
-            .CountAsync(c => c.Status == ScanCampaignStatus.Active && c.NextRunUtc < now, ct);
+            .CountAsync(c => c.Status == CampaignStatus.Active && c.NextRunUtc < now, ct);
         PlatformMetrics.SetOverdueCampaigns(overdueCampaigns);
 
         await dbContext.SaveChangesAsync(ct);
@@ -165,7 +165,7 @@ public class IncidentEngineService(
                 if (incident.TenantId.HasValue)
                 {
                     var stalled = await dbContext.ScanCampaigns
-                        .Where(c => c.TenantId == incident.TenantId.Value && c.Status == ScanCampaignStatus.Active)
+                        .Where(c => c.TenantId == incident.TenantId.Value && c.Status == CampaignStatus.Active)
                         .ToListAsync(ct);
 
                     foreach (var c in stalled)
@@ -205,20 +205,20 @@ public class IncidentEngineService(
                 {
                     var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
                     stuckQuery = stuckQuery.Where(j => j.TenantId == incident.TenantId.Value &&
-                                                       (j.WorkerHeartbeatUtc == null || j.WorkerHeartbeatUtc < staleCutoff));
+                                                       (j.LastHeartbeatUtc == null || j.LastHeartbeatUtc < staleCutoff));
                 }
                 else
                 {
                     var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
-                    stuckQuery = stuckQuery.Where(j => j.WorkerHeartbeatUtc == null || j.WorkerHeartbeatUtc < staleCutoff);
+                    stuckQuery = stuckQuery.Where(j => j.LastHeartbeatUtc == null || j.LastHeartbeatUtc < staleCutoff);
                 }
 
                 var stuckJobs = await stuckQuery.ToListAsync(ct);
                 foreach (var j in stuckJobs)
                 {
-                    j.Status = SecurityScanJobStatus.Pending;
-                    j.WorkerId = null;
-                    j.WorkerHeartbeatUtc = null;
+                    j.Status = SecurityScanJobStatus.Queued;
+                    j.WorkerInstanceId = null;
+                    j.LastHeartbeatUtc = null;
                 }
                 break;
         }

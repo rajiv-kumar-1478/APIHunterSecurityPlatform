@@ -73,7 +73,7 @@ public sealed class AzureOpenAiCredentialValidator : BaseCredentialValidator
         var setting = await _dbContext.TenantProviderSettings
             .AsNoTracking()
             .FirstOrDefaultAsync(
-                s => s.TenantId == candidate.TenantId && s.ProviderName == AzureOpenAiProviderName,
+                s => s.ProviderName == AzureOpenAiProviderName && s.IsEnabled,
                 ct);
 
         if (setting == null || !setting.IsEnabled || string.IsNullOrWhiteSpace(setting.ResourceEndpointUrl))
@@ -246,7 +246,7 @@ public sealed class AzureOpenAiCredentialValidator : BaseCredentialValidator
 
             return new ValidationResultDto(
                 ValidationStatus.Invalid,
-                ValidationConfidence.Moderate,
+                ValidationConfidence.Strong,
                 $"Azure OpenAI returned unexpected HTTP status {statusCode}.",
                 "{}",
                 stopwatch.ElapsedMilliseconds,

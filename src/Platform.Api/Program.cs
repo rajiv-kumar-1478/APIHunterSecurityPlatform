@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Platform.Api.Configuration;
 using Platform.Api.Filters;
 using Platform.Api.Middleware;
 using Platform.Application.Auth;
@@ -327,6 +328,11 @@ try
         builder.Configuration.GetSection(ContinuousRevalidationOptions.SectionName));
     builder.Services.AddScoped<ValidationStateChangeProcessor>();
     builder.Services.AddHostedService<Platform.Infrastructure.Workers.ContinuousRevalidationWorker>();
+    builder.Services.AddHostedService<Platform.Worker.Workers.RepositoryAcquisitionWorker>();
+    builder.Services.AddHostedService<Platform.Worker.Workers.SnapshotAnalysisWorker>();
+    builder.Services.AddHostedService<Platform.Worker.Workers.StaleJobSweepWorker>();
+    builder.Services.AddHostedService<Platform.Worker.Workers.CredentialValidationWorker>();
+    builder.Services.AddHostedService<Platform.Worker.Workers.IncidentEngineWorker>();
 
     // Phase 6 Step 7 — Security Alerting & High-Fidelity Notifications
     builder.Services.Configure<SecurityAlertOptions>(
@@ -530,6 +536,22 @@ try
     {
         opts.SwaggerDoc("v1", new() { Title = "APIHunter Security Platform API", Version = "v1" });
     });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Background Workers (Embedded in API for Render Free Tier $0 hosting)
+    // ─────────────────────────────────────────────────────────────────────────
+    builder.Services.Configure<CampaignSchedulerOptions>(builder.Configuration.GetSection(CampaignSchedulerOptions.SectionName));
+    builder.Services.Configure<ScanJobConsumerOptions>(builder.Configuration.GetSection(ScanJobConsumerOptions.SectionName));
+    builder.Services.AddSingleton<ScanJobHeartbeatService>();
+
+    builder.Services.AddHostedService<Platform.Worker.Workers.RepositoryAcquisitionWorker>();
+    builder.Services.AddHostedService<Platform.Worker.Workers.SnapshotAnalysisWorker>();
+    builder.Services.AddHostedService<Platform.Worker.Workers.StaleJobSweepWorker>();
+    builder.Services.AddHostedService<Platform.Infrastructure.Workers.AiInvestigationWorker>();
+    builder.Services.AddHostedService<Platform.Worker.Workers.CredentialValidationWorker>();
+    builder.Services.AddHostedService<Platform.Infrastructure.Workers.SecurityScanJobConsumerWorker>();
+    builder.Services.AddHostedService<Platform.Infrastructure.Workers.CampaignSchedulerWorker>();
+    builder.Services.AddHostedService<Platform.Worker.Workers.IncidentEngineWorker>();
 
     // ─────────────────────────────────────────────────────────────────────────
     // Build

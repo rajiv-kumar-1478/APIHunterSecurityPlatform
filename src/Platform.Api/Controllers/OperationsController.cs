@@ -38,13 +38,13 @@ public class OperationsController(
                              i.Severity == IncidentSeverity.Critical, ct);
 
         var pendingJobs = await dbContext.SecurityScanJobs
-            .CountAsync(j => j.TenantId == tenantId && j.Status == SecurityScanJobStatus.Pending, ct);
+            .CountAsync(j => j.TenantId == tenantId && j.Status == SecurityScanJobStatus.Queued, ct);
 
         var runningJobs = await dbContext.SecurityScanJobs
             .CountAsync(j => j.TenantId == tenantId && j.Status == SecurityScanJobStatus.Running, ct);
 
         var overdueCampaigns = await dbContext.ScanCampaigns
-            .CountAsync(c => c.TenantId == tenantId && c.Status == ScanCampaignStatus.Active && c.NextRunUtc < now, ct);
+            .CountAsync(c => c.TenantId == tenantId && c.Status == CampaignStatus.Active && c.NextRunUtc < now, ct);
 
         var systemHealth = criticalIncidents > 0 ? "Degraded" : (activeIncidents > 0 ? "Warning" : "Healthy");
 
