@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -15,7 +16,7 @@ public class ApiHunterAdapter : IApiHunterSource
 
     public ApiHunterAdapter(
         IOptions<ApiHunterSourceOptions> options,
-        Microsoft.Extensions.Configuration.IConfiguration configuration,
+        IConfiguration configuration,
         ILogger<ApiHunterAdapter> logger)
     {
         var rawConnStr = !string.IsNullOrWhiteSpace(options.Value.ConnectionString)
@@ -24,7 +25,7 @@ public class ApiHunterAdapter : IApiHunterSource
               ?? configuration["ApiHunterSource:ConnectionString"]
               ?? configuration["ApiHunterSource__ConnectionString"]
               ?? configuration["Database:ConnectionString"]
-              ?? configuration.GetConnectionString("Default")
+              ?? configuration["ConnectionStrings:Default"]
               ?? configuration["DATABASE_URL"];
 
         _connectionString = Platform.Infrastructure.Persistence.PostgresConnectionStringNormalizer.Normalize(rawConnStr);
