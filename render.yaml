@@ -14,9 +14,9 @@ services:
       - key: ASPNETCORE_URLS
         value: http://+:8080
       - key: Database__ConnectionString
-        value: Host=aws-0-ap-northeast-1.pooler.supabase.com;Port=6543;Database=postgres;Username=postgres.kuckcjznbownoevimgwq;Password=rajq86858@gmail.com;SSL Mode=Require;Trust Server Certificate=true;
+        sync: false # Set your Aiven Cloud PostgreSQL connection string in Render UI
       - key: ApiHunterSource__ConnectionString
-        value: Host=aws-0-ap-northeast-1.pooler.supabase.com;Port=6543;Database=postgres;Username=postgres.kuckcjznbownoevimgwq;Password=rajq86858@gmail.com;SSL Mode=Require;Trust Server Certificate=true;
+        sync: false # Set your Supabase APIHunter database connection string in Render UI
       - key: Security__MasterEncryptionKey
         generateValue: true
       - key: Authentication__JwtSecret
@@ -51,7 +51,9 @@ services:
       - key: DOTNET_ENVIRONMENT
         value: Production
       - key: Database__ConnectionString
-        value: Host=aws-0-ap-northeast-1.pooler.supabase.com;Port=6543;Database=postgres;Username=postgres.kuckcjznbownoevimgwq;Password=rajq86858@gmail.com;SSL Mode=Require;Trust Server Certificate=true;
+        sync: false # Set your Aiven Cloud PostgreSQL connection string in Render UI
+      - key: ApiHunterSource__ConnectionString
+        sync: false # Set your Supabase APIHunter database connection string in Render UI
       - key: Security__MasterEncryptionKey
         fromService:
           type: web
