@@ -3,7 +3,7 @@
 import { useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 
-import { ApiError, apiRequest, ensureCsrfToken, primeCsrfToken, refreshCsrfToken } from "@/lib/api-client";
+import { ApiError, apiRequest, ensureCsrfToken, getErrorMessage, isApiError, primeCsrfToken, refreshCsrfToken } from "@/lib/api-client";
 
 interface LoginResponse {
   userId: string;
@@ -40,10 +40,10 @@ export default function LoginPage() {
 
       router.push("/dashboard");
     } catch (error: unknown) {
-      if (error instanceof ApiError) {
+      if (isApiError(error)) {
         setError(error.message || "Login failed. Check your credentials.");
       } else {
-        setError("Unable to connect to the server. Please try again.");
+        setError(getErrorMessage(error, "Login failed. Please check your credentials and try again."));
       }
     } finally {
       setLoading(false);
