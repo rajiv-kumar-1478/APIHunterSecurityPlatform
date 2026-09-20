@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Sidebar } from "@/components/Sidebar";
+import { AppLayout } from "@/components/AppLayout";
 import { apiFetch, getErrorMessage } from "@/lib/api-client";
 
 interface RegisteredApp {
@@ -193,168 +193,123 @@ export default function DeploymentsPage() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback
       alert("Please copy manually from the input.");
     }
   };
 
-  return (
-    <div style={{ display: "flex", minHeight: "100vh", backgroundColor: "#0b0f19", color: "#f3f4f6" }}>
-      <Sidebar isAdmin={user?.isPlatformAdmin ?? false} userEmail={user?.email} />
-      <main style={{ flex: 1, padding: "2rem", maxWidth: "1280px", margin: "0 auto" }}>
-        {/* Header */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
-          <div>
-            <h1 style={{ fontSize: "1.875rem", fontWeight: 700, margin: 0, color: "#fff" }}>
-              CI/CD Deployment Applications
-            </h1>
-            <p style={{ color: "#9ca3af", marginTop: "0.5rem", fontSize: "0.95rem" }}>
-              Manage registered applications, authorized target scan URLs, and HMAC-SHA256 signing keys for CI/CD deployment webhooks.
-            </p>
-          </div>
-          <button
-            id="btn-register-app"
-            onClick={() => setShowRegisterModal(true)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: "0.5rem",
-              backgroundColor: "#2563eb",
-              color: "#fff",
-              border: "none",
-              borderRadius: "0.5rem",
-              padding: "0.625rem 1.25rem",
-              fontWeight: 600,
-              fontSize: "0.875rem",
-              cursor: "pointer",
-              transition: "background 0.2s ease",
-            }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 5v14M5 12h14" />
-            </svg>
-            Register Application
-          </button>
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#080c14]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-2 border-[#00d4ff] border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs text-[#7ba3c8] font-medium">Loading Deployments Center…</p>
         </div>
+      </div>
+    );
+  }
 
-        {/* Notifications */}
-        {error && (
-          <div style={{ backgroundColor: "rgba(239, 68, 68, 0.15)", border: "1px solid #ef4444", borderRadius: "0.5rem", padding: "1rem", marginBottom: "1.5rem", color: "#fca5a5" }}>
-            {error}
-          </div>
-        )}
-        {actionSuccess && (
-          <div style={{ backgroundColor: "rgba(34, 197, 94, 0.15)", border: "1px solid #22c55e", borderRadius: "0.5rem", padding: "1rem", marginBottom: "1.5rem", color: "#86efac" }}>
-            {actionSuccess}
-          </div>
-        )}
+  return (
+    <AppLayout
+      isAdmin={user.isPlatformAdmin}
+      userEmail={user.email}
+      title="CI/CD Deployment Applications"
+      subtitle="Manage registered applications, authorized target scan URLs & HMAC-SHA256 deployment gates"
+      actions={
+        <button
+          id="btn-register-app"
+          onClick={() => setShowRegisterModal(true)}
+          className="btn-primary text-xs flex items-center gap-2"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          Register Application
+        </button>
+      }
+    >
+      {/* Notifications */}
+      {error && (
+        <div className="p-4 rounded-xl border border-[#ff4757]/30 bg-[#ff4757]/10 text-[#ff4757] text-xs font-semibold fade-in">
+          {error}
+        </div>
+      )}
+      {actionSuccess && (
+        <div className="p-4 rounded-xl border border-[#00ff88]/30 bg-[#00ff88]/10 text-[#00ff88] text-xs font-semibold fade-in">
+          {actionSuccess}
+        </div>
+      )}
 
-        {/* Application List Table */}
-        <div style={{ backgroundColor: "#111827", borderRadius: "0.75rem", border: "1px solid #1f2937", overflow: "hidden" }}>
+      {/* Application List Table Container */}
+      <div className="glass-card overflow-hidden fade-in">
+        <div className="overflow-x-auto">
           {loading ? (
-            <div style={{ padding: "3rem", textAlign: "center", color: "#9ca3af" }}>Loading applications...</div>
+            <div className="p-12 text-center text-[#7ba3c8] text-xs">
+              <div className="w-8 h-8 border-2 border-[#00d4ff] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              Loading deployment applications...
+            </div>
           ) : applications.length === 0 ? (
-            <div style={{ padding: "3rem", textAlign: "center", color: "#9ca3af" }}>
-              <p style={{ margin: 0, fontSize: "1.1rem", fontWeight: 500 }}>No applications registered yet.</p>
-              <p style={{ margin: "0.5rem 0 0 0", fontSize: "0.9rem" }}>
+            <div className="p-12 text-center text-[#7ba3c8] space-y-2">
+              <p className="text-sm font-semibold text-[#e8f4ff]">No applications registered yet.</p>
+              <p className="text-xs">
                 Click &quot;Register Application&quot; to authorize a deployment target and generate an HMAC webhook secret.
               </p>
             </div>
           ) : (
-            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+            <table className="w-full text-left border-collapse min-w-[800px]">
               <thead>
-                <tr style={{ borderBottom: "1px solid #1f2937", backgroundColor: "#161e2e" }}>
-                  <th style={{ padding: "1rem", color: "#9ca3af", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase" }}>Application</th>
-                  <th style={{ padding: "1rem", color: "#9ca3af", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase" }}>App ID</th>
-                  <th style={{ padding: "1rem", color: "#9ca3af", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase" }}>Environment</th>
-                  <th style={{ padding: "1rem", color: "#9ca3af", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase" }}>Authorized Target URL</th>
-                  <th style={{ padding: "1rem", color: "#9ca3af", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase" }}>Status</th>
-                  <th style={{ padding: "1rem", color: "#9ca3af", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase" }}>Actions</th>
+                <tr className="border-b border-[#00d4ff]/10 text-xs font-semibold uppercase text-[#4a6580] bg-white/[0.02]">
+                  <th className="p-4">Application</th>
+                  <th className="p-4">App ID</th>
+                  <th className="p-4">Environment</th>
+                  <th className="p-4">Authorized Target URL</th>
+                  <th className="p-4">Status</th>
+                  <th className="p-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-[#00d4ff]/10 text-xs">
                 {applications.map((app) => (
-                  <tr key={app.id} style={{ borderBottom: "1px solid #1f2937" }}>
-                    <td style={{ padding: "1rem", fontWeight: 600, color: "#fff" }}>{app.displayName}</td>
-                    <td style={{ padding: "1rem" }}>
-                      <code style={{ backgroundColor: "#1f2937", padding: "0.2rem 0.4rem", borderRadius: "0.25rem", fontSize: "0.85rem", color: "#60a5fa" }}>
+                  <tr key={app.id} className="hover:bg-white/[0.02] transition-colors">
+                    <td className="p-4 font-bold text-[#e8f4ff]">{app.displayName}</td>
+                    <td className="p-4">
+                      <code className="px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[#00d4ff] font-mono text-[11px]">
                         {app.applicationId}
                       </code>
                     </td>
-                    <td style={{ padding: "1rem" }}>
-                      <span style={{
-                        padding: "0.25rem 0.5rem",
-                        borderRadius: "0.25rem",
-                        fontSize: "0.75rem",
-                        fontWeight: 600,
-                        backgroundColor: app.environment.toLowerCase() === "production" ? "rgba(239, 68, 68, 0.2)" : "rgba(59, 130, 246, 0.2)",
-                        color: app.environment.toLowerCase() === "production" ? "#fca5a5" : "#93c5fd",
-                      }}>
+                    <td className="p-4">
+                      <span className={`px-2.5 py-1 text-[10px] font-semibold rounded-full border ${
+                        app.environment.toLowerCase() === "production"
+                          ? "badge-unhealthy"
+                          : "badge-degraded"
+                      }`}>
                         {app.environment}
                       </span>
                     </td>
-                    <td style={{ padding: "1rem" }}>
-                      <span style={{ fontSize: "0.875rem", color: "#d1d5db" }}>{app.authorizedTargetUrl}</span>
-                    </td>
-                    <td style={{ padding: "1rem" }}>
-                      <span style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: "0.35rem",
-                        fontSize: "0.75rem",
-                        fontWeight: 600,
-                        padding: "0.25rem 0.5rem",
-                        borderRadius: "0.25rem",
-                        backgroundColor: app.enabled ? "rgba(34, 197, 94, 0.2)" : "rgba(107, 114, 128, 0.2)",
-                        color: app.enabled ? "#86efac" : "#9ca3af",
-                      }}>
-                        <span style={{ width: "6px", height: "6px", borderRadius: "50%", backgroundColor: app.enabled ? "#22c55e" : "#6b7280" }} />
+                    <td className="p-4 text-[#7ba3c8]">{app.authorizedTargetUrl}</td>
+                    <td className="p-4">
+                      <span className={`px-2.5 py-1 text-[10px] font-semibold rounded-full border ${
+                        app.enabled ? "badge-healthy" : "badge-admin"
+                      }`}>
                         {app.enabled ? "Active" : "Disabled"}
                       </span>
                     </td>
-                    <td style={{ padding: "1rem" }}>
-                      <div style={{ display: "flex", gap: "0.5rem" }}>
+                    <td className="p-4 text-right">
+                      <div className="flex items-center justify-end gap-2">
                         <button
                           onClick={() => handleRegenerateSecret(app)}
-                          title="Rotate Secret"
-                          style={{
-                            padding: "0.35rem 0.65rem",
-                            borderRadius: "0.375rem",
-                            border: "1px solid #374151",
-                            backgroundColor: "#1f2937",
-                            color: "#d1d5db",
-                            fontSize: "0.75rem",
-                            cursor: "pointer",
-                          }}
+                          className="btn-secondary text-[11px] py-1 px-2.5"
                         >
                           Rotate Secret
                         </button>
                         <button
                           onClick={() => handleToggleStatus(app)}
-                          style={{
-                            padding: "0.35rem 0.65rem",
-                            borderRadius: "0.375rem",
-                            border: "1px solid #374151",
-                            backgroundColor: "#1f2937",
-                            color: app.enabled ? "#fca5a5" : "#86efac",
-                            fontSize: "0.75rem",
-                            cursor: "pointer",
-                          }}
+                          className="btn-secondary text-[11px] py-1 px-2.5"
                         >
                           {app.enabled ? "Disable" : "Enable"}
                         </button>
                         <button
                           onClick={() => handleDelete(app)}
-                          title="Delete Application"
-                          style={{
-                            padding: "0.35rem 0.65rem",
-                            borderRadius: "0.375rem",
-                            border: "1px solid rgba(239, 68, 68, 0.4)",
-                            backgroundColor: "rgba(239, 68, 68, 0.1)",
-                            color: "#ef4444",
-                            fontSize: "0.75rem",
-                            cursor: "pointer",
-                          }}
+                          className="px-2.5 py-1 rounded-lg border border-[#ff4757]/30 text-[#ff4757] hover:bg-[#ff4757]/10 text-[11px] font-medium transition-all"
                         >
                           Delete
                         </button>
@@ -366,17 +321,18 @@ export default function DeploymentsPage() {
             </table>
           )}
         </div>
+      </div>
 
-        {/* Integration Instructions Card */}
-        <div style={{ marginTop: "2.5rem", backgroundColor: "#111827", borderRadius: "0.75rem", border: "1px solid #1f2937", padding: "1.5rem" }}>
-          <h2 style={{ fontSize: "1.125rem", fontWeight: 600, color: "#fff", marginBottom: "0.75rem" }}>
-            How to Connect Your CI/CD Pipeline
-          </h2>
-          <p style={{ fontSize: "0.9rem", color: "#9ca3af", marginBottom: "1rem" }}>
-            When a deployment succeeds, send a webhook payload signed with your HMAC secret to enqueue an incremental verification scan.
-          </p>
-          <div style={{ backgroundColor: "#0b0f19", border: "1px solid #1f2937", borderRadius: "0.5rem", padding: "1rem", overflowX: "auto" }}>
-            <pre style={{ margin: 0, fontSize: "0.825rem", color: "#93c5fd", fontFamily: "monospace" }}>
+      {/* Integration Instructions Card */}
+      <div className="glass-card p-6 fade-in space-y-3">
+        <h2 className="text-base font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+          How to Connect Your CI/CD Pipeline
+        </h2>
+        <p className="text-xs text-[#7ba3c8] leading-relaxed">
+          When a deployment succeeds, send a webhook payload signed with your HMAC secret to enqueue an incremental verification scan.
+        </p>
+        <div className="p-4 rounded-xl bg-[#080c14] border border-[#00d4ff]/20 overflow-x-auto">
+          <pre className="text-xs font-mono text-[#00d4ff] leading-relaxed">
 {`# 1. Prepare JSON body
 PAYLOAD='{"applicationId":"YOUR_APP_ID","commitSha":"\${GITHUB_SHA}","branch":"main"}'
 TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -385,289 +341,167 @@ TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 SIGNATURE="sha256=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "YOUR_HMAC_SECRET" | sed 's/^.* //')"
 
 # 3. Deliver to APIHunter deployment webhook endpoint
-curl -X POST https://api.yourdomain.com/api/v1/webhooks/deployments \\
+curl -X POST https://apihunter-api.onrender.com/api/v1/webhooks/deployments \\
   -H "Content-Type: application/json" \\
   -H "X-Webhook-Id: $(uuidgen)" \\
   -H "X-Webhook-Timestamp: $TIMESTAMP" \\
   -H "X-Hub-Signature-256: $SIGNATURE" \\
   -d "$PAYLOAD"`}
-            </pre>
+          </pre>
+        </div>
+      </div>
+
+      {/* Register Application Modal */}
+      {showRegisterModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
+          <div className="glass-card p-6 max-w-lg w-full border-[#00d4ff]/30">
+            <h2 className="text-lg font-bold text-[#e8f4ff] mb-4" style={{ fontFamily: "Outfit, sans-serif" }}>
+              Register CI/CD Application
+            </h2>
+            <form onSubmit={handleRegister} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-[#7ba3c8] mb-1">
+                  Application ID (Unique key used in webhooks) *
+                </label>
+                <input
+                  id="input-app-id"
+                  type="text"
+                  required
+                  placeholder="e.g. web-app-prod"
+                  value={newAppId}
+                  onChange={(e) => setNewAppId(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-[#080c14] border border-[#00d4ff]/20 rounded-xl text-[#e8f4ff] placeholder-[#4a6580] focus:outline-none focus:border-[#00d4ff]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#7ba3c8] mb-1">
+                  Display Name
+                </label>
+                <input
+                  id="input-display-name"
+                  type="text"
+                  placeholder="e.g. Core Web Application (Production)"
+                  value={newDisplayName}
+                  onChange={(e) => setNewDisplayName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-[#080c14] border border-[#00d4ff]/20 rounded-xl text-[#e8f4ff] placeholder-[#4a6580] focus:outline-none focus:border-[#00d4ff]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#7ba3c8] mb-1">
+                  Authorized Target URL (Server-controlled destination) *
+                </label>
+                <input
+                  id="input-target-url"
+                  type="url"
+                  required
+                  placeholder="https://api.mycompany.com"
+                  value={newTargetUrl}
+                  onChange={(e) => setNewTargetUrl(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-[#080c14] border border-[#00d4ff]/20 rounded-xl text-[#e8f4ff] placeholder-[#4a6580] focus:outline-none focus:border-[#00d4ff]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-[#7ba3c8] mb-1">
+                  Environment
+                </label>
+                <select
+                  value={newEnvironment}
+                  onChange={(e) => setNewEnvironment(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-[#080c14] border border-[#00d4ff]/20 rounded-xl text-[#e8f4ff] focus:outline-none focus:border-[#00d4ff]"
+                >
+                  <option value="Production">Production</option>
+                  <option value="Staging">Staging</option>
+                  <option value="QA">QA</option>
+                  <option value="Development">Development</option>
+                </select>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowRegisterModal(false)}
+                  className="btn-secondary text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="btn-primary text-xs"
+                >
+                  {submitting ? "Registering..." : "Register & Generate Secret"}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
+      )}
 
-        {/* Register Application Modal */}
-        {showRegisterModal && (
-          <div style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(0,0,0,0.75)",
-            backdropFilter: "blur(4px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 50,
-          }}>
-            <div style={{
-              backgroundColor: "#111827",
-              border: "1px solid #374151",
-              borderRadius: "0.75rem",
-              width: "100%",
-              maxWidth: "500px",
-              padding: "1.75rem",
-            }}>
-              <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#fff", marginBottom: "1rem" }}>
-                Register CI/CD Application
-              </h2>
-              <form onSubmit={handleRegister}>
-                <div style={{ marginBottom: "1rem" }}>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "#d1d5db", marginBottom: "0.4rem" }}>
-                    Application ID (Unique key used in webhooks) *
-                  </label>
-                  <input
-                    id="input-app-id"
-                    type="text"
-                    required
-                    placeholder="e.g. web-app-prod"
-                    value={newAppId}
-                    onChange={(e) => setNewAppId(e.target.value)}
-                    style={{
-                      width: "100%",
-                      backgroundColor: "#1f2937",
-                      border: "1px solid #374151",
-                      borderRadius: "0.375rem",
-                      padding: "0.6rem 0.75rem",
-                      color: "#fff",
-                      fontSize: "0.9rem",
-                    }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: "1rem" }}>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "#d1d5db", marginBottom: "0.4rem" }}>
-                    Display Name
-                  </label>
-                  <input
-                    id="input-display-name"
-                    type="text"
-                    placeholder="e.g. Core Web Application (Production)"
-                    value={newDisplayName}
-                    onChange={(e) => setNewDisplayName(e.target.value)}
-                    style={{
-                      width: "100%",
-                      backgroundColor: "#1f2937",
-                      border: "1px solid #374151",
-                      borderRadius: "0.375rem",
-                      padding: "0.6rem 0.75rem",
-                      color: "#fff",
-                      fontSize: "0.9rem",
-                    }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: "1rem" }}>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "#d1d5db", marginBottom: "0.4rem" }}>
-                    Authorized Target URL (Server-controlled destination) *
-                  </label>
-                  <input
-                    id="input-target-url"
-                    type="url"
-                    required
-                    placeholder="https://api.mycompany.com"
-                    value={newTargetUrl}
-                    onChange={(e) => setNewTargetUrl(e.target.value)}
-                    style={{
-                      width: "100%",
-                      backgroundColor: "#1f2937",
-                      border: "1px solid #374151",
-                      borderRadius: "0.375rem",
-                      padding: "0.6rem 0.75rem",
-                      color: "#fff",
-                      fontSize: "0.9rem",
-                    }}
-                  />
-                </div>
-
-                <div style={{ marginBottom: "1.5rem" }}>
-                  <label style={{ display: "block", fontSize: "0.85rem", color: "#d1d5db", marginBottom: "0.4rem" }}>
-                    Environment
-                  </label>
-                  <select
-                    value={newEnvironment}
-                    onChange={(e) => setNewEnvironment(e.target.value)}
-                    style={{
-                      width: "100%",
-                      backgroundColor: "#1f2937",
-                      border: "1px solid #374151",
-                      borderRadius: "0.375rem",
-                      padding: "0.6rem 0.75rem",
-                      color: "#fff",
-                      fontSize: "0.9rem",
-                    }}
-                  >
-                    <option value="Production">Production</option>
-                    <option value="Staging">Staging</option>
-                    <option value="QA">QA</option>
-                    <option value="Development">Development</option>
-                  </select>
-                </div>
-
-                <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.75rem" }}>
-                  <button
-                    type="button"
-                    onClick={() => setShowRegisterModal(false)}
-                    style={{
-                      padding: "0.5rem 1rem",
-                      borderRadius: "0.375rem",
-                      border: "1px solid #374151",
-                      backgroundColor: "transparent",
-                      color: "#9ca3af",
-                      cursor: "pointer",
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={submitting}
-                    style={{
-                      padding: "0.5rem 1.25rem",
-                      borderRadius: "0.375rem",
-                      border: "none",
-                      backgroundColor: "#2563eb",
-                      color: "#fff",
-                      fontWeight: 600,
-                      cursor: submitting ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    {submitting ? "Registering..." : "Register & Generate Secret"}
-                  </button>
-                </div>
-              </form>
+      {/* Secret Generated / Rotated Modal */}
+      {generatedSecret && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
+          <div className="glass-card p-6 max-w-lg w-full border-[#00ff88]/30 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#00ff88]/10 border border-[#00ff88]/30 flex items-center justify-center shrink-0">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00ff88" strokeWidth="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+                  HMAC Webhook Signing Secret Generated
+                </h2>
+                <p className="text-xs text-[#7ba3c8]">For {secretAppName}</p>
+              </div>
             </div>
-          </div>
-        )}
 
-        {/* Secret Generated / Rotated Modal */}
-        {generatedSecret && (
-          <div style={{
-            position: "fixed",
-            inset: 0,
-            backgroundColor: "rgba(0,0,0,0.85)",
-            backdropFilter: "blur(6px)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 60,
-          }}>
-            <div style={{
-              backgroundColor: "#111827",
-              border: "1px solid #22c55e",
-              borderRadius: "0.75rem",
-              width: "100%",
-              maxWidth: "560px",
-              padding: "1.75rem",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1rem" }}>
-                <div style={{ backgroundColor: "rgba(34, 197, 94, 0.2)", borderRadius: "50%", padding: "0.5rem" }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2">
-                    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                  </svg>
-                </div>
-                <div>
-                  <h2 style={{ fontSize: "1.25rem", fontWeight: 700, color: "#fff", margin: 0 }}>
-                    HMAC Webhook Signing Secret Generated
-                  </h2>
-                  <p style={{ margin: "0.25rem 0 0 0", fontSize: "0.85rem", color: "#9ca3af" }}>
-                    For {secretAppName}
-                  </p>
-                </div>
-              </div>
+            {/* Security Alert Banner */}
+            <div className="p-3.5 rounded-xl border border-[#ffa502]/30 bg-[#ffa502]/10 text-xs text-[#ffa502] leading-relaxed">
+              <strong>Security Notice:</strong> Copy this secret now. It is encrypted in our database and will <strong>never be shown again</strong>. Store it in your CI/CD repository secrets.
+            </div>
 
-              {/* Security Alert Banner */}
-              <div style={{
-                backgroundColor: "rgba(245, 158, 11, 0.15)",
-                border: "1px solid #f59e0b",
-                borderRadius: "0.5rem",
-                padding: "0.75rem 1rem",
-                marginBottom: "1.25rem",
-                fontSize: "0.85rem",
-                color: "#fde68a",
-              }}>
-                <strong>Security Notice:</strong> Copy this secret now. It is encrypted in our database and will <strong>never be shown again</strong>. Store it in your CI/CD repository secrets (e.g. GitHub Actions Secrets).
-              </div>
-
-              {/* Secret Display Box */}
-              <div style={{ marginBottom: "1.5rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
-                  <span style={{ fontSize: "0.8rem", color: "#9ca3af", textTransform: "uppercase", fontWeight: 600 }}>
-                    Signing Secret (HMAC-SHA256)
-                  </span>
-                  <button
-                    onClick={() => setShowRawSecret(!showRawSecret)}
-                    style={{ background: "none", border: "none", color: "#60a5fa", fontSize: "0.8rem", cursor: "pointer" }}
-                  >
-                    {showRawSecret ? "Hide" : "Reveal"}
-                  </button>
-                </div>
-                <div style={{
-                  display: "flex",
-                  alignItems: "center",
-                  backgroundColor: "#0b0f19",
-                  border: "1px solid #374151",
-                  borderRadius: "0.375rem",
-                  padding: "0.5rem 0.75rem",
-                  gap: "0.5rem",
-                }}>
-                  <code style={{
-                    flex: 1,
-                    fontFamily: "monospace",
-                    fontSize: "0.85rem",
-                    color: "#6ee7b7",
-                    wordBreak: "break-all",
-                  }}>
-                    {showRawSecret ? generatedSecret : "•".repeat(48)}
-                  </code>
-                  <button
-                    onClick={() => copyToClipboard(generatedSecret)}
-                    style={{
-                      backgroundColor: copied ? "#22c55e" : "#2563eb",
-                      color: "#fff",
-                      border: "none",
-                      borderRadius: "0.25rem",
-                      padding: "0.4rem 0.75rem",
-                      fontSize: "0.8rem",
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      transition: "background 0.2s",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {copied ? "Copied!" : "Copy Secret"}
-                  </button>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            {/* Secret Display Box */}
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-center text-xs">
+                <span className="font-semibold text-[#4a6580] uppercase tracking-wider">
+                  Signing Secret (HMAC-SHA256)
+                </span>
                 <button
-                  onClick={() => setGeneratedSecret(null)}
-                  style={{
-                    backgroundColor: "#374151",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: "0.375rem",
-                    padding: "0.5rem 1.25rem",
-                    fontWeight: 600,
-                    cursor: "pointer",
-                  }}
+                  onClick={() => setShowRawSecret(!showRawSecret)}
+                  className="text-[#00d4ff] hover:underline"
                 >
-                  I have saved this secret
+                  {showRawSecret ? "Hide" : "Reveal"}
+                </button>
+              </div>
+              <div className="flex items-center gap-2 p-3 rounded-xl bg-[#080c14] border border-[#00d4ff]/20">
+                <code className="flex-1 font-mono text-xs text-[#00ff88] break-all">
+                  {showRawSecret ? generatedSecret : "•".repeat(48)}
+                </code>
+                <button
+                  onClick={() => copyToClipboard(generatedSecret)}
+                  className="btn-primary text-xs shrink-0"
+                >
+                  {copied ? "Copied!" : "Copy Secret"}
                 </button>
               </div>
             </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setGeneratedSecret(null)}
+                className="btn-secondary text-xs"
+              >
+                I Have Saved This Secret
+              </button>
+            </div>
           </div>
-        )}
-      </main>
-    </div>
+        </div>
+      )}
+    </AppLayout>
   );
 }
+

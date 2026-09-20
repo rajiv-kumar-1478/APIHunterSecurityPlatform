@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Sidebar } from "@/components/Sidebar";
+import { AppLayout } from "@/components/AppLayout";
 import { apiFetch, getErrorMessage } from "@/lib/api-client";
 
 interface HealthOverview {
@@ -240,279 +240,253 @@ export default function OperationsPage() {
   const getSeverityBadgeClass = (severity: number) => {
     switch (severity) {
       case 4: // Critical
-        return "bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse";
+        return "badge-unhealthy animate-pulse";
       case 3: // High
-        return "bg-amber-500/20 text-amber-400 border border-amber-500/30";
+        return "badge-degraded";
       case 2: // Medium
-        return "bg-yellow-500/20 text-yellow-300 border border-yellow-500/30";
+        return "badge-degraded";
       default:
-        return "bg-slate-700/50 text-slate-300 border border-slate-600";
+        return "badge-admin";
     }
   };
 
   const getStatusBadgeClass = (status: number) => {
     switch (status) {
       case 0: // Detected
-        return "bg-rose-900/40 text-rose-300";
+        return "badge-unhealthy";
       case 1: // Investigating
-        return "bg-blue-900/40 text-blue-300";
+        return "badge-admin";
       case 2: // Mitigated
-        return "bg-emerald-900/40 text-emerald-300";
+        return "badge-healthy";
       case 3: // Resolved
-        return "bg-slate-800 text-slate-400 line-through";
+        return "badge-healthy line-through opacity-60";
       default:
-        return "bg-slate-800 text-slate-400";
+        return "badge-admin";
     }
   };
 
   if (loading || !user) {
     return (
-      <div className="flex h-screen bg-slate-950 text-slate-100">
-        <Sidebar isAdmin={user?.isPlatformAdmin ?? false} userEmail={user?.email} />
-        <div className="flex-1 flex items-center justify-center">
-          <div className="flex items-center space-x-3 text-slate-400">
-            <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-            <span>Loading Operations AI Console...</span>
-          </div>
+      <div className="min-h-screen flex items-center justify-center bg-[#080c14]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-2 border-[#00d4ff] border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs text-[#7ba3c8] font-medium">Loading Operations AI Engine…</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
-      <Sidebar isAdmin={user?.isPlatformAdmin ?? false} userEmail={user?.email} />
+    <AppLayout
+      isAdmin={user.isPlatformAdmin}
+      userEmail={user.email}
+      title="Operations AI & Fleet Health"
+      subtitle="Autonomous incident detection, worker lease recovery & multi-LLM root-cause diagnosis"
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 text-xs text-[#7ba3c8] bg-white/5 px-3 py-1.5 rounded-lg border border-white/10 cursor-pointer font-medium">
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+              className="rounded bg-[#080c14] border-[#00d4ff]/30 text-[#00d4ff] focus:ring-0"
+            />
+            <span>Live Pulse (15s)</span>
+          </label>
 
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        {/* Header Bar */}
-        <header className="px-8 py-6 border-b border-slate-800/80 bg-slate-900/40 backdrop-blur sticky top-0 z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <button
+            onClick={() => loadData()}
+            disabled={refreshing}
+            className="btn-secondary text-xs"
+          >
+            {refreshing ? "Refreshing..." : "Refresh"}
+          </button>
+
+          <button
+            onClick={triggerCycle}
+            disabled={refreshing}
+            className="btn-primary text-xs flex items-center gap-1.5"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+            </svg>
+            <span>Trigger Detection Cycle</span>
+          </button>
+        </div>
+      }
+    >
+      {/* Status Alerts */}
+      {error && (
+        <div className="p-4 rounded-xl border border-[#ff4757]/30 bg-[#ff4757]/10 text-[#ff4757] text-xs font-semibold flex items-center justify-between fade-in">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} className="hover:underline font-bold">✕</button>
+        </div>
+      )}
+      {actionSuccess && (
+        <div className="p-4 rounded-xl border border-[#00ff88]/30 bg-[#00ff88]/10 text-[#00ff88] text-xs font-semibold flex items-center justify-between fade-in">
+          <span>{actionSuccess}</span>
+          <button onClick={() => setActionSuccess(null)} className="hover:underline font-bold">✕</button>
+        </div>
+      )}
+
+      {/* Health Metric Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 fade-in">
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between text-xs text-[#4a6580] font-semibold uppercase tracking-wider mb-2">
+            <span>Overall Fleet Health</span>
+            <span className={`w-2.5 h-2.5 rounded-full ${overview?.systemHealth === "Healthy" ? "bg-[#00ff88]" : overview?.systemHealth === "Warning" ? "bg-[#ffa502]" : "bg-[#ff4757] animate-ping"}`} />
+          </div>
+          <div className="text-2xl font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+            {overview?.systemHealth || "Healthy"}
+          </div>
+          <p className="text-xs text-[#7ba3c8] mt-1">Autonomous self-healing active</p>
+        </div>
+
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between text-xs text-[#4a6580] font-semibold uppercase tracking-wider mb-2">
+            <span>Active Incidents</span>
+            <span className="text-[#ff4757] font-semibold">{overview?.criticalIncidents || 0} Critical</span>
+          </div>
+          <div className="text-2xl font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+            {overview?.activeIncidents ?? 0}
+          </div>
+          <p className="text-xs text-[#7ba3c8] mt-1">Requiring triage or mitigation</p>
+        </div>
+
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between text-xs text-[#4a6580] font-semibold uppercase tracking-wider mb-2">
+            <span>Security Scan Queue</span>
+            <span className="text-[#00d4ff] font-semibold">{overview?.runningJobs || 0} Running</span>
+          </div>
+          <div className="text-2xl font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+            {overview?.pendingJobs ?? 0}
+          </div>
+          <p className="text-xs text-[#7ba3c8] mt-1">Pending claims in PostgreSQL queue</p>
+        </div>
+
+        <div className="glass-card p-5">
+          <div className="flex items-center justify-between text-xs text-[#4a6580] font-semibold uppercase tracking-wider mb-2">
+            <span>Campaign Scheduler</span>
+            <span className="text-[#ffa502] font-semibold">Overdue</span>
+          </div>
+          <div className="text-2xl font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+            {overview?.overdueCampaigns ?? 0}
+          </div>
+          <p className="text-xs text-[#7ba3c8] mt-1">Overdue continuous campaigns</p>
+        </div>
+      </div>
+
+      {/* Main Incidents Table Section */}
+      <div className="space-y-4 fade-in">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center space-x-3">
-              <h1 className="text-2xl font-bold tracking-tight text-white flex items-center gap-2">
-                <svg className="w-6 h-6 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
-                  <circle cx="12" cy="12" r="3" />
-                </svg>
-                Operations AI & Fleet Health
-              </h1>
-              <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                Phase 10 Active
-              </span>
-            </div>
-            <p className="text-xs text-slate-400 mt-1">
-              Autonomous incident detection, lease recovery, and AI-assisted root-cause diagnosis.
+            <h2 className="text-base font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+              Operational Incident Log
+            </h2>
+            <p className="text-xs text-[#7ba3c8]">
+              Live operational events, worker stalls & continuous recovery history
             </p>
           </div>
 
-          <div className="flex items-center space-x-3">
-            <label className="flex items-center space-x-2 text-xs text-slate-300 bg-slate-800/60 px-3 py-1.5 rounded-lg border border-slate-700/60 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoRefresh}
-                onChange={(e) => setAutoRefresh(e.target.checked)}
-                className="rounded border-slate-700 text-indigo-500 focus:ring-indigo-400"
-              />
-              <span>Live Pulse (15s)</span>
-            </label>
+          {/* Filter Pills */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <div className="flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10">
+              {["ACTIVE", "ALL", "Detected", "Mitigated", "Resolved"].map((status) => (
+                <button
+                  key={status}
+                  onClick={() => setStatusFilter(status)}
+                  className={`px-2.5 py-1 rounded-lg transition text-xs font-semibold ${
+                    statusFilter === status
+                      ? "bg-[#00d4ff]/20 text-[#00d4ff] border border-[#00d4ff]/40 shadow-sm"
+                      : "text-[#7ba3c8] hover:text-white"
+                  }`}
+                >
+                  {status}
+                </button>
+              ))}
+            </div>
 
-            <button
-              onClick={() => loadData()}
-              disabled={refreshing}
-              className="px-3 py-1.5 text-xs font-medium text-slate-200 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg transition"
+            <select
+              value={severityFilter}
+              onChange={(e) => setSeverityFilter(e.target.value)}
+              className="bg-[#080c14] border border-[#00d4ff]/20 rounded-xl px-3 py-1.5 text-xs text-[#e8f4ff] focus:outline-none focus:border-[#00d4ff]"
             >
-              {refreshing ? "Refreshing..." : "Refresh"}
-            </button>
-
-            <button
-              onClick={triggerCycle}
-              disabled={refreshing}
-              className="px-3.5 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-lg shadow-sm shadow-indigo-500/20 transition flex items-center space-x-1.5"
-            >
-              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-              </svg>
-              <span>Trigger Detection Cycle</span>
-            </button>
-          </div>
-        </header>
-
-        {/* Status Alerts */}
-        {error && (
-          <div className="mx-8 mt-6 p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-sm flex items-center justify-between">
-            <span>{error}</span>
-            <button onClick={() => setError(null)} className="text-rose-400 hover:text-white font-bold ml-4">✕</button>
-          </div>
-        )}
-        {actionSuccess && (
-          <div className="mx-8 mt-6 p-4 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-sm flex items-center justify-between">
-            <span>{actionSuccess}</span>
-            <button onClick={() => setActionSuccess(null)} className="text-emerald-400 hover:text-white font-bold ml-4">✕</button>
-          </div>
-        )}
-
-        {/* Health Metric Cards */}
-        <div className="px-8 mt-6 grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="p-5 rounded-2xl bg-slate-900/50 border border-slate-800 shadow-sm flex flex-col justify-between">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>Overall Platform Health</span>
-              <span className={`w-2.5 h-2.5 rounded-full ${overview?.systemHealth === "Healthy" ? "bg-emerald-400" : overview?.systemHealth === "Warning" ? "bg-amber-400" : "bg-rose-500 animate-ping"}`} />
-            </div>
-            <div className="mt-3">
-              <span className={`text-2xl font-bold tracking-tight ${overview?.systemHealth === "Healthy" ? "text-emerald-400" : overview?.systemHealth === "Warning" ? "text-amber-400" : "text-rose-400"}`}>
-                {overview?.systemHealth || "Unknown"}
-              </span>
-              <p className="text-xs text-slate-500 mt-1">Autonomous self-healing engine active</p>
-            </div>
-          </div>
-
-          <div className="p-5 rounded-2xl bg-slate-900/50 border border-slate-800 shadow-sm flex flex-col justify-between">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>Active Incidents</span>
-              <span className="text-rose-400 font-semibold">{overview?.criticalIncidents || 0} Critical</span>
-            </div>
-            <div className="mt-3">
-              <span className="text-2xl font-bold tracking-tight text-white">
-                {overview?.activeIncidents ?? 0}
-              </span>
-              <p className="text-xs text-slate-500 mt-1">Requiring triage or mitigation</p>
-            </div>
-          </div>
-
-          <div className="p-5 rounded-2xl bg-slate-900/50 border border-slate-800 shadow-sm flex flex-col justify-between">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>Security Scan Queue</span>
-              <span className="text-indigo-400 font-semibold">{overview?.runningJobs || 0} Running</span>
-            </div>
-            <div className="mt-3">
-              <span className="text-2xl font-bold tracking-tight text-white">
-                {overview?.pendingJobs ?? 0}
-              </span>
-              <p className="text-xs text-slate-500 mt-1">Pending claims in PostgreSQL queue</p>
-            </div>
-          </div>
-
-          <div className="p-5 rounded-2xl bg-slate-900/50 border border-slate-800 shadow-sm flex flex-col justify-between">
-            <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>Campaign Scheduler</span>
-              <span className="text-amber-400 font-semibold">Overdue</span>
-            </div>
-            <div className="mt-3">
-              <span className="text-2xl font-bold tracking-tight text-white">
-                {overview?.overdueCampaigns ?? 0}
-              </span>
-              <p className="text-xs text-slate-500 mt-1">Overdue continuous scan campaigns</p>
-            </div>
+              <option value="ALL">All Severities</option>
+              <option value="Critical">Critical</option>
+              <option value="High">High</option>
+              <option value="Medium">Medium</option>
+              <option value="Low">Low</option>
+            </select>
           </div>
         </div>
 
-        {/* Main Incidents Table Section */}
-        <div className="px-8 mt-8 pb-12">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
-            <div>
-              <h2 className="text-lg font-bold text-white">Operational Incident Log</h2>
-              <p className="text-xs text-slate-400">
-                Live operational events, worker stalls, and continuous recovery history.
-              </p>
+        {/* Table Container */}
+        <div className="glass-card overflow-hidden">
+          {filteredIncidents.length === 0 ? (
+            <div className="py-16 text-center text-[#7ba3c8] space-y-2">
+              <svg className="w-10 h-10 mx-auto text-[#4a6580]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+              <p className="text-sm font-semibold text-[#e8f4ff]">Zero active operational incidents</p>
+              <p className="text-xs">All worker fleet heartbeats and scan queues are nominal.</p>
             </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse min-w-[800px]">
+                <thead>
+                  <tr className="border-b border-[#00d4ff]/10 text-xs font-semibold uppercase text-[#4a6580] bg-white/[0.02]">
+                    <th className="p-4">Severity</th>
+                    <th className="p-4">Incident Title & Category</th>
+                    <th className="p-4">Status</th>
+                    <th className="p-4">Occurrences</th>
+                    <th className="p-4">Last Observed</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[#00d4ff]/10 text-xs">
+                  {filteredIncidents.map((incident) => (
+                    <tr key={incident.id} className="hover:bg-white/[0.02] transition-colors">
+                      <td className="p-4">
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${getSeverityBadgeClass(incident.severity)}`}>
+                          {SEVERITY_NAMES[incident.severity]}
+                        </span>
+                      </td>
 
-            {/* Filter Pills */}
-            <div className="flex flex-wrap items-center gap-2 text-xs">
-              <div className="flex items-center space-x-1 bg-slate-900/80 p-1 rounded-xl border border-slate-800">
-                {["ACTIVE", "ALL", "Detected", "Mitigated", "Resolved"].map((status) => (
-                  <button
-                    key={status}
-                    onClick={() => setStatusFilter(status)}
-                    className={`px-2.5 py-1 rounded-lg transition font-medium ${
-                      statusFilter === status
-                        ? "bg-indigo-600 text-white shadow-sm"
-                        : "text-slate-400 hover:text-slate-200"
-                    }`}
-                  >
-                    {status}
-                  </button>
-                ))}
-              </div>
-
-              <select
-                value={severityFilter}
-                onChange={(e) => setSeverityFilter(e.target.value)}
-                className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-300 focus:ring-1 focus:ring-indigo-500"
-              >
-                <option value="ALL">All Severities</option>
-                <option value="Critical">Critical</option>
-                <option value="High">High</option>
-                <option value="Medium">Medium</option>
-                <option value="Low">Low</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Table Container */}
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/40 backdrop-blur overflow-hidden shadow-sm">
-            {filteredIncidents.length === 0 ? (
-              <div className="py-16 text-center text-slate-500">
-                <svg className="w-12 h-12 mx-auto text-slate-600 mb-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                  <polyline points="22 4 12 14.01 9 11.01" />
-                </svg>
-                <p className="text-sm font-medium text-slate-400">Zero active operational incidents</p>
-                <p className="text-xs text-slate-600 mt-1">All worker fleet heartbeats and scan queues are nominal.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs text-slate-300">
-                  <thead className="bg-slate-800/40 text-slate-400 uppercase tracking-wider text-[10px] font-semibold border-b border-slate-800">
-                    <tr>
-                      <th className="px-5 py-3">Severity</th>
-                      <th className="px-5 py-3">Incident Title & Category</th>
-                      <th className="px-5 py-3">Status</th>
-                      <th className="px-5 py-3">Occurrences</th>
-                      <th className="px-5 py-3">Last Observed</th>
-                      <th className="px-5 py-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/60 font-mono">
-                    {filteredIncidents.map((incident) => (
-                      <tr key={incident.id} className="hover:bg-slate-800/30 transition">
-                        <td className="px-5 py-3.5 whitespace-nowrap">
-                          <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${getSeverityBadgeClass(incident.severity)}`}>
-                            {SEVERITY_NAMES[incident.severity]}
-                          </span>
-                        </td>
-
-                        <td className="px-5 py-3.5 max-w-md font-sans">
-                          <div className="font-semibold text-slate-100 truncate">{incident.title}</div>
-                          <div className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
-                            <span className="text-indigo-400">{CATEGORY_NAMES[incident.category]}</span>
-                            <span>•</span>
-                            <span className="font-mono text-slate-600 truncate">{incident.fingerprint}</span>
+                      <td className="p-4 max-w-md">
+                        <div className="font-bold text-[#e8f4ff] truncate">{incident.title}</div>
+                        <div className="text-[11px] text-[#7ba3c8] flex items-center gap-2 mt-0.5">
+                          <span className="text-[#00d4ff] font-medium">{CATEGORY_NAMES[incident.category]}</span>
+                          <span>•</span>
+                          <span className="font-mono text-[#4a6580] truncate">{incident.fingerprint}</span>
+                        </div>
+                        {incident.mitigationActionTaken && (
+                          <div className="text-[11px] text-[#00ff88] mt-1 flex items-center gap-1 font-medium">
+                            <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>
+                            <span>{incident.mitigationActionTaken}</span>
                           </div>
-                          {incident.mitigationActionTaken && (
-                            <div className="text-[11px] text-emerald-400/90 mt-1 flex items-center gap-1 font-sans">
-                              <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="20 6 9 17 4 12" /></svg>
-                              <span>{incident.mitigationActionTaken}</span>
-                            </div>
-                          )}
-                        </td>
+                        )}
+                      </td>
 
-                        <td className="px-5 py-3.5 whitespace-nowrap">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${getStatusBadgeClass(incident.status)}`}>
-                            {STATUS_NAMES[incident.status]}
-                          </span>
-                        </td>
+                      <td className="p-4">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${getStatusBadgeClass(incident.status)}`}>
+                          {STATUS_NAMES[incident.status]}
+                        </span>
+                      </td>
 
-                        <td className="px-5 py-3.5 whitespace-nowrap text-slate-400">
-                          {incident.occurrenceCount}x
-                        </td>
+                      <td className="p-4 text-[#7ba3c8] font-mono">
+                        {incident.occurrenceCount}x
+                      </td>
 
-                        <td className="px-5 py-3.5 whitespace-nowrap text-slate-400 text-[11px]">
-                          {new Date(incident.lastObservedAtUtc).toLocaleTimeString()}
-                        </td>
+                      <td className="p-4 text-[#7ba3c8] text-[11px]">
+                        {new Date(incident.lastObservedAtUtc).toLocaleTimeString()}
+                      </td>
 
-                        <td className="px-5 py-3.5 whitespace-nowrap text-right space-x-2 font-sans">
+                      <td className="p-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
                           <button
                             onClick={() => handleDiagnose(incident)}
-                            className="px-2.5 py-1 text-xs font-medium rounded-lg bg-indigo-500/10 text-indigo-400 hover:bg-indigo-500/20 border border-indigo-500/30 transition inline-flex items-center space-x-1"
+                            className="btn-primary text-[11px] py-1 px-2.5 flex items-center gap-1"
                           >
                             <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10" /><path d="M12 16v-4M12 8h.01" /></svg>
                             <span>AI Diagnose</span>
@@ -521,7 +495,7 @@ export default function OperationsPage() {
                           {incident.status !== 2 && incident.status !== 3 && (
                             <button
                               onClick={() => handleMitigate(incident.id)}
-                              className="px-2.5 py-1 text-xs font-medium rounded-lg bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/30 transition"
+                              className="btn-secondary text-[11px] py-1 px-2.5"
                             >
                               Mitigate
                             </button>
@@ -533,129 +507,130 @@ export default function OperationsPage() {
                                 setResolveIncidentId(incident.id);
                                 setResolutionNotes("");
                               }}
-                              className="px-2.5 py-1 text-xs font-medium rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
+                              className="btn-secondary text-[11px] py-1 px-2.5"
                             >
                               Resolve
                             </button>
                           )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* AI Diagnosis Modal */}
+      {selectedIncident && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 fade-in">
+          <div className="glass-card max-w-2xl w-full p-6 border-[#00d4ff]/30 relative space-y-4">
+            <button
+              onClick={() => setSelectedIncident(null)}
+              className="absolute top-4 right-4 text-[#7ba3c8] hover:text-white text-lg font-bold"
+            >
+              ✕
+            </button>
+
+            <div className="flex items-center space-x-2 text-[#00d4ff] text-xs font-semibold uppercase tracking-wider">
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" /><circle cx="12" cy="12" r="3" /></svg>
+              <span>AI Operational Diagnostic Report</span>
+            </div>
+
+            <h3 className="text-lg font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>{selectedIncident.title}</h3>
+            <p className="text-xs text-[#7ba3c8]">
+              Fingerprint: <span className="font-mono text-[#4a6580]">{selectedIncident.fingerprint}</span>
+            </p>
+
+            {diagnosing ? (
+              <div className="py-12 flex flex-col items-center justify-center space-y-3">
+                <div className="w-8 h-8 border-2 border-[#00d4ff] border-t-transparent rounded-full animate-spin" />
+                <p className="text-xs text-[#7ba3c8]">Sanitizing execution trace and running AI diagnosis...</p>
+              </div>
+            ) : activeDiagnosis ? (
+              <div className="space-y-4 pt-2">
+                <div className="flex items-center justify-between text-xs p-3.5 rounded-xl bg-[#080c14] border border-[#00d4ff]/10">
+                  <div>
+                    <span className="text-[#7ba3c8]">Provider: </span>
+                    <span className="text-[#e8f4ff] font-semibold">{activeDiagnosis.providerUsed}</span>
+                    {activeDiagnosis.isDeterministicFallback && (
+                      <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-[#ffa502]/20 text-[#ffa502] rounded font-semibold">Fallback</span>
+                    )}
+                  </div>
+                  <div>
+                    <span className="text-[#7ba3c8]">Confidence: </span>
+                    <span className="text-[#00ff88] font-bold">
+                      {Math.round(activeDiagnosis.confidenceScore * 100)}%
+                    </span>
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#080c14]/80 border border-[#ff4757]/30 space-y-1">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-[#ff4757]">Identified Root Cause</h4>
+                  <p className="text-xs text-[#e8f4ff] leading-relaxed">{activeDiagnosis.rootCauseSummary}</p>
+                </div>
+
+                <div className="p-4 rounded-xl bg-[#080c14]/80 border border-[#00ff88]/30 space-y-1">
+                  <h4 className="text-xs font-semibold uppercase tracking-wider text-[#00ff88]">Recommended Mitigation</h4>
+                  <p className="text-xs text-[#e8f4ff] leading-relaxed">{activeDiagnosis.suggestedRemediation}</p>
+                </div>
+
+                <div className="pt-2 flex justify-end">
+                  <button
+                    onClick={() => handleMitigate(selectedIncident.id)}
+                    className="btn-primary text-xs"
+                  >
+                    Execute Recommended Mitigation
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="py-8 text-center text-xs text-[#7ba3c8]">
+                Diagnosis could not be generated.
               </div>
             )}
           </div>
         </div>
+      )}
 
-        {/* AI Diagnosis Modal */}
-        {selectedIncident && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative">
+      {/* Resolve Incident Dialog */}
+      {resolveIncidentId && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 fade-in">
+          <div className="glass-card max-w-md w-full p-6 border-[#00d4ff]/30 space-y-4">
+            <h3 className="text-base font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>Resolve Operational Incident</h3>
+            <p className="text-xs text-[#7ba3c8]">
+              Record the root cause fix or operator notes before marking this incident as resolved.
+            </p>
+
+            <textarea
+              value={resolutionNotes}
+              onChange={(e) => setResolutionNotes(e.target.value)}
+              placeholder="e.g. Host restarted, worker leases cleanly cleared, memory leak patched."
+              rows={3}
+              className="w-full bg-[#080c14] border border-[#00d4ff]/20 rounded-xl p-3 text-xs text-[#e8f4ff] placeholder-[#4a6580] focus:outline-none focus:border-[#00d4ff]"
+            />
+
+            <div className="flex justify-end gap-3 pt-2">
               <button
-                onClick={() => setSelectedIncident(null)}
-                className="absolute top-4 right-4 text-slate-400 hover:text-white text-lg font-bold"
+                onClick={() => setResolveIncidentId(null)}
+                className="btn-secondary text-xs"
               >
-                ✕
+                Cancel
               </button>
-
-              <div className="flex items-center space-x-2 text-indigo-400 text-xs font-semibold uppercase tracking-wider mb-2">
-                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" /><circle cx="12" cy="12" r="3" /></svg>
-                <span>AI Operational Diagnostic Report</span>
-              </div>
-
-              <h3 className="text-lg font-bold text-white">{selectedIncident.title}</h3>
-              <p className="text-xs text-slate-400 mt-1">
-                Fingerprint: <span className="font-mono text-slate-500">{selectedIncident.fingerprint}</span>
-              </p>
-
-              {diagnosing ? (
-                <div className="py-12 flex flex-col items-center justify-center space-y-3">
-                  <div className="w-8 h-8 border-3 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-                  <p className="text-xs text-slate-400">Sanitizing execution trace and running AI diagnosis...</p>
-                </div>
-              ) : activeDiagnosis ? (
-                <div className="mt-5 space-y-4">
-                  <div className="flex items-center justify-between text-xs bg-slate-800/40 p-3 rounded-xl border border-slate-800">
-                    <div>
-                      <span className="text-slate-400">Provider: </span>
-                      <span className="text-slate-200 font-semibold">{activeDiagnosis.providerUsed}</span>
-                      {activeDiagnosis.isDeterministicFallback && (
-                        <span className="ml-2 px-1.5 py-0.5 text-[10px] bg-amber-500/20 text-amber-300 rounded">Fallback</span>
-                      )}
-                    </div>
-                    <div>
-                      <span className="text-slate-400">Confidence: </span>
-                      <span className="text-emerald-400 font-bold">
-                        {Math.round(activeDiagnosis.confidenceScore * 100)}%
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-slate-800/30 border border-slate-800">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-rose-400 mb-1.5">Identified Root Cause</h4>
-                    <p className="text-sm text-slate-200 leading-relaxed">{activeDiagnosis.rootCauseSummary}</p>
-                  </div>
-
-                  <div className="p-4 rounded-xl bg-slate-800/30 border border-slate-800">
-                    <h4 className="text-xs font-semibold uppercase tracking-wider text-emerald-400 mb-1.5">Recommended Mitigation</h4>
-                    <p className="text-sm text-slate-200 leading-relaxed">{activeDiagnosis.suggestedRemediation}</p>
-                  </div>
-
-                  <div className="pt-2 flex justify-end space-x-3">
-                    <button
-                      onClick={() => handleMitigate(selectedIncident.id)}
-                      className="px-4 py-2 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 rounded-xl transition shadow-sm"
-                    >
-                      Execute Recommended Mitigation
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="py-8 text-center text-xs text-slate-500">
-                  Diagnosis could not be generated.
-                </div>
-              )}
+              <button
+                onClick={handleResolve}
+                disabled={resolving || !resolutionNotes.trim()}
+                className="btn-primary text-xs"
+              >
+                {resolving ? "Resolving..." : "Confirm Resolution"}
+              </button>
             </div>
           </div>
-        )}
-
-        {/* Resolve Incident Dialog */}
-        {resolveIncidentId && (
-          <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
-              <h3 className="text-base font-bold text-white mb-2">Resolve Operational Incident</h3>
-              <p className="text-xs text-slate-400 mb-4">
-                Record the root cause fix or operator notes before marking this incident as resolved.
-              </p>
-
-              <textarea
-                value={resolutionNotes}
-                onChange={(e) => setResolutionNotes(e.target.value)}
-                placeholder="e.g. Host restarted, worker leases cleanly cleared, memory leak patched."
-                rows={3}
-                className="w-full bg-slate-800/80 border border-slate-700 rounded-xl p-3 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-              />
-
-              <div className="mt-4 flex justify-end space-x-2 text-xs">
-                <button
-                  onClick={() => setResolveIncidentId(null)}
-                  className="px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleResolve}
-                  disabled={resolving || !resolutionNotes.trim()}
-                  className="px-4 py-1.5 rounded-lg bg-emerald-600 text-white font-medium hover:bg-emerald-500 disabled:opacity-50"
-                >
-                  {resolving ? "Resolving..." : "Confirm Resolution"}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
+        </div>
+      )}
+    </AppLayout>
   );
 }
+

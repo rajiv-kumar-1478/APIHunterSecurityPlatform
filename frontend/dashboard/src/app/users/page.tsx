@@ -2,12 +2,12 @@
 
 import { useEffect, useState, FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { Sidebar } from "@/components/Sidebar";
-
+import { AppLayout } from "@/components/AppLayout";
 import { ApiError, apiRequest } from "@/lib/api-client";
 
 interface CurrentUser {
   isPlatformAdmin: boolean;
+  email?: string;
 }
 
 interface UserListResponse {
@@ -106,73 +106,77 @@ export default function UsersPage() {
   }
 
   if (!currentUser) return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="w-8 h-8 border-2 border-current border-t-transparent rounded-full animate-spin"
-        style={{ color: "var(--accent-cyan)" }} />
+    <div className="min-h-screen flex items-center justify-center bg-[#080c14]">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-10 h-10 border-2 border-[#00d4ff] border-t-transparent rounded-full animate-spin" />
+        <p className="text-xs text-[#7ba3c8] font-medium">Loading User Governance…</p>
+      </div>
     </div>
   );
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar isAdmin={currentUser.isPlatformAdmin} />
-      <main className="flex-1 overflow-auto p-8">
-        <div className="flex items-center justify-between mb-8 fade-in">
-          <div>
-            <h1 className="text-2xl font-bold" style={{ fontFamily: "Outfit, sans-serif" }}>
-              User Management
-            </h1>
-            <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
-              Platform Users & Admin Accounts
-            </p>
-          </div>
-          <button className="btn-primary" onClick={() => setShowCreateModal(true)}>
-            + Create User
-          </button>
-        </div>
-
-        {/* User table */}
-        <div className="glass-card overflow-hidden fade-in">
+    <AppLayout
+      isAdmin={currentUser.isPlatformAdmin}
+      userEmail={currentUser.email}
+      title="User Management"
+      subtitle="Platform accounts, administrator credentials & RBAC access controls"
+      actions={
+        <button className="btn-primary text-xs flex items-center gap-2" onClick={() => setShowCreateModal(true)}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          Create User
+        </button>
+      }
+    >
+      {/* User table */}
+      <div className="glass-card overflow-hidden fade-in">
+        <div className="overflow-x-auto">
           {loading ? (
-            <div className="p-8 text-center" style={{ color: "var(--text-muted)" }}>Loading users…</div>
+            <div className="p-12 text-center text-[#7ba3c8] text-xs">
+              <div className="w-8 h-8 border-2 border-[#00d4ff] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+              Loading users…
+            </div>
           ) : (
-            <table className="data-table">
+            <table className="w-full text-left border-collapse min-w-[700px]">
               <thead>
-                <tr>
-                  <th>User</th>
-                  <th>Username</th>
-                  <th>Role</th>
-                  <th>Status</th>
-                  <th>Created</th>
-                  <th>Actions</th>
+                <tr className="border-b border-[#00d4ff]/10 text-xs font-semibold uppercase text-[#4a6580] bg-white/[0.02]">
+                  <th className="p-4">User</th>
+                  <th className="p-4">Username</th>
+                  <th className="p-4">Role</th>
+                  <th className="p-4">Status</th>
+                  <th className="p-4">Created</th>
+                  <th className="p-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-[#00d4ff]/10 text-xs">
                 {users.map(u => (
-                  <tr key={u.id}>
-                    <td>
+                  <tr key={u.id} className="hover:bg-white/[0.02] transition-colors">
+                    <td className="p-4">
                       <div>
-                        <p className="font-medium" style={{ color: "var(--text-primary)" }}>{u.displayName}</p>
-                        <p className="text-xs" style={{ color: "var(--text-muted)" }}>{u.email}</p>
+                        <p className="font-bold text-[#e8f4ff]">{u.displayName}</p>
+                        <p className="text-xs text-[#7ba3c8]">{u.email}</p>
                       </div>
                     </td>
-                    <td className="mono">{u.username}</td>
-                    <td>
+                    <td className="p-4 font-mono text-xs text-[#00d4ff]">{u.username}</td>
+                    <td className="p-4">
                       {u.isPlatformAdmin ? (
-                        <span className="badge badge-admin">Admin</span>
+                        <span className="badge badge-admin text-[10px]">Platform Admin</span>
                       ) : (
-                        <span className="badge" style={{ background: "rgba(0,212,255,0.1)", color: "var(--accent-cyan)" }}>
-                          User
-                        </span>
+                        <span className="badge badge-healthy text-[10px]">Standard User</span>
                       )}
                     </td>
-                    <td>
-                      <span className={`badge ${u.isActive ? "badge-healthy" : "badge-unhealthy"}`}>
+                    <td className="p-4">
+                      <span className={`px-2.5 py-1 text-[10px] font-semibold rounded-full border ${
+                        u.isActive ? "badge-healthy" : "badge-unhealthy"
+                      }`}>
                         {u.isActive ? "Active" : "Disabled"}
                       </span>
                     </td>
-                    <td className="text-xs">{new Date(u.createdAtUtc).toLocaleDateString()}</td>
-                    <td>
-                      <button className="btn-ghost text-xs" onClick={() => toggleUserStatus(u)}>
+                    <td className="p-4 text-xs text-[#7ba3c8]">{new Date(u.createdAtUtc).toLocaleDateString()}</td>
+                    <td className="p-4 text-right">
+                      <button className="btn-secondary text-xs" onClick={() => toggleUserStatus(u)}>
                         {u.isActive ? "Disable" : "Enable"}
                       </button>
                     </td>
@@ -182,43 +186,44 @@ export default function UsersPage() {
             </table>
           )}
         </div>
+      </div>
 
-        {/* Create Modal */}
-        {showCreateModal && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
-            <div className="glass-card p-6 w-full max-w-md fade-in">
-              <h2 className="text-lg font-bold mb-4" style={{ fontFamily: "Outfit, sans-serif" }}>Create New User</h2>
-              {formError && <div className="mb-4 p-3 rounded-lg text-xs" style={{ background: "rgba(255,71,87,0.15)", color: "#ff4757" }}>{formError}</div>}
-              <form onSubmit={handleCreateUser} className="space-y-4">
-                <div>
-                  <label className="block text-xs text-muted mb-1">Email</label>
-                  <input type="email" required className="input-field" value={email} onChange={e => setEmail(e.target.value)} />
-                </div>
-                <div>
-                  <label className="block text-xs text-muted mb-1">Username</label>
-                  <input type="text" required className="input-field" value={username} onChange={e => setUsername(e.target.value)} />
-                </div>
-                <div>
-                  <label className="block text-xs text-muted mb-1">Display Name</label>
-                  <input type="text" required className="input-field" value={displayName} onChange={e => setDisplayName(e.target.value)} />
-                </div>
-                <div>
-                  <label className="block text-xs text-muted mb-1">Password</label>
-                  <input type="password" required className="input-field" value={password} onChange={e => setPassword(e.target.value)} />
-                </div>
-                <div className="flex items-center gap-2">
-                  <input type="checkbox" id="adminCheck" checked={isAdmin} onChange={e => setIsAdmin(e.target.checked)} />
-                  <label htmlFor="adminCheck" className="text-xs" style={{ color: "var(--text-primary)" }}>Platform Administrator</label>
-                </div>
-                <div className="flex gap-3 pt-2">
-                  <button type="button" className="btn-ghost flex-1" onClick={() => setShowCreateModal(false)}>Cancel</button>
-                  <button type="submit" className="btn-primary flex-1" disabled={formLoading}>{formLoading ? "Creating…" : "Create"}</button>
-                </div>
-              </form>
-            </div>
+      {/* Create Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
+          <div className="glass-card p-6 w-full max-w-md border-[#00d4ff]/30">
+            <h2 className="text-lg font-bold text-[#e8f4ff] mb-4" style={{ fontFamily: "Outfit, sans-serif" }}>Create New User</h2>
+            {formError && <div className="mb-4 p-3 rounded-xl text-xs bg-[#ff4757]/10 border border-[#ff4757]/30 text-[#ff4757] font-semibold">{formError}</div>}
+            <form onSubmit={handleCreateUser} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-[#7ba3c8] mb-1">Email</label>
+                <input type="email" required className="w-full px-3 py-2 text-xs bg-[#080c14] border border-[#00d4ff]/20 rounded-xl text-[#e8f4ff] focus:outline-none focus:border-[#00d4ff]" value={email} onChange={e => setEmail(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-[#7ba3c8] mb-1">Username</label>
+                <input type="text" required className="w-full px-3 py-2 text-xs bg-[#080c14] border border-[#00d4ff]/20 rounded-xl text-[#e8f4ff] focus:outline-none focus:border-[#00d4ff]" value={username} onChange={e => setUsername(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-[#7ba3c8] mb-1">Display Name</label>
+                <input type="text" required className="w-full px-3 py-2 text-xs bg-[#080c14] border border-[#00d4ff]/20 rounded-xl text-[#e8f4ff] focus:outline-none focus:border-[#00d4ff]" value={displayName} onChange={e => setDisplayName(e.target.value)} />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-[#7ba3c8] mb-1">Password</label>
+                <input type="password" required className="w-full px-3 py-2 text-xs bg-[#080c14] border border-[#00d4ff]/20 rounded-xl text-[#e8f4ff] focus:outline-none focus:border-[#00d4ff]" value={password} onChange={e => setPassword(e.target.value)} />
+              </div>
+              <div className="flex items-center gap-2 pt-1">
+                <input type="checkbox" id="adminCheck" checked={isAdmin} onChange={e => setIsAdmin(e.target.checked)} className="rounded bg-[#080c14] border-[#00d4ff]/30 text-[#00d4ff] focus:ring-0" />
+                <label htmlFor="adminCheck" className="text-xs text-[#e8f4ff] font-medium">Grant Platform Administrator Permissions</label>
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button type="button" className="btn-secondary flex-1 text-xs" onClick={() => setShowCreateModal(false)}>Cancel</button>
+                <button type="submit" className="btn-primary flex-1 text-xs" disabled={formLoading}>{formLoading ? "Creating…" : "Create"}</button>
+              </div>
+            </form>
           </div>
-        )}
-      </main>
-    </div>
+        </div>
+      )}
+    </AppLayout>
   );
 }
+

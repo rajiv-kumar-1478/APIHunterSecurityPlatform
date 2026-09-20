@@ -13,9 +13,21 @@ public class ApiHunterAdapter : IApiHunterSource
     private readonly string _connectionString;
     private readonly ILogger<ApiHunterAdapter> _logger;
 
-    public ApiHunterAdapter(IOptions<ApiHunterSourceOptions> options, ILogger<ApiHunterAdapter> logger)
+    public ApiHunterAdapter(
+        IOptions<ApiHunterSourceOptions> options,
+        Microsoft.Extensions.Configuration.IConfiguration configuration,
+        ILogger<ApiHunterAdapter> logger)
     {
-        _connectionString = Platform.Infrastructure.Persistence.PostgresConnectionStringNormalizer.Normalize(options.Value.ConnectionString);
+        var rawConnStr = !string.IsNullOrWhiteSpace(options.Value.ConnectionString)
+            ? options.Value.ConnectionString
+            : configuration["APIHUNTER_DATABASE_URL"]
+              ?? configuration["ApiHunterSource:ConnectionString"]
+              ?? configuration["ApiHunterSource__ConnectionString"]
+              ?? configuration["Database:ConnectionString"]
+              ?? configuration.GetConnectionString("Default")
+              ?? configuration["DATABASE_URL"];
+
+        _connectionString = Platform.Infrastructure.Persistence.PostgresConnectionStringNormalizer.Normalize(rawConnStr);
         _logger = logger;
     }
 

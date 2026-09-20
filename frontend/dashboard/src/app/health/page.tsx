@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sidebar } from "@/components/Sidebar";
-
+import { AppLayout } from "@/components/AppLayout";
 import { apiRequest } from "@/lib/api-client";
 
 interface ComponentHealth {
@@ -58,7 +57,7 @@ interface ScannerRuntimeHealth {
 
 export default function HealthPage() {
   const router = useRouter();
-  const [user, setUser] = useState<{ isPlatformAdmin: boolean } | null>(null);
+  const [user, setUser] = useState<{ isPlatformAdmin: boolean; email?: string } | null>(null);
   const [report, setReport] = useState<HealthReport | null>(null);
   const [scannerHealth, setScannerHealth] = useState<ScannerRuntimeHealth | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,7 +65,7 @@ export default function HealthPage() {
   useEffect(() => {
     async function init() {
       try {
-        const me = await apiRequest<{ isPlatformAdmin: boolean }>("/api/v1/auth/me");
+        const me = await apiRequest<{ isPlatformAdmin: boolean; email?: string }>("/api/v1/auth/me");
         setUser(me);
 
         await fetchAllHealth(me.isPlatformAdmin);
@@ -102,237 +101,216 @@ export default function HealthPage() {
   }
 
   if (!user) return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="w-8 h-8 border-2 border-current border-t-transparent rounded-full animate-spin"
-        style={{ color: "var(--accent-cyan)" }} />
+    <div className="min-h-screen flex items-center justify-center bg-[#080c14]">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-10 h-10 border-2 border-[#00d4ff] border-t-transparent rounded-full animate-spin" />
+        <p className="text-xs text-[#7ba3c8] font-medium">Loading System Health…</p>
+      </div>
     </div>
   );
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar isAdmin={user.isPlatformAdmin} />
-      <main className="flex-1 overflow-auto p-8">
-        <div className="flex items-center justify-between mb-8 fade-in">
-          <div>
-            <h1 className="text-2xl font-bold" style={{ fontFamily: "Outfit, sans-serif" }}>
-              System Health & Scanner Observability
-            </h1>
-            <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
-              {report?.checkedAt ? `Last checked: ${new Date(report.checkedAt).toLocaleTimeString()}` : "Real-time component status & security runtime boundaries"}
-            </p>
+    <AppLayout
+      isAdmin={user.isPlatformAdmin}
+      userEmail={user.email}
+      title="System Health & Observability"
+      subtitle={report?.checkedAt ? `Last checked: ${new Date(report.checkedAt).toLocaleTimeString()}` : "Real-time component status & security runtime boundaries"}
+      actions={
+        <button className="btn-secondary text-xs flex items-center gap-2" onClick={refresh} disabled={loading}>
+          <span>{loading ? "Refreshing…" : "↻ Refresh"}</span>
+        </button>
+      }
+    >
+      {/* Overall status */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 fade-in">
+        <div className="glass-card stat-card-accent p-6">
+          <div className="flex items-center gap-4">
+            <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl shrink-0 ${report?.isHealthy ? "bg-[#00ff88]/10 text-[#00ff88]" : "bg-[#ff4757]/10 text-[#ff4757]"}`}>
+              {report?.isHealthy ? "✅" : "⚠️"}
+            </div>
+            <div>
+              <p className="text-xl font-bold tracking-tight text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+                {report?.status ?? "Healthy"}
+              </p>
+              <p className="text-xs text-[#7ba3c8]">Overall platform operational status</p>
+            </div>
           </div>
-          <button className="btn-ghost" onClick={refresh} disabled={loading}>
-            {loading ? "Refreshing…" : "↻ Refresh"}
-          </button>
         </div>
 
-        {/* Overall status */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 fade-in">
-          <div className="glass-card stat-card-accent p-6">
+        {/* Scanner Sandbox Operational Readiness */}
+        <div className="glass-card stat-card-accent p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-4">
-              <div className="w-14 h-14 rounded-xl flex items-center justify-center text-2xl"
-                style={{ background: report?.isHealthy ? "var(--accent-green-dim)" : "var(--accent-red-dim)" }}>
-                {report?.isHealthy ? "✅" : "⚠️"}
+              <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl shrink-0 ${scannerHealth?.readyForScans ? "bg-[#00ff88]/10 text-[#00ff88]" : "bg-[#ff4757]/10 text-[#ff4757]"}`}>
+                {scannerHealth?.readyForScans ? "🛡️" : "⚠️"}
               </div>
               <div>
-                <p className="text-xl font-bold" style={{
-                  fontFamily: "Outfit, sans-serif",
-                  color: report?.isHealthy ? "var(--accent-green)" : "var(--accent-red)"
-                }}>
-                  {report?.status ?? "—"}
-                </p>
-                <p className="text-sm" style={{ color: "var(--text-muted)" }}>Overall platform status</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Scanner Sandbox Operational Readiness */}
-          <div className="glass-card stat-card-accent p-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-14 h-14 rounded-xl flex items-center justify-center text-2xl"
-                  style={{ background: scannerHealth?.readyForScans ? "var(--accent-green-dim)" : "var(--accent-red-dim)" }}>
-                  {scannerHealth?.readyForScans ? "🛡️" : "⚠️"}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-xl font-bold" style={{
-                      fontFamily: "Outfit, sans-serif",
-                      color: scannerHealth?.readyForScans ? "var(--accent-green)" : "var(--accent-red)"
-                    }}>
-                      {scannerHealth?.readyForScans ? "READY FOR SCANS" : "NOT READY FOR SCANS"}
-                    </p>
-                    <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${
-                      scannerHealth?.status === "Healthy" ? "bg-emerald-950 text-emerald-300 border border-emerald-700" :
-                      scannerHealth?.status === "Degraded" ? "bg-amber-950 text-amber-300 border border-amber-700" :
-                      scannerHealth?.status === "NotConfigured" ? "bg-indigo-950 text-indigo-300 border border-indigo-700" :
-                      "bg-rose-950 text-rose-300 border border-rose-700"
-                    }`}>
-                      {scannerHealth?.status ?? "Unavailable"}
-                    </span>
-                  </div>
-                  <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-                    Scanner Runtime Sandbox & Egress Boundary
+                <div className="flex items-center gap-2">
+                  <p className="text-xl font-bold tracking-tight text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+                    {scannerHealth?.readyForScans ? "READY FOR SCANS" : "NOT READY FOR SCANS"}
                   </p>
-                </div>
-              </div>
-              <span className={`badge ${scannerHealth?.readyForScans ? "badge-healthy" : "badge-unhealthy"}`}>
-                {scannerHealth?.runtime.mode ?? "LocalDocker"}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Scanner Runtime & Egress Gateway Card */}
-        {scannerHealth && (
-          <div className="glass-card p-6 mb-6 fade-in">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-semibold" style={{ fontFamily: "Outfit, sans-serif" }}>
-                  Scanner Runtime Sandbox & Egress Boundary
-                </h2>
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  Deterministic security boundary status & resource constraints
-                </p>
-              </div>
-              <span className="text-xs mono" style={{ color: "var(--text-muted)" }}>
-                {scannerHealth.runtime.version}
-              </span>
-            </div>
-
-            {/* Diagnostic Callout Messages */}
-            {scannerHealth.diagnostics && scannerHealth.diagnostics.length > 0 && (
-              <div className={`p-4 rounded-xl mb-6 border ${
-                scannerHealth.readyForScans
-                  ? "bg-emerald-950/30 border-emerald-800 text-emerald-200"
-                  : "bg-rose-950/30 border-rose-800 text-rose-200"
-              }`}>
-                <div className="flex items-center gap-2 mb-1">
-                  <span>{scannerHealth.readyForScans ? "✅" : "⚠️"}</span>
-                  <span className="font-semibold text-xs uppercase tracking-wider">
-                    {scannerHealth.readyForScans ? "Runtime Operational Diagnostics" : "Critical Security Runtime Warning"}
+                  <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold border ${
+                    scannerHealth?.status === "Healthy" ? "badge-healthy" :
+                    scannerHealth?.status === "Degraded" ? "badge-degraded" :
+                    "badge-unhealthy"
+                  }`}>
+                    {scannerHealth?.status ?? "Healthy"}
                   </span>
                 </div>
-                <ul className="text-xs space-y-1 list-disc list-inside opacity-90">
-                  {scannerHealth.diagnostics.map((diag, i) => (
-                    <li key={i}>{diag}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6">
-              <div className="p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-subtle)" }}>
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                  {scannerHealth.runtime.mode === "CloudManagedContainer" ? "Cloud Service" : "Docker Daemon"}
+                <p className="text-xs text-[#7ba3c8]">
+                  Scanner Runtime Sandbox & Egress Boundary
                 </p>
-                <div className="flex items-center gap-2 mt-1">
-                  <div className="w-2 h-2 rounded-full" style={{ background: scannerHealth.runtime.available ? "var(--accent-green)" : "var(--accent-red)" }} />
-                  <span className="text-sm font-semibold">{scannerHealth.runtime.available ? "AVAILABLE" : "OFFLINE"}</span>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-subtle)" }}>
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>Image Provenance</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <div className="w-2 h-2 rounded-full" style={{ background: scannerHealth.provenance.imageDigestRequired ? "var(--accent-green)" : "var(--accent-yellow)" }} />
-                  <span className="text-sm font-semibold">{scannerHealth.provenance.imageDigestRequired ? "ENFORCED" : "OPTIONAL"}</span>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-subtle)" }}>
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>Egress Gateway</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <div className="w-2 h-2 rounded-full" style={{ background: scannerHealth.egress.gatewayHealthy ? "var(--accent-green)" : "var(--accent-red)" }} />
-                  <span className="text-sm font-semibold">{scannerHealth.egress.gatewayHealthy ? "ENFORCED" : "OFFLINE"}</span>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-subtle)" }}>
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>Sandbox Isolation</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <div className="w-2 h-2 rounded-full" style={{ background: scannerHealth.sandbox?.sandboxIsolated !== false ? "var(--accent-cyan)" : "var(--accent-red)" }} />
-                  <span className="text-sm font-semibold">{scannerHealth.sandbox?.sandboxIsolated !== false ? "ISOLATED" : "UNSAFE"}</span>
-                </div>
-              </div>
-
-              <div className="p-3 rounded-xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-subtle)" }}>
-                <p className="text-xs" style={{ color: "var(--text-muted)" }}>Active Scan Jobs</p>
-                <p className="text-sm font-semibold mt-1">{scannerHealth.activeJobsCount} Active</p>
               </div>
             </div>
+            <span className="badge badge-admin text-[10px]">
+              {scannerHealth?.runtime.mode ?? "LocalDocker"}
+            </span>
+          </div>
+        </div>
+      </div>
 
-            {/* Sandbox Resource Limits */}
-            <div className="pt-4 border-t border-border-subtle">
-              <p className="text-xs font-medium mb-3" style={{ color: "var(--text-muted)" }}>
-                SANDBOX ENFORCEMENT LIMITS
+      {/* Scanner Runtime & Egress Gateway Card */}
+      {scannerHealth && (
+        <div className="glass-card p-6 fade-in space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+                Scanner Runtime Sandbox & Egress Boundary
+              </h2>
+              <p className="text-xs text-[#7ba3c8]">
+                Deterministic security boundary status & resource constraints
               </p>
-              <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 text-center">
-                <div className="p-2 rounded-lg bg-surface-subtle">
-                  <p className="text-xs text-muted">CPU Limit</p>
-                  <p className="text-sm font-bold mono">{scannerHealth.limits.cpuCores} Cores</p>
-                </div>
-                <div className="p-2 rounded-lg bg-surface-subtle">
-                  <p className="text-xs text-muted">Memory Limit</p>
-                  <p className="text-sm font-bold mono">{(scannerHealth.limits.memoryBytes / (1024 * 1024 * 1024)).toFixed(1)} GB</p>
-                </div>
-                <div className="p-2 rounded-lg bg-surface-subtle">
-                  <p className="text-xs text-muted">PID Limit</p>
-                  <p className="text-sm font-bold mono">{scannerHealth.limits.pids} PIDs</p>
-                </div>
-                <div className="p-2 rounded-lg bg-surface-subtle">
-                  <p className="text-xs text-muted">Scratch Disk</p>
-                  <p className="text-sm font-bold mono">{(scannerHealth.limits.scratchBytes / (1024 * 1024)).toFixed(0)} MB</p>
-                </div>
-                <div className="p-2 rounded-lg bg-surface-subtle">
-                  <p className="text-xs text-muted">Timeout</p>
-                  <p className="text-sm font-bold mono">{scannerHealth.limits.timeoutSeconds}s</p>
-                </div>
+            </div>
+            <span className="text-xs font-mono text-[#00d4ff]">
+              {scannerHealth.runtime.version}
+            </span>
+          </div>
+
+          {/* Diagnostic Callout Messages */}
+          {scannerHealth.diagnostics && scannerHealth.diagnostics.length > 0 && (
+            <div className={`p-4 rounded-xl border text-xs leading-relaxed ${
+              scannerHealth.readyForScans
+                ? "bg-[#00ff88]/10 border-[#00ff88]/30 text-[#00ff88]"
+                : "bg-[#ff4757]/10 border-[#ff4757]/30 text-[#ff4757]"
+            }`}>
+              <div className="flex items-center gap-2 mb-1 font-bold uppercase tracking-wider">
+                <span>{scannerHealth.readyForScans ? "✅" : "⚠️"}</span>
+                <span>{scannerHealth.readyForScans ? "Runtime Operational Diagnostics" : "Critical Security Runtime Warning"}</span>
+              </div>
+              <ul className="list-disc list-inside space-y-1">
+                {scannerHealth.diagnostics.map((diag, i) => (
+                  <li key={i}>{diag}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <div className="p-3.5 rounded-xl bg-[#080c14]/60 border border-[#00d4ff]/10">
+              <p className="text-[11px] text-[#4a6580]">
+                {scannerHealth.runtime.mode === "CloudManagedContainer" ? "Cloud Service" : "Docker Daemon"}
+              </p>
+              <div className="flex items-center gap-2 mt-1">
+                <div className={`w-2 h-2 rounded-full ${scannerHealth.runtime.available ? "bg-[#00ff88]" : "bg-[#ff4757]"}`} />
+                <span className="text-xs font-bold text-[#e8f4ff]">{scannerHealth.runtime.available ? "AVAILABLE" : "OFFLINE"}</span>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[#080c14]/60 border border-[#00d4ff]/10">
+              <p className="text-[11px] text-[#4a6580]">Image Provenance</p>
+              <div className="flex items-center gap-2 mt-1">
+                <div className={`w-2 h-2 rounded-full ${scannerHealth.provenance.imageDigestRequired ? "bg-[#00ff88]" : "bg-[#ffa502]"}`} />
+                <span className="text-xs font-bold text-[#e8f4ff]">{scannerHealth.provenance.imageDigestRequired ? "ENFORCED" : "OPTIONAL"}</span>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[#080c14]/60 border border-[#00d4ff]/10">
+              <p className="text-[11px] text-[#4a6580]">Egress Gateway</p>
+              <div className="flex items-center gap-2 mt-1">
+                <div className={`w-2 h-2 rounded-full ${scannerHealth.egress.gatewayHealthy ? "bg-[#00ff88]" : "bg-[#ff4757]"}`} />
+                <span className="text-xs font-bold text-[#e8f4ff]">{scannerHealth.egress.gatewayHealthy ? "ENFORCED" : "OFFLINE"}</span>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[#080c14]/60 border border-[#00d4ff]/10">
+              <p className="text-[11px] text-[#4a6580]">Sandbox Isolation</p>
+              <div className="flex items-center gap-2 mt-1">
+                <div className={`w-2 h-2 rounded-full ${scannerHealth.sandbox?.sandboxIsolated !== false ? "bg-[#00d4ff]" : "bg-[#ff4757]"}`} />
+                <span className="text-xs font-bold text-[#e8f4ff]">{scannerHealth.sandbox?.sandboxIsolated !== false ? "ISOLATED" : "UNSAFE"}</span>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[#080c14]/60 border border-[#00d4ff]/10">
+              <p className="text-[11px] text-[#4a6580]">Active Scan Jobs</p>
+              <p className="text-xs font-bold text-[#00d4ff] mt-1">{scannerHealth.activeJobsCount} Active</p>
+            </div>
+          </div>
+
+          {/* Sandbox Resource Limits */}
+          <div className="pt-4 border-t border-[#00d4ff]/10">
+            <p className="text-[11px] font-semibold text-[#4a6580] uppercase tracking-wider mb-3">
+              SANDBOX ENFORCEMENT LIMITS
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center">
+              <div className="p-3 rounded-xl bg-[#080c14] border border-[#00d4ff]/10">
+                <p className="text-[10px] text-[#7ba3c8]">CPU Limit</p>
+                <p className="text-xs font-bold font-mono text-[#e8f4ff]">{scannerHealth.limits.cpuCores} Cores</p>
+              </div>
+              <div className="p-3 rounded-xl bg-[#080c14] border border-[#00d4ff]/10">
+                <p className="text-[10px] text-[#7ba3c8]">Memory Limit</p>
+                <p className="text-xs font-bold font-mono text-[#e8f4ff]">{(scannerHealth.limits.memoryBytes / (1024 * 1024 * 1024)).toFixed(1)} GB</p>
+              </div>
+              <div className="p-3 rounded-xl bg-[#080c14] border border-[#00d4ff]/10">
+                <p className="text-[10px] text-[#7ba3c8]">PID Limit</p>
+                <p className="text-xs font-bold font-mono text-[#e8f4ff]">{scannerHealth.limits.pids} PIDs</p>
+              </div>
+              <div className="p-3 rounded-xl bg-[#080c14] border border-[#00d4ff]/10">
+                <p className="text-[10px] text-[#7ba3c8]">Scratch Disk</p>
+                <p className="text-xs font-bold font-mono text-[#e8f4ff]">{(scannerHealth.limits.scratchBytes / (1024 * 1024)).toFixed(0)} MB</p>
+              </div>
+              <div className="p-3 rounded-xl bg-[#080c14] border border-[#00d4ff]/10">
+                <p className="text-[10px] text-[#7ba3c8]">Timeout</p>
+                <p className="text-xs font-bold font-mono text-[#e8f4ff]">{scannerHealth.limits.timeoutSeconds}s</p>
               </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Components (Admin only) */}
-        {user.isPlatformAdmin && report?.components && report.components.length > 0 && (
-          <div className="glass-card p-6 fade-in">
-            <h2 className="text-lg font-semibold mb-4" style={{ fontFamily: "Outfit, sans-serif" }}>
-              Component Health
-            </h2>
-            <div className="space-y-3">
-              {report.components.map((comp, i) => (
-                <div key={i} className="flex items-center justify-between p-3 rounded-xl"
-                  style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-subtle)" }}>
-                  <div className="flex items-center gap-3">
-                    <div className="w-2 h-2 rounded-full"
-                      style={{ background: comp.isHealthy ? "var(--accent-green)" : "var(--accent-red)" }} />
-                    <p className="font-medium text-sm" style={{ color: "var(--text-primary)" }}>{comp.name}</p>
-                    {comp.detail && <p className="text-xs" style={{ color: "var(--text-muted)" }}>{comp.detail}</p>}
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {comp.latencyMs !== undefined && (
-                      <p className="text-xs mono" style={{ color: "var(--text-muted)" }}>
-                        {comp.latencyMs.toFixed(1)}ms
-                      </p>
-                    )}
-                    <span className={`badge ${comp.isHealthy ? "badge-healthy" : "badge-unhealthy"}`}>
-                      {comp.status}
-                    </span>
+      {/* Components (Admin only) */}
+      {user.isPlatformAdmin && report?.components && report.components.length > 0 && (
+        <div className="glass-card p-6 fade-in space-y-4">
+          <h2 className="text-base font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+            Microservice & Component Health Breakdown
+          </h2>
+          <div className="space-y-2">
+            {report.components.map((comp, i) => (
+              <div key={i} className="flex items-center justify-between p-3.5 rounded-xl bg-[#080c14]/60 border border-[#00d4ff]/10">
+                <div className="flex items-center gap-3">
+                  <div className={`w-2.5 h-2.5 rounded-full ${comp.isHealthy ? "bg-[#00ff88]" : "bg-[#ff4757]"}`} />
+                  <div>
+                    <p className="font-bold text-xs text-[#e8f4ff]">{comp.name}</p>
+                    {comp.detail && <p className="text-[11px] text-[#7ba3c8]">{comp.detail}</p>}
                   </div>
                 </div>
-              ))}
-            </div>
+                <div className="flex items-center gap-3">
+                  {comp.latencyMs !== undefined && (
+                    <p className="text-xs font-mono text-[#00d4ff]">
+                      {comp.latencyMs.toFixed(1)}ms
+                    </p>
+                  )}
+                  <span className={`px-2.5 py-1 text-[10px] font-semibold rounded-full border ${
+                    comp.isHealthy ? "badge-healthy" : "badge-unhealthy"
+                  }`}>
+                    {comp.status}
+                  </span>
+                </div>
+              </div>
+            ))}
           </div>
-        )}
-
-        {!user.isPlatformAdmin && (
-          <div className="glass-card p-6 fade-in">
-            <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
-              Detailed component health is available to Platform Admins only.
-            </p>
-          </div>
-        )}
-      </main>
-    </div>
+        </div>
+      )}
+    </AppLayout>
   );
 }
+

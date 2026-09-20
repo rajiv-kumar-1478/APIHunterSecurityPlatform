@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Sidebar } from "@/components/Sidebar";
-
+import { AppLayout } from "@/components/AppLayout";
 import { apiRequest } from "@/lib/api-client";
 
 interface PermissionDto {
@@ -25,7 +24,7 @@ interface FieldPermissionDto {
 
 export default function PermissionsPage() {
   const router = useRouter();
-  const [user, setUser] = useState<{ isPlatformAdmin: boolean } | null>(null);
+  const [user, setUser] = useState<{ isPlatformAdmin: boolean; email?: string } | null>(null);
   const [permissions, setPermissions] = useState<PermissionDto[]>([]);
   const [fieldPermissions, setFieldPermissions] = useState<FieldPermissionDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,7 +32,7 @@ export default function PermissionsPage() {
   useEffect(() => {
     async function init() {
       try {
-        const me = await apiRequest<{ isPlatformAdmin: boolean }>("/api/v1/auth/me");
+        const me = await apiRequest<{ isPlatformAdmin: boolean; email?: string }>("/api/v1/auth/me");
         if (!me.isPlatformAdmin) {
           router.replace("/dashboard");
           return;
@@ -56,75 +55,77 @@ export default function PermissionsPage() {
   }, [router]);
 
   if (!user) return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="w-8 h-8 border-2 border-current border-t-transparent rounded-full animate-spin"
-        style={{ color: "var(--accent-cyan)" }} />
+    <div className="min-h-screen flex items-center justify-center bg-[#080c14]">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-10 h-10 border-2 border-[#00d4ff] border-t-transparent rounded-full animate-spin" />
+        <p className="text-xs text-[#7ba3c8] font-medium">Loading Permissions Catalog…</p>
+      </div>
     </div>
   );
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar isAdmin={user.isPlatformAdmin} />
-      <main className="flex-1 overflow-auto p-8">
-        <div className="mb-8 fade-in">
-          <h1 className="text-2xl font-bold" style={{ fontFamily: "Outfit, sans-serif" }}>
-            Permission Catalog & Field Level Rules
-          </h1>
-          <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
-            Role-Based Access Control and Field Level Authorization Policies
-          </p>
-        </div>
-
-        {/* Permission Catalog */}
-        <div className="glass-card p-6 mb-8 fade-in">
-          <h2 className="text-lg font-semibold mb-4" style={{ fontFamily: "Outfit, sans-serif" }}>
-            System Permissions
-          </h2>
-          {loading ? (
-            <p className="text-sm" style={{ color: "var(--text-muted)" }}>Loading permissions…</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {permissions.map((p) => (
-                <div key={p.id} className="p-4 rounded-xl" style={{ background: "rgba(255,255,255,0.02)", border: "1px solid var(--border-subtle)" }}>
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="font-semibold text-sm" style={{ color: "var(--text-primary)" }}>{p.name}</p>
-                    <span className="badge" style={{ background: "rgba(139,92,246,0.15)", color: "var(--accent-purple)" }}>{p.category}</span>
-                  </div>
-                  <p className="mono text-xs mb-2" style={{ color: "var(--accent-cyan)" }}>{p.code}</p>
-                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>{p.description}</p>
+    <AppLayout
+      isAdmin={user.isPlatformAdmin}
+      userEmail={user.email}
+      title="Permission Catalog & Field Rules"
+      subtitle="Role-Based Access Control and Field Level Authorization Policies"
+    >
+      {/* Permission Catalog */}
+      <div className="glass-card p-6 fade-in space-y-4">
+        <h2 className="text-base font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+          System Permissions Catalog
+        </h2>
+        {loading ? (
+          <div className="p-8 text-center text-[#7ba3c8] text-xs">
+            <div className="w-8 h-8 border-2 border-[#00d4ff] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+            Loading permissions catalog…
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {permissions.map((p) => (
+              <div key={p.id} className="p-4 rounded-xl bg-[#080c14]/60 border border-[#00d4ff]/10 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="font-bold text-sm text-[#e8f4ff]">{p.name}</p>
+                  <span className="badge badge-admin text-[10px]">{p.category}</span>
                 </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <p className="font-mono text-xs text-[#00d4ff]">{p.code}</p>
+                <p className="text-xs text-[#7ba3c8] leading-relaxed">{p.description}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
-        {/* Field Permissions */}
-        <div className="glass-card p-6 fade-in">
-          <h2 className="text-lg font-semibold mb-4" style={{ fontFamily: "Outfit, sans-serif" }}>
-            Field Level Authorization Rules
-          </h2>
-          {fieldPermissions.length === 0 ? (
-            <p className="text-sm" style={{ color: "var(--text-muted)" }}>No custom field-level restriction rules defined.</p>
-          ) : (
-            <table className="data-table">
+      {/* Field Permissions */}
+      <div className="glass-card p-6 fade-in space-y-4">
+        <h2 className="text-base font-bold text-[#e8f4ff]" style={{ fontFamily: "Outfit, sans-serif" }}>
+          Field Level Authorization Rules
+        </h2>
+        {fieldPermissions.length === 0 ? (
+          <p className="text-xs text-[#7ba3c8]">No custom field-level restriction rules defined.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse min-w-[600px]">
               <thead>
-                <tr>
-                  <th>Permission Code</th>
-                  <th>Resource</th>
-                  <th>Field</th>
-                  <th>Action</th>
-                  <th>Effect</th>
+                <tr className="border-b border-[#00d4ff]/10 text-xs font-semibold uppercase text-[#4a6580] bg-white/[0.02]">
+                  <th className="p-4">Permission Code</th>
+                  <th className="p-4">Resource</th>
+                  <th className="p-4">Field</th>
+                  <th className="p-4">Action</th>
+                  <th className="p-4">Effect</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-[#00d4ff]/10 text-xs">
                 {fieldPermissions.map(fp => (
-                  <tr key={fp.id}>
-                    <td className="mono">{fp.permissionCode}</td>
-                    <td>{fp.resourceType}</td>
-                    <td className="mono" style={{ color: "var(--accent-cyan)" }}>{fp.fieldName}</td>
-                    <td>{fp.action}</td>
-                    <td>
-                      <span className={`badge ${fp.effect === "Allow" ? "badge-healthy" : "badge-unhealthy"}`}>
+                  <tr key={fp.id} className="hover:bg-white/[0.02] transition-colors">
+                    <td className="p-4 font-mono text-[#00d4ff]">{fp.permissionCode}</td>
+                    <td className="p-4 text-[#e8f4ff] font-medium">{fp.resourceType}</td>
+                    <td className="p-4 font-mono text-[#00ff88]">{fp.fieldName}</td>
+                    <td className="p-4 text-[#7ba3c8]">{fp.action}</td>
+                    <td className="p-4">
+                      <span className={`px-2.5 py-1 text-[10px] font-semibold rounded-full border ${
+                        fp.effect === "Allow" ? "badge-healthy" : "badge-unhealthy"
+                      }`}>
                         {fp.effect}
                       </span>
                     </td>
@@ -132,9 +133,10 @@ export default function PermissionsPage() {
                 ))}
               </tbody>
             </table>
-          )}
-        </div>
-      </main>
-    </div>
+          </div>
+        )}
+      </div>
+    </AppLayout>
   );
 }
+

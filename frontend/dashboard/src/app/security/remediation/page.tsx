@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { AppLayout } from "@/components/AppLayout";
 import { getErrorMessage } from "@/lib/api-client";
 import {
   ActionFilterParams,
@@ -78,38 +79,25 @@ export default function RemediationCenterPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-6 md:p-8">
-      {/* Top Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-8">
-        <div>
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-semibold uppercase tracking-wider text-indigo-400 bg-indigo-950/60 px-2.5 py-0.5 rounded border border-indigo-800/40">
-              Phase 7 Governance & Security Response
-            </span>
-          </div>
-          <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white">
-            Remediation Center
-          </h1>
-          <p className="text-xs md:text-sm text-slate-400 mt-1">
-            Governance dashboard for deterministic security recommendations, approvals, execution tracking, and post-remediation verification.
-          </p>
-        </div>
-
+    <AppLayout
+      title="Remediation Center"
+      subtitle="Deterministic policy recommendations, approval workflows & automated remediation execution"
+      actions={
         <button
           onClick={handleRefresh}
           disabled={isLoading}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-200 text-xs font-semibold transition-all border border-slate-800 shadow-lg disabled:opacity-50"
+          className="btn-primary text-xs flex items-center gap-2"
         >
-          <svg className={`w-4 h-4 text-indigo-400 ${isLoading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <svg className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
           </svg>
           Refresh Data
         </button>
-      </div>
-
+      }
+    >
       {error && (
-        <div className="mb-6 p-4 bg-rose-950/40 border border-rose-800/60 rounded-xl text-xs text-rose-300 flex items-center gap-3">
-          <svg className="w-5 h-5 text-rose-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400 flex items-center gap-3 fade-in">
+          <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           {error}
@@ -136,8 +124,8 @@ export default function RemediationCenterPage() {
 
       {/* Actions Data Table */}
       {isLoading ? (
-        <div className="bg-slate-900/60 backdrop-blur-md border border-slate-800 rounded-xl p-16 text-center text-slate-500 text-xs">
-          <div className="inline-block w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin mb-3" />
+        <div className="glass-card p-12 text-center text-[#7ba3c8] text-xs">
+          <div className="w-8 h-8 border-2 border-[#00d4ff] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
           <p>Loading remediation center actions...</p>
         </div>
       ) : (
@@ -153,6 +141,7 @@ export default function RemediationCenterPage() {
         onClose={() => setSelectedActionId(null)}
         onRefreshList={handleRefresh}
       />
-    </div>
+    </AppLayout>
   );
 }
+

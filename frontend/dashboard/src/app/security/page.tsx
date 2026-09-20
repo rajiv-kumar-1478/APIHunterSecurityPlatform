@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Sidebar } from "@/components/Sidebar";
+import { AppLayout } from "@/components/AppLayout";
 import {
   AlertingStatus,
   PagedResult,
@@ -111,147 +111,135 @@ export default function SecurityCenterPage() {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div
-          className="w-8 h-8 border-2 border-current border-t-transparent rounded-full animate-spin"
-          style={{ color: "var(--accent-cyan)" }}
-        />
+      <div className="min-h-screen flex items-center justify-center bg-[#080c14]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 border-2 border-[#00d4ff] border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs text-[#7ba3c8] font-medium">Loading Security Center…</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <Sidebar isAdmin={user.isPlatformAdmin} userEmail={user.email} />
-
-      <main className="flex-1 overflow-auto p-8">
-        {/* Header */}
-        <div className="mb-6 fade-in flex items-center justify-between">
-          <div>
-            <h1
-              className="text-3xl font-bold mb-1"
-              style={{ fontFamily: "Outfit, sans-serif" }}
-            >
-              <span className="gradient-text">Security Center</span> Dashboard
-            </h1>
-            <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
-              Phase 6 — Deterministic Risk Posture, Findings Inventory & Governance
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setActiveTab("scans")}
-              className={`px-4 py-2 text-xs rounded-lg font-semibold transition-all ${
-                activeTab === "scans"
-                  ? "bg-indigo-950 text-indigo-300 border border-indigo-700 shadow-lg"
-                  : "bg-slate-900/60 text-muted border border-slate-800 hover:text-foreground"
-              }`}
-            >
-              🚀 Scans & Pipelines
-            </button>
-            <button
-              onClick={() => setActiveTab("inventory")}
-              className={`px-4 py-2 text-xs rounded-lg font-semibold transition-all ${
-                activeTab === "inventory"
-                  ? "bg-cyan-950 text-cyan-300 border border-cyan-700 shadow-lg"
-                  : "bg-slate-900/60 text-muted border border-slate-800 hover:text-foreground"
-              }`}
-            >
-              🛡️ Findings Inventory
-            </button>
-            <button
-              onClick={() => setActiveTab("graph")}
-              className={`px-4 py-2 text-xs rounded-lg font-semibold transition-all ${
-                activeTab === "graph"
-                  ? "bg-cyan-950 text-cyan-300 border border-cyan-700 shadow-lg"
-                  : "bg-slate-900/60 text-muted border border-slate-800 hover:text-foreground"
-              }`}
-            >
-              🕸️ Security Graph
-            </button>
-          </div>
+    <AppLayout
+      isAdmin={user.isPlatformAdmin}
+      userEmail={user.email}
+      title="Security Center"
+      subtitle="Deterministic Risk Posture, Candidate Secrets Inventory & Automated Scans"
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setActiveTab("scans")}
+            className={`px-3 py-1.5 text-xs rounded-lg font-semibold transition-all ${
+              activeTab === "scans"
+                ? "bg-[#00d4ff]/20 text-[#00d4ff] border border-[#00d4ff]/40 shadow-sm"
+                : "bg-white/5 text-[#7ba3c8] border border-white/10 hover:text-white"
+            }`}
+          >
+            🚀 Scans & Pipelines
+          </button>
+          <button
+            onClick={() => setActiveTab("inventory")}
+            className={`px-3 py-1.5 text-xs rounded-lg font-semibold transition-all ${
+              activeTab === "inventory"
+                ? "bg-[#00d4ff]/20 text-[#00d4ff] border border-[#00d4ff]/40 shadow-sm"
+                : "bg-white/5 text-[#7ba3c8] border border-white/10 hover:text-white"
+            }`}
+          >
+            🛡️ Findings Inventory
+          </button>
+          <button
+            onClick={() => setActiveTab("graph")}
+            className={`px-3 py-1.5 text-xs rounded-lg font-semibold transition-all ${
+              activeTab === "graph"
+                ? "bg-[#00d4ff]/20 text-[#00d4ff] border border-[#00d4ff]/40 shadow-sm"
+                : "bg-white/5 text-[#7ba3c8] border border-white/10 hover:text-white"
+            }`}
+          >
+            🕸️ Security Graph
+          </button>
         </div>
+      }
+    >
+      {/* Security Risk Posture Overview Cards */}
+      <SecurityPostureCard posture={posture} />
 
-        {/* Security Risk Posture Overview Cards */}
-        <SecurityPostureCard posture={posture} />
+      {/* Read-Only Alert Subsystem Status Card */}
+      <AlertingStatusCard status={alertingStatus} />
 
-        {/* Read-Only Alert Subsystem Status Card */}
-        <AlertingStatusCard status={alertingStatus} />
+      {/* Tab 1: Hosted Security Scans & Pipelines */}
+      {activeTab === "scans" && (
+        <div className="fade-in">
+          <ScanManagementView />
+        </div>
+      )}
 
-        {/* Tab 1: Hosted Security Scans & Pipelines */}
-        {activeTab === "scans" && (
-          <div className="fade-in">
-            <ScanManagementView />
-          </div>
-        )}
+      {/* Tab 2: Findings Inventory Table & Filters */}
+      {activeTab === "inventory" && (
+        <div className="fade-in space-y-4">
+          <FindingFilters
+            severity={severity}
+            status={status}
+            findingType={findingType}
+            onSeverityChange={(sev) => {
+              setLoadingFindings(true);
+              setSeverity(sev);
+              setPage(1);
+            }}
+            onStatusChange={(st) => {
+              setLoadingFindings(true);
+              setStatus(st);
+              setPage(1);
+            }}
+            onTypeChange={(t) => {
+              setLoadingFindings(true);
+              setFindingType(t);
+              setPage(1);
+            }}
+          />
 
-        {/* Tab 2: Findings Inventory Table & Filters */}
-        {activeTab === "inventory" && (
-          <div className="fade-in">
-            <FindingFilters
-              severity={severity}
-              status={status}
-              findingType={findingType}
-              onSeverityChange={(sev) => {
-                setLoadingFindings(true);
-                setSeverity(sev);
-                setPage(1);
-              }}
-              onStatusChange={(st) => {
-                setLoadingFindings(true);
-                setStatus(st);
-                setPage(1);
-              }}
-              onTypeChange={(t) => {
-                setLoadingFindings(true);
-                setFindingType(t);
-                setPage(1);
-              }}
-            />
+          <FindingsTable
+            data={findingsData}
+            loading={loadingFindings}
+            onPageChange={(nextPage) => {
+              setLoadingFindings(true);
+              setPage(nextPage);
+            }}
+            onSelectFinding={(f) => setSelectedFinding(f)}
+          />
+        </div>
+      )}
 
-            <FindingsTable
-              data={findingsData}
-              loading={loadingFindings}
-              onPageChange={(nextPage) => {
-                setLoadingFindings(true);
-                setPage(nextPage);
-              }}
-              onSelectFinding={(f) => setSelectedFinding(f)}
-            />
-          </div>
-        )}
+      {/* Tab 3: Bounded Security Graph View */}
+      {activeTab === "graph" && (
+        <div className="fade-in">
+          <SecurityGraphView />
+        </div>
+      )}
 
-        {/* Tab 2: Bounded Security Graph View */}
-        {activeTab === "graph" && (
-          <div className="fade-in">
-            <SecurityGraphView />
-          </div>
-        )}
-
-        {/* Side-Drawer for Finding Details & Governance */}
-        <FindingDetailDrawer
-          finding={selectedFinding}
-          isAdmin={user.isPlatformAdmin}
-          onClose={() => setSelectedFinding(null)}
-          onRefreshFinding={async () => {
-            await loadFindingsList();
-            const postureData = await getSecurityPosture();
-            setPosture(postureData);
-            if (selectedFinding) {
-              const updatedList = await getFindings({
-                severity: severity || undefined,
-                status: status || undefined,
-                findingType: findingType || undefined,
-                page,
-                pageSize: 20,
-              });
-              const match = updatedList.items.find((item) => item.id === selectedFinding.id);
-              if (match) setSelectedFinding(match);
-            }
-          }}
-        />
-      </main>
-    </div>
+      {/* Side-Drawer for Finding Details & Governance */}
+      <FindingDetailDrawer
+        finding={selectedFinding}
+        isAdmin={user.isPlatformAdmin}
+        onClose={() => setSelectedFinding(null)}
+        onRefreshFinding={async () => {
+          await loadFindingsList();
+          const postureData = await getSecurityPosture();
+          setPosture(postureData);
+          if (selectedFinding) {
+            const updatedList = await getFindings({
+              severity: severity || undefined,
+              status: status || undefined,
+              findingType: findingType || undefined,
+              page,
+              pageSize: 20,
+            });
+            const match = updatedList.items.find((item) => item.id === selectedFinding.id);
+            if (match) setSelectedFinding(match);
+          }
+        }}
+      />
+    </AppLayout>
   );
 }
+
