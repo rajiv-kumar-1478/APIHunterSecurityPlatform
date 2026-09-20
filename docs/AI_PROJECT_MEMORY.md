@@ -14,9 +14,9 @@ The external APIHunterV2 source remains a read-only integration boundary. Do not
 
 ## Current Status
 
-**Current phase:** Phases 9.1 (campaign contract and production hardening), 9.2 (durable scheduler/PostgreSQL concurrency, gate passing 9/9), 9.3 (operational campaign observability), Step 9.4 (deployment-webhook wiring & orchestrator execution), and the 33/34 Provider Validation Matrix are all implemented and verified in the current worktree. Scanner-enabled deployment remains a separate hard gate.
+**Current phase:** Phases 9.1 (campaign contract and production hardening), 9.2 (durable scheduler/PostgreSQL concurrency, gate passing 9/9), 9.3 (operational campaign observability), Step 9.4 (deployment-webhook wiring & orchestrator execution), registered CI/CD applications management, and the full 34/34 Provider Validation Matrix (100% parity) are all implemented and verified in the current worktree. Scanner-enabled deployment remains a separate hard gate.
 
-**Next candidates:** The row-version contract migration is operationally gated until the drain window; live scanner/BugHunter proof is Docker-gated; and Azure OpenAI (customer-configured resource endpoint) remains the sole deferred provider validator pending per-tenant custom endpoint support.
+**Next candidates:** The row-version contract migration is operationally gated until the drain window, and live scanner/BugHunter proof is Docker-gated.
 
 ### Security authority
 - Browser authentication is cookie-only (`__ap_session`). `sub` carries the stable user ID; `sid` carries the persisted authentication-session row ID.
@@ -44,9 +44,9 @@ The external APIHunterV2 source remains a read-only integration boundary. Do not
 - `IDatabaseErrorClassifier` is required by `CampaignDispatchService`; both methods take `Exception`. Never make it optional again — a missing registration must fail fast rather than silently disable duplicate/ambiguous-commit classification.
 - Campaign occurrence keys require UTC and truncate sub-microsecond ticks to PostgreSQL precision before hashing; persisted v1 keys remain compatible.
 - `SSH.NET` is pinned exactly to `2026.0.0`; the current resolved package audit reports no vulnerable direct or transitive packages.
-- Credential validation scope is 33 implemented validators (10 bespoke + 23 declarative: HuggingFace, Perplexity, Cohere, FireworksAI, Replicate, OpenRouter, xAI, Cerebras, Tavily, FalAi, JinaAI, KlingAI, RunwayML, RunPod, GoogleGemini, ElevenLabs, TogetherAI, Mistral, StabilityAI, AI21, AssemblyAI, Deepgram, LeonardoAI) plus a zero-network unsupported fallback; 1 provider remains deferred (Azure OpenAI, customer-configured resource endpoint).
+- Credential validation scope is 34 implemented validators (10 bespoke + 23 static declarative + 1 customer-configured dynamic Azure OpenAI validator with DEC-015 socket pinning), achieving 100% parity across all 34 APIHunter reference providers.
 - New providers must derive from `DeclarativeHttpCredentialValidator` with a descriptor whose host matches its `ValidationEndpointRegistry` origin, be registered in BOTH `Platform.Api` and `Platform.Worker` before the Fallback line, and never accept a candidate-supplied URL. Do not duplicate the HTTP mapping; extend `ProviderValidationExecutor` and its tests instead.
-- Enabling a validator changes where a detected secret travels. Generic detection patterns then transmit misclassified secrets to a third party instead of stopping at the zero-network fallback. Contextual regex anchors (e.g. `together(?:_ai)?\s*[:=]...`, `mistral\s*[:=]...`, `leonardo\s*[:=]...`) protect bare-hex and UUID rules in `DatabaseSeeder.cs` from false-positive network transmission. Azure OpenAI remains deferred until customer per-tenant resource endpoints are configurable.
+- Enabling a validator changes where a detected secret travels. Generic detection patterns then transmit misclassified secrets to a third party instead of stopping at the zero-network fallback. Contextual regex anchors (e.g. `together(?:_ai)?\s*[:=]...`, `mistral\s*[:=]...`, `leonardo\s*[:=]...`, `azure[_-]?openai...`) protect bare-hex and UUID rules in `DatabaseSeeder.cs` from false-positive network transmission. Azure OpenAI dynamically enforces `^[a-zA-Z0-9-]+\.openai\.azure\.(com|us)$` with SSRF connection pinning.
 
 ### Validation record
 - Current verified inventory: **795/795 unit tests** and **106/106 integration tests**, all passing with zero failures or skips. Nine integration tests use real PostgreSQL; 97 remain environment-independent.

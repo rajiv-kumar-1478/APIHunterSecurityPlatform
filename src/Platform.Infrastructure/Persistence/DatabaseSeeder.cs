@@ -206,7 +206,8 @@ public static class BuiltInDetectionRules
             new() { Id = "ai21-api-key", Version = 1, Description = "AI21 Labs API Key", RegexPattern = @"(?i)ai21(?:_api)?\s*[:=]\s*['""]?([a-zA-Z0-9]{32})['""]?", CredentialType = "AI21", Confidence = "High" },
             new() { Id = "assemblyai-api-key", Version = 1, Description = "AssemblyAI API Key", RegexPattern = @"(?i)assembly(?:_?ai)?\s*[:=]\s*['""]?([a-f0-9]{32})['""]?", CredentialType = "AssemblyAI", Confidence = "High" },
             new() { Id = "deepgram-api-key", Version = 1, Description = "Deepgram API Key", RegexPattern = @"(?i)deepgram\s*[:=]\s*['""]?([a-f0-9]{40})['""]?", CredentialType = "Deepgram", Confidence = "High" },
-            new() { Id = "leonardo-api-key", Version = 1, Description = "Leonardo AI API Key", RegexPattern = @"(?i)leonardo(?:_?ai)?\s*[:=]\s*['""]?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})['""]?", CredentialType = "LeonardoAI", Confidence = "High" }
+            new() { Id = "leonardo-api-key", Version = 1, Description = "Leonardo AI API Key", RegexPattern = @"(?i)leonardo(?:_?ai)?\s*[:=]\s*['""]?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})['""]?", CredentialType = "LeonardoAI", Confidence = "High" },
+            new() { Id = "azure-openai-key", Version = 1, Description = "Azure OpenAI API Key", RegexPattern = @"(?i)azure[_-]?openai(?:[_-]?api)?[_-]?(?:key|secret)\s*[:=]\s*['""]?([a-f0-9]{32})['""]?", CredentialType = "AzureOpenAI", Confidence = "High" }
         };
     }
 }

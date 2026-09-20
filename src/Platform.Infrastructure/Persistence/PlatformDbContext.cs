@@ -74,6 +74,9 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
     public DbSet<RegisteredApplication> RegisteredApplications => Set<RegisteredApplication>();
     public DbSet<DeploymentWebhookRecord> DeploymentWebhookRecords => Set<DeploymentWebhookRecord>();
 
+    // Tenant Provider Settings (e.g. Azure OpenAI custom resource endpoints)
+    public DbSet<TenantProviderSetting> TenantProviderSettings => Set<TenantProviderSetting>();
+
 
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -976,6 +979,17 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.Property(r => r.WebhookId).HasMaxLength(256).IsRequired();
             e.Property(r => r.ApplicationId).HasMaxLength(256).IsRequired();
             e.HasIndex(r => r.ProcessedAtUtc);
+        });
+
+        // Tenant Provider Settings (Azure OpenAI custom endpoints)
+        modelBuilder.Entity<TenantProviderSetting>(e =>
+        {
+            e.ToTable("tenant_provider_settings");
+            e.HasKey(s => s.Id);
+            e.HasIndex(s => new { s.TenantId, s.ProviderName }).IsUnique();
+            e.Property(s => s.ProviderName).HasMaxLength(100).IsRequired();
+            e.Property(s => s.ResourceEndpointUrl).HasMaxLength(2048).IsRequired();
+            e.Property(s => s.ApiVersion).HasMaxLength(50).IsRequired();
         });
     }
 

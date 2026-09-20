@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/Sidebar";
 
-import { ApiError, apiRequest } from "@/lib/api-client";
+import { ApiError, apiRequest, getErrorMessage } from "@/lib/api-client";
 
 interface CandidateListResponse {
   items?: CandidateItem[];
@@ -66,6 +66,15 @@ export default function CredentialsPage() {
   const [validatingCandidateId, setValidatingCandidateId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
+  // Azure OpenAI Tenant Configuration
+  const [azureEndpoint, setAzureEndpoint] = useState("");
+  const [azureApiVersion, setAzureApiVersion] = useState("2023-05-15");
+  const [azureEnabled, setAzureEnabled] = useState(true);
+  const [azureUpdatedAt, setAzureUpdatedAt] = useState<string | null>(null);
+  const [showAzureConfig, setShowAzureConfig] = useState(false);
+  const [azureSaving, setAzureSaving] = useState(false);
+  const [azureConfigMessage, setAzureConfigMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
   const requestCandidates = useCallback(async () => {
     const query = new URLSearchParams({
       page: String(page),
@@ -123,6 +132,29 @@ export default function CredentialsPage() {
     }
     void loadCurrentUser();
   }, [router]);
+
+  useEffect(() => {
+    async function loadAzureConfig() {
+      try {
+        const config = await apiRequest<{
+          providerName: string;
+          resourceEndpointUrl: string;
+          apiVersion: string;
+          isEnabled: boolean;
+          updatedAtUtc: string | null;
+        }>("/api/v1/settings/providers/azure-openai");
+        if (config?.resourceEndpointUrl) {
+          setAzureEndpoint(config.resourceEndpointUrl);
+          setAzureApiVersion(config.apiVersion || "2023-05-15");
+          setAzureEnabled(config.isEnabled);
+          setAzureUpdatedAt(config.updatedAtUtc);
+        }
+      } catch {
+        // Not configured yet
+      }
+    }
+    void loadAzureConfig();
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -277,6 +309,147 @@ export default function CredentialsPage() {
             </p>
             <p className="text-xs text-sky-500/80 mt-1">Safe non-invalid states</p>
           </div>
+        </div>
+
+        {/* Azure OpenAI Resource Endpoint Configuration Card */}
+        <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-5 shadow-lg">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-blue-500" />
+                <h3 className="text-sm font-semibold text-white uppercase tracking-wider">
+                  Azure OpenAI Tenant Resource Endpoint
+                </h3>
+                {azureEndpoint ? (
+                  <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-medium">
+                    Configured
+                  </span>
+                ) : (
+                  <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-medium">
+                    Unconfigured
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Azure OpenAI credentials require a per-tenant resource endpoint (<code className="text-blue-400">https://&#123;resource&#125;.openai.azure.com</code>).
+              </p>
+            </div>
+            <button
+              onClick={() => setShowAzureConfig(!showAzureConfig)}
+              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 text-slate-200 hover:bg-slate-700 transition"
+            >
+              {showAzureConfig ? "Hide Settings" : azureEndpoint ? "Edit Endpoint" : "Configure Endpoint"}
+            </button>
+          </div>
+
+          {showAzureConfig && (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setAzureSaving(true);
+                setAzureConfigMessage(null);
+                try {
+                  const updated = await apiRequest<{
+                    providerName: string;
+                    resourceEndpointUrl: string;
+                    apiVersion: string;
+                    isEnabled: boolean;
+                    updatedAtUtc: string | null;
+                  }>("/api/v1/settings/providers/azure-openai", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      resourceEndpointUrl: azureEndpoint.trim(),
+                      apiVersion: azureApiVersion.trim() || "2023-05-15",
+                      isEnabled: azureEnabled,
+                    }),
+                  });
+                  setAzureEndpoint(updated.resourceEndpointUrl);
+                  setAzureApiVersion(updated.apiVersion);
+                  setAzureEnabled(updated.isEnabled);
+                  setAzureUpdatedAt(updated.updatedAtUtc);
+                  setAzureConfigMessage({
+                    type: "success",
+                    text: "Azure OpenAI endpoint saved and SSRF DNS screening passed.",
+                  });
+                } catch (err: unknown) {
+                  setAzureConfigMessage({
+                    type: "error",
+                    text: getErrorMessage(err, "Failed to save Azure OpenAI endpoint."),
+                  });
+                } finally {
+                  setAzureSaving(false);
+                }
+              }}
+              className="mt-4 pt-4 border-t border-slate-800/80 space-y-4"
+            >
+              {azureConfigMessage && (
+                <div
+                  className={`text-xs p-3 rounded-lg border ${
+                    azureConfigMessage.type === "success"
+                      ? "bg-emerald-950/40 border-emerald-800 text-emerald-300"
+                      : "bg-rose-950/40 border-rose-800 text-rose-300"
+                  }`}
+                >
+                  {azureConfigMessage.text}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    Resource Endpoint URL (must end with .openai.azure.com or .openai.azure.us) *
+                  </label>
+                  <input
+                    type="url"
+                    required
+                    placeholder="https://my-company.openai.azure.com"
+                    value={azureEndpoint}
+                    onChange={(e) => setAzureEndpoint(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    API Version
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="2023-05-15"
+                    value={azureApiVersion}
+                    onChange={(e) => setAzureApiVersion(e.target.value)}
+                    className="w-full px-3 py-2 text-sm bg-slate-950 border border-slate-800 rounded-lg text-slate-200 placeholder-slate-600 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <label className="flex items-center gap-2 cursor-pointer text-xs text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={azureEnabled}
+                    onChange={(e) => setAzureEnabled(e.target.checked)}
+                    className="rounded bg-slate-950 border-slate-700 text-blue-600 focus:ring-0"
+                  />
+                  Enable validation for Azure OpenAI credentials
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={azureSaving || !azureEndpoint.trim()}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 text-white disabled:opacity-50 disabled:cursor-not-allowed transition"
+                >
+                  {azureSaving ? "Testing & Saving..." : "Save & Verify SSRF"}
+                </button>
+              </div>
+
+              {azureUpdatedAt && (
+                <p className="text-[11px] text-slate-500">
+                  Last updated: {new Date(azureUpdatedAt).toLocaleString()}
+                </p>
+              )}
+            </form>
+          )}
         </div>
 
         {/* Toolbar & Filters */}

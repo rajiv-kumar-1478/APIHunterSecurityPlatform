@@ -302,6 +302,7 @@ try
     builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.AssemblyAiCredentialValidator>();
     builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.DeepgramCredentialValidator>();
     builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.LeonardoAiCredentialValidator>();
+    builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.AzureOpenAiCredentialValidator>();
 
     builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.FallbackCredentialValidator>();
     builder.Services.AddScoped<CredentialValidationService>();
@@ -454,6 +455,7 @@ try
     builder.Services.AddScoped<Platform.Application.Scanning.Verification.IApplicationTargetResolver, Platform.Infrastructure.Scanning.DatabaseApplicationTargetResolver>();
     builder.Services.AddScoped<Platform.Application.Scanning.Verification.IDeploymentScanJobEnqueuer, Platform.Infrastructure.Scanning.DatabaseDeploymentScanJobEnqueuer>();
     builder.Services.AddScoped<Platform.Application.Scanning.Verification.IDeploymentWebhookHandler, Platform.Application.Scanning.Verification.DeploymentWebhookHandler>();
+    builder.Services.AddScoped<Platform.Application.Scanning.Verification.IRegisteredApplicationService, Platform.Infrastructure.Scanning.RegisteredApplicationService>();
 
 
 

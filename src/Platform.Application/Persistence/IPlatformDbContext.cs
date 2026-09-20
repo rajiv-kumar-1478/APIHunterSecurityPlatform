@@ -75,6 +75,9 @@ public interface IPlatformDbContext
     DbSet<RegisteredApplication> RegisteredApplications { get; }
     DbSet<DeploymentWebhookRecord> DeploymentWebhookRecords { get; }
 
+    // Tenant Provider Settings (e.g. Azure OpenAI custom resource endpoints)
+    DbSet<TenantProviderSetting> TenantProviderSettings { get; }
+
     Microsoft.EntityFrameworkCore.ChangeTracking.ChangeTracker ChangeTracker { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
