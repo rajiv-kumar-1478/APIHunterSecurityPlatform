@@ -177,14 +177,48 @@ public class IncidentEngineService(
 
             case IncidentCategory.WorkerHeartbeatLost:
             case IncidentCategory.LeaseDeadlock:
-                var stuckJobs = await dbContext.SecurityScanJobs
-                    .Where(j => j.Status == SecurityScanJobStatus.Running)
-                    .ToListAsync(ct);
+                Guid? targetJobId = null;
+                if (!string.IsNullOrWhiteSpace(incident.DetailsJson))
+                {
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(incident.DetailsJson);
+                        if (doc.RootElement.TryGetProperty("jobId", out var prop) && Guid.TryParse(prop.GetString(), out var parsedJobId))
+                        {
+                            targetJobId = parsedJobId;
+                        }
+                    }
+                    catch
+                    {
+                        // Ignore JSON parsing errors
+                    }
+                }
 
+                var stuckQuery = dbContext.SecurityScanJobs
+                    .Where(j => j.Status == SecurityScanJobStatus.Running);
+
+                if (targetJobId.HasValue)
+                {
+                    stuckQuery = stuckQuery.Where(j => j.Id == targetJobId.Value);
+                }
+                else if (incident.TenantId.HasValue)
+                {
+                    var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
+                    stuckQuery = stuckQuery.Where(j => j.TenantId == incident.TenantId.Value &&
+                                                       (j.WorkerHeartbeatUtc == null || j.WorkerHeartbeatUtc < staleCutoff));
+                }
+                else
+                {
+                    var staleCutoff = DateTime.UtcNow.AddMinutes(-5);
+                    stuckQuery = stuckQuery.Where(j => j.WorkerHeartbeatUtc == null || j.WorkerHeartbeatUtc < staleCutoff);
+                }
+
+                var stuckJobs = await stuckQuery.ToListAsync(ct);
                 foreach (var j in stuckJobs)
                 {
                     j.Status = SecurityScanJobStatus.Pending;
                     j.WorkerId = null;
+                    j.WorkerHeartbeatUtc = null;
                 }
                 break;
         }

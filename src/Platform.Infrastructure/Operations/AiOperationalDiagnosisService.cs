@@ -100,6 +100,11 @@ public class AiOperationalDiagnosisService(
         stopwatch.Stop();
         PlatformMetrics.AiDiagnosisDuration.Record(stopwatch.Elapsed.TotalSeconds);
 
+        if (incident.AiDiagnosis != null)
+        {
+            dbContext.AiOperationalDiagnoses.Remove(incident.AiDiagnosis);
+        }
+
         dbContext.AiOperationalDiagnoses.Add(diagnosis);
         incident.AiDiagnosisId = diagnosis.Id;
         incident.AiDiagnosis = diagnosis;

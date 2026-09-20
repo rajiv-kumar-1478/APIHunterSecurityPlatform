@@ -25,6 +25,7 @@ namespace Platform.Api.Controllers;
 [ApiController]
 [Route("api/v1/webhooks")]
 [AllowAnonymous] // Auth is HMAC-based, not cookie/CSRF.
+[Microsoft.AspNetCore.RateLimiting.EnableRateLimiting(Platform.Api.Configuration.RateLimitingConfiguration.WebhookIngestionPolicy)]
 public class DeploymentWebhookController : ControllerBase
 {
     private readonly IDeploymentWebhookHandler _webhookHandler;

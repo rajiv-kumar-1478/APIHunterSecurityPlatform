@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Platform.Application.Observability;
@@ -11,6 +12,7 @@ namespace Platform.Api.Controllers;
 
 [ApiController]
 [Route("api/v1/operations")]
+[Authorize(Policy = "PlatformAdmin")]
 public class OperationsController(
     IIncidentEngineService incidentEngine,
     IAiOperationalDiagnosisService aiDiagnosisService,
