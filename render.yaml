@@ -35,7 +35,7 @@ services:
         fromService:
           type: web
           name: apihunter-frontend
-          property: url
+          property: host
       - key: ScannerRuntime__RuntimeMode
         value: Disabled
 
@@ -86,4 +86,4 @@ services:
         fromService:
           type: web
           name: apihunter-api
-          property: url
+          property: host

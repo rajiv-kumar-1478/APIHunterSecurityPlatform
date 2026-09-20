@@ -212,8 +212,22 @@ try
     // ─────────────────────────────────────────────────────────────────────────
     // CORS
     // ─────────────────────────────────────────────────────────────────────────
-    var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    var rawOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
                       ?? ["http://localhost:3000"];
+
+    var allowedOrigins = rawOrigins
+        .Where(o => !string.IsNullOrWhiteSpace(o))
+        .SelectMany(o =>
+        {
+            var trimmed = o.Trim();
+            if (trimmed.StartsWith("http://") || trimmed.StartsWith("https://"))
+            {
+                return new[] { trimmed };
+            }
+            return new[] { $"https://{trimmed}", $"http://{trimmed}" };
+        })
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
 
     builder.Services.AddCors(opts => opts.AddDefaultPolicy(policy =>
         policy.WithOrigins(allowedOrigins)

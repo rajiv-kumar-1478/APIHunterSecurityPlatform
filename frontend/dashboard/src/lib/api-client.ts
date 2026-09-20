@@ -6,7 +6,11 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 function normalizeApiBaseUrl(value: string | undefined): string {
   const configuredValue = value?.trim() || DEFAULT_API_BASE_URL;
-  return configuredValue.replace(/\/+$/, "");
+  let normalized = configuredValue.replace(/\/+$/, "");
+  if (normalized && !normalized.startsWith("http://") && !normalized.startsWith("https://")) {
+    normalized = `https://${normalized}`;
+  }
+  return normalized;
 }
 
 export const API_BASE_URL = normalizeApiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
