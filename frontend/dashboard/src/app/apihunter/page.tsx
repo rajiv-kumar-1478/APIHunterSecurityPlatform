@@ -68,6 +68,7 @@ export default function ApiHunterPage() {
   const [user, setUser] = useState<{ isPlatformAdmin: boolean; userId: string; email?: string } | null>(null);
   const [summary, setSummary] = useState<SummaryData | null>(null);
   const [records, setRecords] = useState<ApiHunterRecord[]>([]);
+  const [totalRecords, setTotalRecords] = useState(0);
   const [statusFilter, setStatusFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -115,7 +116,8 @@ export default function ApiHunterPage() {
       const data = await apiRequest<ApiHunterRecordListResponse>(
         `/api/v1/apihunter/records?${query.toString()}`,
       );
-      setRecords(data.items);
+      setRecords(data.items || []);
+      setTotalRecords(data.totalCount || 0);
     } catch (error: unknown) {
       console.error("Failed to fetch records", error);
     }
@@ -253,20 +255,25 @@ export default function ApiHunterPage() {
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex flex-wrap items-center gap-2 fade-in">
-        {["all", "Valid", "ValidNoCredits", "Invalid", "Unverified"].map((f) => (
-          <button
-            key={f}
-            onClick={() => { setStatusFilter(f); setPage(1); }}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              statusFilter === f
-                ? "bg-[#00d4ff]/20 text-[#00d4ff] border border-[#00d4ff]/40 shadow-sm"
-                : "bg-white/5 text-[#7ba3c8] border border-white/10 hover:text-white"
-            }`}
-          >
-            {f === "all" ? "All Records" : f}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-2 fade-in">
+        <div className="flex flex-wrap items-center gap-2">
+          {["all", "Valid", "ValidNoCredits", "Unverified"].map((f) => (
+            <button
+              key={f}
+              onClick={() => { setStatusFilter(f); setPage(1); }}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all ${
+                statusFilter === f
+                  ? "bg-[#00d4ff]/20 text-[#00d4ff] border border-[#00d4ff]/40 shadow-sm"
+                  : "bg-white/5 text-[#7ba3c8] border border-white/10 hover:text-white"
+              }`}
+            >
+              {f === "all" ? "All Records" : f}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-[#7ba3c8]">
+          Showing {records.length} of {totalRecords} records
+        </span>
       </div>
 
       {/* Records Table Container */}
@@ -288,7 +295,7 @@ export default function ApiHunterPage() {
               {records.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="p-8 text-center text-[#7ba3c8]">
-                    No imported APIHunter records found. Click &quot;Sync From APIHunter&quot; to import intelligence data.
+                    No imported APIHunter records found for filter &quot;{statusFilter}&quot;.
                   </td>
                 </tr>
               ) : (
@@ -300,7 +307,6 @@ export default function ApiHunterPage() {
                       <span className={`px-2.5 py-1 text-[10px] font-semibold rounded-full border ${
                         r.status === "Valid" ? "badge-healthy" :
                         r.status === "ValidNoCredits" ? "badge-degraded" :
-                        r.status === "Invalid" ? "badge-unhealthy" :
                         "badge-admin"
                       }`}>
                         {r.status}
@@ -325,6 +331,31 @@ export default function ApiHunterPage() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination Footer */}
+        {totalRecords > 15 && (
+          <div className="p-4 border-t border-[#00d4ff]/10 flex items-center justify-between text-xs text-[#7ba3c8]">
+            <span>
+              Page {page} of {Math.ceil(totalRecords / 15)}
+            </span>
+            <div className="flex gap-2">
+              <button
+                disabled={page <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                className="px-3 py-1 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-white transition-all"
+              >
+                Previous
+              </button>
+              <button
+                disabled={page >= Math.ceil(totalRecords / 15)}
+                onClick={() => setPage((p) => p + 1)}
+                className="px-3 py-1 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed font-medium text-white transition-all"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Revealed Key Modal */}

@@ -85,20 +85,19 @@ public class ApiHunterAdapter : IApiHunterSource
 
             var (keysTable, refsTable) = await ResolveTableNamesAsync(conn, ct);
 
-            // Fetch keys batch prioritizing Valid (1) and ValidNoCredits (7) keys first
+            // Fetch keys batch prioritizing Valid (1) and ValidNoCredits (7) keys first (excluding Invalid keys where Status = 0)
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $@"
                 SELECT ""Id"", ""ApiKey"", ""Status"", ""ApiType"", ""SearchProvider"", ""LastCheckedUTC"", 
                        ""FirstFoundUTC"", ""LastFoundUTC"", ""ValidationResponse"", ""Balance"", ""AccountTier"", 
                        ""AwsAccountId"", ""AwsRiskLevel""
                 FROM {keysTable}
-                WHERE ""Id"" > @lastSyncedId
+                WHERE ""Id"" > @lastSyncedId AND ""Status"" <> 0
                 ORDER BY CASE 
                     WHEN ""Status"" = 1 THEN 1 
                     WHEN ""Status"" = 7 THEN 2 
                     WHEN ""Status"" = 6 THEN 3 
-                    WHEN ""Status"" = 0 THEN 4 
-                    ELSE 5 
+                    ELSE 4 
                 END, ""Id"" ASC
                 LIMIT @batchSize;";
 

@@ -21,7 +21,7 @@ public class ApiHunterController(
     {
         var sourceSummary = await source.GetSummaryAsync(ct);
 
-        var importedTotal = await db.ApiHunterRecords.CountAsync(ct);
+        var importedTotal = await db.ApiHunterRecords.CountAsync(r => r.Status != PlatformKeyStatus.Invalid, ct);
         var importedValid = await db.ApiHunterRecords.CountAsync(r => r.Status == PlatformKeyStatus.Valid, ct);
         var importedValidNoCredits = await db.ApiHunterRecords.CountAsync(r => r.Status == PlatformKeyStatus.ValidNoCredits, ct);
         var importedRepos = await db.ApiHunterRepoReferences.CountAsync(ct);
@@ -60,9 +60,10 @@ public class ApiHunterController(
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
-        var query = db.ApiHunterRecords.AsNoTracking();
+        var query = db.ApiHunterRecords.AsNoTracking()
+            .Where(r => r.Status != PlatformKeyStatus.Invalid);
 
-        if (!string.IsNullOrWhiteSpace(status) && status.ToLower() != "all")
+        if (!string.IsNullOrWhiteSpace(status) && !status.Equals("all", StringComparison.OrdinalIgnoreCase))
         {
             if (Enum.TryParse<PlatformKeyStatus>(status, true, out var parsedStatus))
             {

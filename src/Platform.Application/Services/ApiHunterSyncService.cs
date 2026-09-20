@@ -74,6 +74,16 @@ public class ApiHunterSyncService(
 
         try
         {
+            // Purge any pre-existing invalid records from platform database
+            var invalidRecords = await db.ApiHunterRecords
+                .Where(r => r.Status == PlatformKeyStatus.Invalid)
+                .ToListAsync(ct);
+            if (invalidRecords.Count > 0)
+            {
+                db.ApiHunterRecords.RemoveRange(invalidRecords);
+                await db.SaveChangesAsync(ct);
+            }
+
             var batchSize = options.Value.BatchSize > 0 ? options.Value.BatchSize : 1000;
             var fetchedKeys = await source.FetchKeysIncrementalAsync(syncState.LastSyncedKeyId, batchSize, ct);
 
@@ -83,11 +93,21 @@ public class ApiHunterSyncService(
 
             foreach (var keyDto in fetchedKeys)
             {
+                var domainStatus = statusMapper.MapStatus(keyDto.Status);
+                if (domainStatus == PlatformKeyStatus.Invalid)
+                {
+                    skipped++;
+                    if (keyDto.Id > syncState.LastSyncedKeyId)
+                    {
+                        syncState.LastSyncedKeyId = keyDto.Id;
+                    }
+                    continue;
+                }
+
                 var existingRecord = await db.ApiHunterRecords
                     .Include(r => r.RepoReferences)
                     .FirstOrDefaultAsync(r => r.SourceRecordId == keyDto.Id, ct);
 
-                var domainStatus = statusMapper.MapStatus(keyDto.Status);
                 var apiTypeStr = statusMapper.MapApiType(keyDto.ApiType);
                 var masked = MaskKey(keyDto.ApiKey);
                 var encryptedRaw = _protector.Protect(keyDto.ApiKey);
