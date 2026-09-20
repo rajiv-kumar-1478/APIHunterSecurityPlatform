@@ -61,7 +61,10 @@ var rawConnectionString = builder.Configuration["Database:ConnectionString"]
 var connectionString = Platform.Infrastructure.Persistence.PostgresConnectionStringNormalizer.Normalize(rawConnectionString);
 
 builder.Services.AddDbContext<PlatformDbContext>(options =>
-    options.UseNpgsql(connectionString, b => b.MigrationsAssembly("Platform.Infrastructure")));
+{
+    options.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
+    options.UseNpgsql(connectionString, b => b.MigrationsAssembly("Platform.Infrastructure"));
+});
 
 builder.Services.AddScoped<IPlatformDbContext>(sp => sp.GetRequiredService<PlatformDbContext>());
 

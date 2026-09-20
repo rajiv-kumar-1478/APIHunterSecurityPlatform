@@ -113,6 +113,7 @@ try
 
     builder.Services.AddDbContext<PlatformDbContext>(opts =>
     {
+        opts.ConfigureWarnings(w => w.Ignore(Microsoft.EntityFrameworkCore.Diagnostics.RelationalEventId.PendingModelChangesWarning));
         if (builder.Environment.IsEnvironment("Testing") || string.IsNullOrWhiteSpace(connStr) || connStr.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
         {
             opts.UseInMemoryDatabase("PlatformTestDb");
