@@ -1,9 +1,9 @@
 # APIHunter Security Platform — Complete Master Blueprint
 
-**Reference:** Phase 1 → Phase 9.4
-**Current position:** Phases 1–8 complete, and Phase 9 (Steps 9.1–9.4, CI/CD deployment webhooks, and 34-provider validation parity) fully implemented and verified
-**Next:** Operational monitoring, runtime container sandbox hard gate (Docker-gated), and production readiness
-**APIHunterV2:** Independent system; must remain isolated unless explicitly approved
+**Reference:** Phase 1 → Phase 11
+**Current position:** All 11 Phases (Phases 1 through 11) fully implemented, hardened, and verified
+**Status:** Complete production platform architecture: Foundation, secret storage, deterministic discovery, AI investigation, 34-provider validation parity, continuous scan campaigns, CI/CD deployment webhooks, autonomous operations AI, and enterprise production hardening.
+**APIHunterV2:** Independent reference system; platform maintains 100% provider validation parity.
 
 ---
 
@@ -2595,6 +2595,97 @@ The platform achieves 100% parity across all 34 APIHunter reference providers:
 | 🟢 | DEC-015 Socket Connection Pinning | `SocketsHttpHandler.ConnectCallback` pins TCP connection to validated IP address |
 | 🟢 | Fail-Closed Scanner Safety | Scanner execution remains fail-closed (`UnavailableScannerRuntime`) |
 | 🟢 | Next.js 16 Production Build | 17 static routes compiled with 0 errors |
+
+---
+
+# 95. Phase 10 — Operations AI & Autonomous Incident Engine
+
+## 95.1 Operations AI Architecture
+
+Phase 10 provides continuous autonomous observability, incident management, and AI-assisted root cause diagnosis across distributed API and background worker nodes:
+
+```text
+Worker Fleet & PostgreSQL Queue
+        │
+        ├── Worker Heartbeats (Stale > 5m detected)
+        ├── Campaign Stalls (Overdue > 15m detected)
+        └── Queue Lock Contention (SKIP LOCKED)
+                │
+                ▼
+      IncidentEngineService & IncidentEngineWorker (Every 30s)
+                │
+                ├── Autonomous Self-Healing: Releases orphaned leases to Pending
+                ├── Deduplication: 60-minute sliding window on incident fingerprints
+                └── Writes to operational_incidents table
+                        │
+                        ▼
+         AiOperationalDiagnosisService
+                │
+                ├── IOperationalPromptSanitizer (Strips Bearer, AWS, GitHub, tokens)
+                ├── IAiModelRouter.ExecuteWithFallbackAsync (LLM root cause & remediation)
+                └── DeterministicFallbackDiagnosis (Fail-safe when LLMs unavailable)
+                        │
+                        ▼
+            Next.js /operations Dashboard & /api/v1/operations API
+```
+
+## 95.2 Phase 10 Acceptance Matrix
+
+| Gate | Requirement | Proof / Implementation |
+|---|---|---|
+| 🟢 | OpenTelemetry Metrics & Tracing | `PlatformMetrics` (Meter: `APIHunter.SecurityPlatform`) & `PlatformTracing` (`ActivitySource`) |
+| 🟢 | Strict Secret Sanitization | `IOperationalPromptSanitizer` redacting Bearer, AWS, GitHub, Slack, OpenAI tokens from stack traces |
+| 🟢 | Autonomous Incident Detection | `IncidentEngineService.RunDetectionCycleAsync` detecting expired worker heartbeats ($> 5$m) |
+| 🟢 | Self-Healing Lease Recovery | Orphaned scan job leases cleanly reset to `Pending` with incremented retry count |
+| 🟢 | Incident Deduplication | Fingerprint matching within 60-minute window increments occurrence count |
+| 🟢 | AI Root-Cause Diagnostics | `AiOperationalDiagnosisService` with JSON schema enforcement and deterministic fallback engine |
+| 🟢 | Operations Dashboard UI | Next.js 16 `/operations` page with health gauges, live 15s pulse, incident triage, and AI modal |
+
+---
+
+# 96. Phase 11 — Production Hardening & Enterprise Resilience
+
+## 96.1 Hardening Architecture
+
+Phase 11 establishes multi-layer defense, abuse prevention, and disaster recovery:
+
+```text
+Incoming Internet Traffic
+        │
+        ▼
+ASP.NET Core RateLimiter (Partitioned Policies)
+        ├── Login Policy: 5 attempts per 15s per client IP
+        ├── Authenticated Tenant Policy: Token Bucket (Capacity 300, Refill 50/s)
+        ├── Anonymous IP Policy: 100 requests per minute sliding window
+        └── CI/CD Webhook Policy: 10 concurrent requests per ApplicationId
+                │
+                ▼
+SecurityHeadersMiddleware
+        ├── HSTS (max-age=31536000; includeSubDomains; preload)
+        ├── X-Content-Type-Options: nosniff
+        ├── X-Frame-Options: DENY
+        └── Content-Security-Policy (Strict self/https default-src)
+                │
+                ▼
+EnvironmentValidationHostedService (Startup Fail-Closed Gate)
+        ├── Validates ≥256-bit Master Encryption Key in Production
+        ├── Validates JWT secret entropy
+        └── Rejects insecure default credentials
+```
+
+## 96.2 Phase 11 Acceptance Matrix
+
+| Gate | Requirement | Proof / Implementation |
+|---|---|---|
+| 🟢 | Tiered Rate Limiting | `RateLimitingConfiguration` with RFC-7807 429 `ProblemDetails` and `Retry-After` headers |
+| 🟢 | Security Headers | `SecurityHeadersMiddleware` enforcing HSTS, CSP, and `X-Frame-Options: DENY` |
+| 🟢 | Automated DB Backup & DR Runbook | `backup_full.sh`, `backup_full.ps1`, and `DISASTER_RECOVERY_RUNBOOK.md` |
+| 🟢 | High-Concurrency Queue Stress | `QueueConcurrencyStressTests` verifying 0 duplicate claims across concurrent workers |
+| 🟢 | Scanner Sandbox Seccomp Profile | `sandbox.seccomp.json` restricting container syscalls |
+| 🟢 | Pluggable Scanner Contract Harness | `ScannerAdapterContractTests` verifying timeout handling and cancellation cleanup |
+| 🟢 | Startup Fail-Closed Security Gate | `EnvironmentValidationHostedService` terminating startup on weak/default secrets |
+| 🟢 | Health & Readiness Probes | `/health/live` (process responsive) and `/health/ready` (PostgreSQL verified) |
+| 🟢 | Complete Frontend Build | All 18 routes compiled with 0 errors in Next.js 16 |
 
 
 

@@ -77,6 +77,9 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
     // Tenant Provider Settings (e.g. Azure OpenAI custom resource endpoints)
     public DbSet<TenantProviderSetting> TenantProviderSettings => Set<TenantProviderSetting>();
 
+    // Phase 10 DbSets — Operations AI & Incidents
+    public DbSet<OperationalIncident> OperationalIncidents => Set<OperationalIncident>();
+    public DbSet<AiOperationalDiagnosis> AiOperationalDiagnoses => Set<AiOperationalDiagnosis>();
 
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -990,6 +993,35 @@ public class PlatformDbContext(DbContextOptions<PlatformDbContext> options)
             e.Property(s => s.ProviderName).HasMaxLength(100).IsRequired();
             e.Property(s => s.ResourceEndpointUrl).HasMaxLength(2048).IsRequired();
             e.Property(s => s.ApiVersion).HasMaxLength(50).IsRequired();
+        });
+
+        // Phase 10 — Operations AI & Incidents
+        modelBuilder.Entity<OperationalIncident>(e =>
+        {
+            e.ToTable("operational_incidents");
+            e.HasKey(i => i.Id);
+            e.HasIndex(i => new { i.Fingerprint, i.LastObservedAtUtc });
+            e.HasIndex(i => new { i.TenantId, i.Status });
+            e.HasIndex(i => i.Severity);
+            e.Property(i => i.Title).HasMaxLength(256).IsRequired();
+            e.Property(i => i.Fingerprint).HasMaxLength(256).IsRequired();
+            e.Property(i => i.ResolutionNotes).HasMaxLength(1024);
+            e.Property(i => i.MitigationActionTaken).HasMaxLength(512);
+
+            e.HasOne(i => i.AiDiagnosis)
+                .WithOne()
+                .HasForeignKey<OperationalIncident>(i => i.AiDiagnosisId)
+                .OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<AiOperationalDiagnosis>(e =>
+        {
+            e.ToTable("ai_operational_diagnoses");
+            e.HasKey(d => d.Id);
+            e.HasIndex(d => d.IncidentId);
+            e.Property(d => d.ProviderUsed).HasMaxLength(64).IsRequired();
+            e.Property(d => d.RootCauseSummary).IsRequired();
+            e.Property(d => d.SuggestedRemediation).IsRequired();
         });
     }
 

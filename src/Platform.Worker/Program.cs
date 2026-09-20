@@ -236,6 +236,11 @@ builder.Services.AddScoped<Platform.Application.Scanning.Verification.IDeploymen
 builder.Services.AddScoped<Platform.Application.Scanning.Verification.IDeploymentWebhookHandler, Platform.Application.Scanning.Verification.DeploymentWebhookHandler>();
 builder.Services.AddScoped<Platform.Application.Scanning.Verification.IRegisteredApplicationService, Platform.Infrastructure.Scanning.RegisteredApplicationService>();
 
+// Phase 10 — Operations AI & Autonomous Incident Engine
+builder.Services.AddSingleton<Platform.Application.Operations.IOperationalPromptSanitizer, Platform.Infrastructure.Operations.OperationalPromptSanitizer>();
+builder.Services.AddScoped<Platform.Application.Operations.IIncidentEngineService, Platform.Infrastructure.Operations.IncidentEngineService>();
+builder.Services.AddScoped<Platform.Application.Operations.IAiOperationalDiagnosisService, Platform.Infrastructure.Operations.AiOperationalDiagnosisService>();
+
 builder.Services.AddHostedService<RepositoryAcquisitionWorker>();
 builder.Services.AddHostedService<SnapshotAnalysisWorker>();
 builder.Services.AddHostedService<StaleJobSweepWorker>();
@@ -243,6 +248,7 @@ builder.Services.AddHostedService<AiInvestigationWorker>();
 builder.Services.AddHostedService<CredentialValidationWorker>();
 builder.Services.AddHostedService<SecurityScanJobConsumerWorker>();
 builder.Services.AddHostedService<CampaignSchedulerWorker>();
+builder.Services.AddHostedService<IncidentEngineWorker>();
 
 var host = builder.Build();
 host.Run();

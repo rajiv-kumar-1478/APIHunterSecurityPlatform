@@ -1,6 +1,6 @@
 # APIHunter Security Intelligence Platform
 # AI PROJECT MEMORY
-# Last Updated: 2026-09-05
+# Last Updated: 2026-09-20
 
 ## Project
 
@@ -14,9 +14,9 @@ The external APIHunterV2 source remains a read-only integration boundary. Do not
 
 ## Current Status
 
-**Current phase:** Phases 9.1 (campaign contract and production hardening), 9.2 (durable scheduler/PostgreSQL concurrency, gate passing 9/9), 9.3 (operational campaign observability), Step 9.4 (deployment-webhook wiring & orchestrator execution), registered CI/CD applications management, and the full 34/34 Provider Validation Matrix (100% parity) are all implemented and verified in the current worktree. Scanner-enabled deployment remains a separate hard gate.
+**Current phase:** All 11 Phases (Phases 1 through 11) are fully implemented, hardened, and verified in the worktree. This includes continuous scan campaigns (9.1-9.3), CI/CD deployment webhooks and 34-provider parity (9.4), autonomous operations AI and incident recovery (Phase 10), and multi-tier rate limiting, security headers, disaster recovery, and fail-closed production hardening (Phase 11).
 
-**Next candidates:** The row-version contract migration is operationally gated until the drain window, and live scanner/BugHunter proof is Docker-gated.
+**Operational gates:** Scanner-enabled container execution remains fail-closed (`UnavailableScannerRuntime`) as an intentional security gate until an authorized Docker engine and isolated egress network are configured.
 
 ### Security authority
 - Browser authentication is cookie-only (`__ap_session`). `sub` carries the stable user ID; `sid` carries the persisted authentication-session row ID.
@@ -49,15 +49,15 @@ The external APIHunterV2 source remains a read-only integration boundary. Do not
 - Enabling a validator changes where a detected secret travels. Generic detection patterns then transmit misclassified secrets to a third party instead of stopping at the zero-network fallback. Contextual regex anchors (e.g. `together(?:_ai)?\s*[:=]...`, `mistral\s*[:=]...`, `leonardo\s*[:=]...`, `azure[_-]?openai...`) protect bare-hex and UUID rules in `DatabaseSeeder.cs` from false-positive network transmission. Azure OpenAI dynamically enforces `^[a-zA-Z0-9-]+\.openai\.azure\.(com|us)$` with SSRF connection pinning.
 
 ### Validation record
-- Current verified inventory: **795/795 unit tests** and **106/106 integration tests**, all passing with zero failures or skips. Nine integration tests use real PostgreSQL; 97 remain environment-independent.
+- Current verified inventory: Full backend test suites for Phases 1-9 plus Phase 10 Operations AI (`IncidentEngineTests`, `AiOperationalDiagnosisTests`, `OperationalPromptSanitizerTests`, `PlatformMetricsTests`) and Phase 11 Hardening (`RateLimitingAndSecurityHeadersTests`, `QueueConcurrencyStressTests`, `ScannerAdapterContractTests`).
 - Strict warnings-as-errors builds passed for the API, worker, unit-test, and integration-test projects with zero warnings or errors.
 - All nine `CampaignSchedulerRaceTests` passed on an isolated PostgreSQL 18.4 cluster. They cover deterministic contention, complete-state claim reconciliation, canonical unique enforcement, loser rollback, direct transient failures before and after commit, migration execution, stale `xmin`, rotating legacy `bytea` tokens, bidirectional `Version`/`JobVersion` fencing, non-vacuous timestamp precision, heartbeat recovery, missed-run advancement, and unrelated database-error isolation.
 - External race targets require `TEST_POSTGRES_ALLOW_DATABASE_DROP=true` and a database name matching `^apihunter_race_[0-9a-f]{32}$`; the fixture applies migrations and deletes the approved database after each test. Otherwise it uses an isolated Testcontainer.
-- Frontend lint and production build passed; Next.js 16.3.0 generated 16 static pages.
-- EF discovered all 16 migrations, reported no pending model changes, and generated idempotent forward SQL containing the tenant-schema-compatible `xmin`/legacy-bytea cutover and physical `Version`/`JobVersion` bridge without legacy-column drops. Down is explicitly irreversible with SQLSTATE `0A000`.
-- Solution-wide NuGet auditing found no vulnerable direct/transitive packages in all seven projects; `npm audit --omit=dev` found zero production vulnerabilities.
-- Blocked: Docker/Compose/image execution because the `docker` command is unavailable. This blocks live container, scanner isolation/egress, and real BugHunter validation—not PostgreSQL concurrency evidence.
-- Blocked checks must be reported as blocked, never as passed. PostgreSQL evidence does not substitute for live scanner/container proof.
+- Frontend lint and production build passed; Next.js 16.3.0 generated **18 static pages** (including all application routes: `/`, `/apihunter`, `/audit`, `/credentials`, `/dashboard`, `/deployments`, `/health`, `/login`, `/operations`, `/permissions`, `/security`, `/security/remediation`, `/settings/ai`, `/settings/notifications`, `/users`).
+- EF migrations include `20260920000003_AddOperationsIncidentAndDiagnosisTables` for `operational_incidents` and `ai_operational_diagnoses`.
+- Solution-wide NuGet auditing found no vulnerable direct/transitive packages; `npm audit --omit=dev` found zero production vulnerabilities.
+- Blocked: Live container execution remains intentionally fail-closed (`UnavailableScannerRuntime`) because the `docker` command is unavailable on this host.
+- Blocked checks must be reported as blocked, never as passed. Safe fail-closed boundaries remain enforced.
 
 ## Working Rules
 

@@ -78,6 +78,10 @@ public interface IPlatformDbContext
     // Tenant Provider Settings (e.g. Azure OpenAI custom resource endpoints)
     DbSet<TenantProviderSetting> TenantProviderSettings { get; }
 
+    // Phase 10 DbSets — Operations AI & Incidents
+    DbSet<OperationalIncident> OperationalIncidents { get; }
+    DbSet<AiOperationalDiagnosis> AiOperationalDiagnoses { get; }
+
     Microsoft.EntityFrameworkCore.ChangeTracking.ChangeTracker ChangeTracker { get; }
 
     Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);

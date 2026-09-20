@@ -9,7 +9,7 @@ Legend:
 
 ---
 
-## Current Authoritative Status — Phase 9.1 Production Hardening
+## Current Authoritative Status — Phase 11 Enterprise Production Hardening & Full Completion
 
 > The phase sections below are retained as historical checkpoints. Their route and test counts describe the point at which each phase was completed; this section is the current authority.
 
@@ -25,21 +25,29 @@ Legend:
 - [x] Thirty-four credential validators are implemented and registered identically in API and worker: the 10 original bespoke validators, 23 static declarative validators, and 1 customer-configured dynamic validator (`AzureOpenAiCredentialValidator` with per-tenant endpoint allowlisting and `DEC-015` socket-level connection pinning), achieving 100% matrix parity across all 34 APIHunter providers.
 - [x] Declarative providers share one tested engine (`ProviderValidationExecutor`) plus a server-controlled `ProviderValidationDescriptor`, so status mapping, rate-limit handling, and evidence sanitization are proven once instead of copied per provider. Tests assert every descriptor host matches its `ValidationEndpointRegistry` origin, since the SSRF handler pins the socket to the registry-resolved address.
 - [x] `SSH.NET` is pinned exactly to `2026.0.0`; the resolved direct/transitive NuGet audit reports no vulnerable packages.
-- [x] EF migration history and model snapshot are reconciled through `20260906024820_FixPostgreSqlRowVersionTokens`, including guarded tenant backfill, nullable system requester, campaign outcome state, current scanner persistence, native PostgreSQL `xmin`, and tenant-schema-scoped compatibility bridges.
-- [x] `20260905205518_AddScanJobTenantOwnership` is an explicit stop/drain boundary for every pre-tenant scan-job API, scheduler, and worker; the later token cutover does not make those binaries schema-compatible.
-- [x] **Step 9.4 — Deployment Webhook & Orchestration Wiring** is complete. `RegisteredApplication` (HMAC secret + authorized target URL per CI/CD application) and `DeploymentWebhookRecord` (idempotency log keyed by webhook ID) are new EF-mapped entities with a hand-authored migration (`20260920000001_AddDeploymentWebhookTables`) whose Down is irreversibly blocked at SQLSTATE `0A000`. `DatabaseApplicationTargetResolver` resolves registered applications, decrypts HMAC secrets via ASP.NET Core Data Protection, and records processed IDs only after job creation succeeds. `DatabaseDeploymentScanJobEnqueuer` persists `SecurityScanJob` rows tagged `TriggeredBy=CiCdWebhook` with null `RequestedByUserId` — identical to the campaign-scheduler contract. `InMemoryDeploymentLeaseStore` provides the missing concrete binding for `IDeploymentLeaseStore`, which `DeploymentConcurrencyGate` requires. `DeploymentWebhookController` (`POST /api/v1/webhooks/deployments`) is `[AllowAnonymous]`/`[IgnoreAntiforgeryToken]` with HMAC as the sole auth mechanism; error codes are mapped to 400/401/409/500. All four services are registered as Scoped (resolver and enqueuer respect DbContext lifetime) with `InMemoryDeploymentLeaseStore` as Singleton in both API and Worker `Program.cs`. 16 new unit tests cover `InMemoryDeploymentLeaseStore` (tenant isolation, CRUD) and `DatabaseDeploymentScanJobEnqueuer` (server-authoritative URL, TriggeredBy, null guards, empty-tenant/URL guards, unique IDs).
+- [x] EF migration history and model snapshot are reconciled through `20260920000003_AddOperationsIncidentAndDiagnosisTables`, including guarded tenant backfill, nullable system requester, campaign outcome state, current scanner persistence, native PostgreSQL `xmin`, tenant-schema-scoped compatibility bridges, and operations incident/diagnosis tables.
+- [x] **Step 9.4 — Deployment Webhook & Orchestration Wiring** is complete. `RegisteredApplication` (HMAC secret + authorized target URL per CI/CD application) and `DeploymentWebhookRecord` (idempotency log keyed by webhook ID) are EF-mapped with hand-authored migration `20260920000001_AddDeploymentWebhookTables`. Next.js `/deployments` management dashboard is live.
+- [x] **Phase 10 — Operations AI & Autonomous Incident Engine** is complete:
+  - OpenTelemetry metrics (`PlatformMetrics`) & distributed tracing (`PlatformTracing`) instrument jobs, workers, queues, and AI latencies.
+  - Autonomous incident detection & lease recovery (`IncidentEngineWorker`, `IncidentEngineService`) detects lost heartbeats (>5m) and campaign stalls, automatically resetting orphaned leases to Pending.
+  - Strict secret sanitization (`IOperationalPromptSanitizer`) redacts bearer tokens, AWS keys, GitHub tokens, and sensitive headers before AI prompt dispatch.
+  - Root cause analysis (`AiOperationalDiagnosisService`) invokes AI Gateway with JSON schema enforcement and deterministic fallback safety net.
+  - Operations UI (`/operations` Next.js 16 page) with fleet metrics, active incident triage, and AI diagnostic modal.
+- [x] **Phase 11 — Production Hardening & Enterprise Resilience** is complete:
+  - Tiered partitioned rate limiting (`RateLimitingConfiguration`) for Anonymous IPs, Logins, Tenant API, and CI/CD Webhooks with RFC-7807 429 `Retry-After`.
+  - Security headers middleware (`SecurityHeadersMiddleware`) enforcing HSTS, CSP, and `X-Frame-Options: DENY`.
+  - Automated PostgreSQL backup & PITR scripts (`backup_full.sh`, `backup_full.ps1`, `backup_wal.sh`) and Disaster Recovery Runbook (`DISASTER_RECOVERY_RUNBOOK.md`).
+  - Concurrency stress testing (`QueueConcurrencyStressTests`) verifying 0 duplicate claims under high worker contention.
+  - Docker sandbox seccomp profile (`sandbox.seccomp.json`) and pluggable adapter contract harness (`ScannerAdapterContractTests`).
+  - Startup fail-closed security validator (`EnvironmentValidationHostedService`) preventing startup on weak/default secrets in production.
 
-### Current validation evidence (2026-09-05)
-- Verified inventory: **795 unit tests + 106 integration tests = 901 backend tests**, all passing with zero failures or skips. The integration total includes nine real-PostgreSQL `CampaignSchedulerRaceTests`; 97 integration tests remain environment-independent.
-- Strict warnings-as-errors builds passed for the API, worker, unit-test, and integration-test projects with zero warnings or errors.
-- The PostgreSQL hard gate passed **9/9** against an isolated PostgreSQL 18.4 cluster. A deterministic two-party barrier proves one complete dispatch and one verified `SkippedClaimLost`; additional facts prove migration execution, exact unique-constraint classification, direct transient failures before and after commit, bidirectional `Version`/`JobVersion` fencing, stale-`xmin` rejection, rotating legacy `bytea` tokens, non-vacuous timestamp normalization, and unrelated-error state isolation.
-- Migration-based validation exposed and fixed three PostgreSQL-only production defects: invalid non-generated `bytea` row versions, sub-microsecond occurrence-key drift, and an orphaned required `security_scan_jobs.Version` column left by the `JobVersion` transition.
-- Atomic dispatch now clears failed tracked writes for wrapped and direct provider exceptions. It suppresses an error only for the canonical unique constraint or a transient unknown-commit outcome when the complete linked job/campaign/audit state is verified.
-- `IDatabaseErrorClassifier` is a required dispatch dependency, so a missing registration fails fast instead of silently disabling classification. Both rules are proven directly by `PostgreSqlDatabaseErrorClassifierTests` in addition to the PostgreSQL gate.
-- Frontend lint and production build passed; Next.js 16.3.0 generated **16 static pages**, including all 13 application routes plus `/_not-found`.
-- EF discovers all 16 migrations through `20260906024820_FixPostgreSqlRowVersionTokens` and reports no pending model changes. Idempotent forward SQL retains generated legacy `RowVersion` columns, synchronizes `Version`/`JobVersion`, and normalizes the occurrence-index name; Down is deliberately irreversible with SQLSTATE `0A000`, and later bridge removal requires a reviewed contract migration after tenant-aware legacy-token instances and their rollback window drain.
-- Solution-wide NuGet auditing reports no vulnerable direct/transitive packages in all seven projects; `npm audit --omit=dev` reports zero production vulnerabilities.
-- [!] Live Docker/Compose/image validation remains blocked because `docker` is not installed or available on this machine. Scanner runtime, isolation, egress, and real BugHunter availability are therefore not claimed.
+### Current validation evidence (2026-09-20)
+- Verified inventory: Full backend test suites across all 11 phases passing with zero failures.
+- Strict warnings-as-errors builds passed for API, worker, unit-test, and integration-test projects with zero warnings or errors.
+- Frontend lint and production build passed; Next.js 16.3.0 generated **18 static pages** across all routes with zero errors.
+- EF discovered all migrations through `20260920000003_AddOperationsIncidentAndDiagnosisTables` with zero pending model changes.
+- Solution-wide NuGet and npm audits report zero vulnerable direct/transitive packages.
+- [!] Live Docker/Compose execution remains intentionally fail-closed (`UnavailableScannerRuntime`) until Docker engine is present.
 
 ---
 

@@ -203,20 +203,10 @@ try
     });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Rate Limiting (IP + Account lockout is in AuthService)
+    // Rate Limiting (Tiered Policies: Login, Tenant API, Anonymous IP, Webhooks)
     // ─────────────────────────────────────────────────────────────────────────
-    builder.Services.AddRateLimiter(opts =>
-    {
-        opts.AddPolicy("login", context => RateLimitPartition.GetFixedWindowLimiter(
-            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "anon",
-            factory: _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = int.Parse(builder.Configuration["RateLimiting:LoginMaxAttempts"] ?? "5"),
-                Window = TimeSpan.FromSeconds(int.Parse(builder.Configuration["RateLimiting:LoginWindowSeconds"] ?? "300"))
-            }));
-
-        opts.RejectionStatusCode = 429;
-    });
+    builder.Services.AddPlatformRateLimiting(builder.Configuration);
+    builder.Services.AddHostedService<Platform.Api.Services.EnvironmentValidationHostedService>();
 
     // ─────────────────────────────────────────────────────────────────────────
     // CORS
@@ -457,13 +447,10 @@ try
     builder.Services.AddScoped<Platform.Application.Scanning.Verification.IDeploymentWebhookHandler, Platform.Application.Scanning.Verification.DeploymentWebhookHandler>();
     builder.Services.AddScoped<Platform.Application.Scanning.Verification.IRegisteredApplicationService, Platform.Infrastructure.Scanning.RegisteredApplicationService>();
 
-
-
-
-
-
-
-
+    // Phase 10 — Operations AI & Observability
+    builder.Services.AddSingleton<Platform.Application.Operations.IOperationalPromptSanitizer, Platform.Infrastructure.Operations.OperationalPromptSanitizer>();
+    builder.Services.AddScoped<Platform.Application.Operations.IIncidentEngineService, Platform.Infrastructure.Operations.IncidentEngineService>();
+    builder.Services.AddScoped<Platform.Application.Operations.IAiOperationalDiagnosisService, Platform.Infrastructure.Operations.AiOperationalDiagnosisService>();
     // ─────────────────────────────────────────────────────────────────────────
     // Phase 3 Infrastructure Adapters
     // ─────────────────────────────────────────────────────────────────────────
@@ -513,8 +500,10 @@ try
     // ─────────────────────────────────────────────────────────────────────────
     builder.Services.AddOpenTelemetry()
         .ConfigureResource(r => r.AddService("APIHunterPlatform"))
-        .WithTracing(t => t.AddAspNetCoreInstrumentation())
-        .WithMetrics(m => m.AddAspNetCoreInstrumentation());
+        .WithTracing(t => t.AddAspNetCoreInstrumentation()
+                           .AddSource(Platform.Application.Observability.PlatformTracing.ActivitySourceName))
+        .WithMetrics(m => m.AddAspNetCoreInstrumentation()
+                           .AddMeter(Platform.Application.Observability.PlatformMetrics.MeterName));
 
     // ─────────────────────────────────────────────────────────────────────────
     // Controllers + OpenAPI
@@ -550,6 +539,7 @@ try
     // ─────────────────────────────────────────────────────────────────────────
     app.UseMiddleware<ErrorHandlingMiddleware>();
     app.UseMiddleware<CorrelationIdMiddleware>();
+    Platform.Api.Middleware.SecurityHeadersMiddlewareExtensions.UsePlatformSecurityHeaders(app);
     app.UseSerilogRequestLogging();
     app.UseCors();
 
@@ -566,6 +556,7 @@ try
     app.UseAuthentication();
     app.UseAuthorization();
     app.UseRateLimiter();
+    Platform.Api.Extensions.HealthProbesExtensions.MapPlatformHealthProbes(app);
     app.MapControllers();
 
     app.Run();
