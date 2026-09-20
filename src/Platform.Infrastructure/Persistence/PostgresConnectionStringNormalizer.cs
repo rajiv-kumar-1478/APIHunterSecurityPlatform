@@ -86,6 +86,13 @@ public static class PostgresConnectionStringNormalizer
                     }
                 }
 
+                // If using Supabase transaction pooler (6543) or Supabase pooler, disable auto prepare for PgBouncer compatibility
+                if (builder.Port == 6543 || (builder.Host != null && builder.Host.Contains("pooler.supabase.com", StringComparison.OrdinalIgnoreCase)))
+                {
+                    builder.MaxPoolSize = 10;
+                    builder.Multiplexing = false;
+                }
+
                 return builder.ConnectionString;
             }
             catch
