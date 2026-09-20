@@ -45,7 +45,8 @@ public class ApiHunterSyncService(
     IDataProtectionProvider dataProtectionProvider,
     IAuditService auditService,
     IOptions<ApiHunterSourceOptions> options,
-    ILogger<ApiHunterSyncService> logger)
+    ILogger<ApiHunterSyncService> logger,
+    RepositoryAcquisitionService? repositoryAcquisitionService = null)
 {
     private readonly IDataProtector _protector = dataProtectionProvider.CreateProtector("ApiHunter.RawKeys.v1");
 
@@ -197,6 +198,19 @@ public class ApiHunterSyncService(
 
             await db.SaveChangesAsync(ct);
             await auditService.RecordAsync(AuditEventCode.ApiHunterSyncCompleted, null, null, "127.0.0.1", new { syncId = syncState.Id, imported, updated, lastSyncedKeyId = syncState.LastSyncedKeyId }, ct);
+
+            // Automatically feed newly imported repo references into repository acquisition and AI analysis cycle
+            if (repositoryAcquisitionService != null)
+            {
+                try
+                {
+                    await repositoryAcquisitionService.SeedRepositoriesFromApiHunterAsync(null, ct);
+                }
+                catch (Exception repoEx)
+                {
+                    logger.LogWarning(repoEx, "Failed to automatically seed repositories from APIHunter repo references.");
+                }
+            }
 
             return new ApiHunterSyncResultDto(
                 syncState.Id, syncState.Status.ToString(), syncState.LastSyncedKeyId,
