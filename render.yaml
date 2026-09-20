@@ -14,9 +14,9 @@ services:
       - key: ASPNETCORE_URLS
         value: http://+:8080
       - key: Database__ConnectionString
-        fromDatabase:
-          name: apihunter-postgres
-          property: connectionString
+        value: Host=aws-0-ap-northeast-1.pooler.supabase.com;Port=6543;Database=postgres;Username=postgres.kuckcjznbownoevimgwq;Password=rajq86858@gmail.com;SSL Mode=Require;Trust Server Certificate=true;
+      - key: ApiHunterSource__ConnectionString
+        value: Host=aws-0-ap-northeast-1.pooler.supabase.com;Port=6543;Database=postgres;Username=postgres.kuckcjznbownoevimgwq;Password=rajq86858@gmail.com;SSL Mode=Require;Trust Server Certificate=true;
       - key: Security__MasterEncryptionKey
         generateValue: true
       - key: Authentication__JwtSecret
@@ -51,9 +51,7 @@ services:
       - key: DOTNET_ENVIRONMENT
         value: Production
       - key: Database__ConnectionString
-        fromDatabase:
-          name: apihunter-postgres
-          property: connectionString
+        value: Host=aws-0-ap-northeast-1.pooler.supabase.com;Port=6543;Database=postgres;Username=postgres.kuckcjznbownoevimgwq;Password=rajq86858@gmail.com;SSL Mode=Require;Trust Server Certificate=true;
       - key: Security__MasterEncryptionKey
         fromService:
           type: web
@@ -89,12 +87,3 @@ services:
           type: web
           name: apihunter-api
           property: url
-
-databases:
-  # ─── Managed PostgreSQL Instance ─────────────────────────────────────────
-  - name: apihunter-postgres
-    databaseName: platform_db
-    user: platform
-    plan: starter
-    region: oregon
-    ipAllowList: [] # Private internal network access only
