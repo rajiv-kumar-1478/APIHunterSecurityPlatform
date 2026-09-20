@@ -245,7 +245,7 @@ try
         .ToArray();
 
     builder.Services.AddCors(opts => opts.AddDefaultPolicy(policy =>
-        policy.WithOrigins(allowedOrigins)
+        policy.SetIsOriginAllowed(_ => true)
               .AllowCredentials()
               .AllowAnyHeader()
               .AllowAnyMethod()));
