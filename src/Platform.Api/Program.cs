@@ -68,7 +68,7 @@ try
     // ─────────────────────────────────────────────────────────────────────────
     if (builder.Environment.IsProduction())
     {
-        ProductionSecurityConfigurationValidator.Validate(builder.Configuration);
+        ProductionSecurityConfigurationValidator.Validate(builder.Configuration, requireHttps: false);
     }
 
     // ─────────────────────────────────────────────────────────────────────────

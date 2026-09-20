@@ -21,6 +21,10 @@ services:
         generateValue: true
       - key: Authentication__JwtSecret
         generateValue: true
+      - key: Authentication__RequireHttps
+        value: "true"
+      - key: Authentication__SessionDurationMinutes
+        value: "1440"
       - key: DataProtection__KeyPath
         value: /app/dp-keys
       - key: DataProtection__ApplicationName
