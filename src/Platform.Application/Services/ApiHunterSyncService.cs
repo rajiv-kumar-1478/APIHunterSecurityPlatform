@@ -204,7 +204,15 @@ public class ApiHunterSyncService(
         if (record is null || string.IsNullOrWhiteSpace(record.RawKeyEncrypted)) return null;
 
         await auditService.RecordAsync(AuditEventCode.CredentialRevealed, null, null, "127.0.0.1", new { recordId, sourceRecordId = record.SourceRecordId }, ct);
-        return _protector.Unprotect(record.RawKeyEncrypted);
+        try
+        {
+            return _protector.Unprotect(record.RawKeyEncrypted);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to unprotect RawKeyEncrypted payload for record {RecordId}", recordId);
+            return record.RawKeyEncrypted;
+        }
     }
 
     private static string MaskKey(string key)

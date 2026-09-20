@@ -144,10 +144,12 @@ export default function ApiHunterPage() {
     try {
       const data = await apiRequest<RevealedKeyResponse>(`/api/v1/apihunter/records/${id}/reveal`, {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
       });
       setRevealedKey({ id, key: data.rawKey });
-    } catch {
-      alert("Failed to reveal key");
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : "Error unmasking credential.";
+      alert(`Failed to reveal key: ${msg}`);
     }
   }
 
