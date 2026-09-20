@@ -24,7 +24,7 @@ public class IncidentEngineWorker(
 
                 await incidentEngine.RunDetectionCycleAsync(stoppingToken);
             }
-            catch (TaskCanceledException) when (stoppingToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
@@ -37,7 +37,7 @@ public class IncidentEngineWorker(
             {
                 await Task.Delay(_cycleInterval, stoppingToken);
             }
-            catch (TaskCanceledException) when (stoppingToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }

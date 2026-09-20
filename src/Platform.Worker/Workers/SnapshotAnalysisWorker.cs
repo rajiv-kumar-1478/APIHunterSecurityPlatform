@@ -54,14 +54,21 @@ public class SnapshotAnalysisWorker(
                     await jobOrchestrator.FailJobAsync(job.Id, ex.Message, stoppingToken);
                 }
             }
-            catch (TaskCanceledException) when (stoppingToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Unexpected error in SnapshotAnalysisWorker loop");
-                await Task.Delay(5000, stoppingToken);
+                try
+                {
+                    await Task.Delay(5000, stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
             }
         }
 

@@ -9,6 +9,8 @@ public class StaleJobSweepWorker(
     IServiceScopeFactory scopeFactory,
     ILogger<StaleJobSweepWorker> logger) : BackgroundService
 {
+    private readonly TimeSpan _sweepInterval = TimeSpan.FromSeconds(60);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         logger.LogInformation("StaleJobSweepWorker starting...");
@@ -26,7 +28,7 @@ public class StaleJobSweepWorker(
                     logger.LogWarning("Swept and re-queued {Count} stale jobs", sweptCount);
                 }
             }
-            catch (TaskCanceledException) when (stoppingToken.IsCancellationRequested)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 break;
             }
@@ -35,8 +37,14 @@ public class StaleJobSweepWorker(
                 logger.LogError(ex, "Error sweeping stale jobs in worker loop");
             }
 
-            // Run sweep every 60 seconds
-            await Task.Delay(60000, stoppingToken);
+            try
+            {
+                await Task.Delay(_sweepInterval, stoppingToken);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
 
         logger.LogInformation("StaleJobSweepWorker stopping.");
