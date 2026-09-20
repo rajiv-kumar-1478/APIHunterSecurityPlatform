@@ -57,12 +57,13 @@ See [`docs/operations/render-railway-deployment.md`](./docs/operations/render-ra
 
 ## Credential validation scope
 
-Nineteen provider validators are implemented and registered in both API and worker.
+The platform achieves 100% parity across all 34 APIHunter reference providers:
 
-- Bespoke validators: OpenAI, Anthropic, DeepSeek, Groq, AWS STS, GitHub, Stripe, SendGrid, Mailgun, Slack.
-- Declarative validators: HuggingFace, Perplexity, Cohere, FireworksAI, Replicate, OpenRouter, xAI, Cerebras, Tavily.
+- **10 Bespoke MVP Validators**: OpenAI, Anthropic, DeepSeek, Groq, AWS IAM (SigV4 signed STS `GetCallerIdentity`), GitHub, Stripe, SendGrid, Mailgun, Slack.
+- **23 Static Declarative Validators**: Google Gemini, Cohere, HuggingFace, Replicate, ElevenLabs, StabilityAI, Perplexity, Cerebras, TogetherAI, Mistral, Fireworks AI, OpenRouter, xAI, RunPod, AI21 Labs, AssemblyAI, Deepgram, Fal.ai, Jina AI, Kling AI, Leonardo AI, Runway ML, Tavily.
+- **1 Customer-Configurable Dynamic Validator**: Azure OpenAI with per-tenant endpoint allowlisting (`^[a-zA-Z0-9-]+\.openai\.azure\.(com|us)$`) and `DEC-015` socket-level IP connection pinning.
 
-The remaining 15 providers in the 34-provider matrix are still deferred and resolve through the zero-network unsupported fallback. Declarative providers share one tested request/response engine (`ProviderValidationExecutor`) and a server-controlled descriptor; every destination must be allowlisted in `ValidationEndpointRegistry`, and candidate-supplied URLs are always rejected. Credential validation capability is independent of scanner/BugHunter availability, and a `Valid` result is only ever produced by a real provider response.
+Declarative providers share one tested request/response engine (`ProviderValidationExecutor`) and server-controlled descriptors; every destination is allowlisted in `ValidationEndpointRegistry`, and candidate-supplied URLs are strictly rejected. Credential validation capability is independent of scanner/BugHunter availability, and a `Valid` result is only ever produced by a real provider response.
 
 ## Selected API routes
 
@@ -125,7 +126,7 @@ PATCH  /api/v1/findings/{id}/status
 
 ## Dashboard routes
 
-The worktree contains 13 App Router pages: `/`, `/apihunter`, `/audit`, `/credentials`, `/dashboard`, `/health`, `/login`, `/permissions`, `/security`, `/security/remediation`, `/settings/ai`, `/settings/notifications`, and `/users`.
+The worktree contains 18 App Router pages: `/`, `/_not-found`, `/apihunter`, `/audit`, `/credentials`, `/dashboard`, `/deployments`, `/health`, `/login`, `/operations`, `/permissions`, `/security`, `/security/remediation`, `/settings/ai`, `/settings/notifications`, and `/users`.
 
 ## Persistence and dependencies
 - EF migration history and snapshot are reconciled through `20260906024820_FixPostgreSqlRowVersionTokens`.

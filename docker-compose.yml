@@ -33,6 +33,7 @@ services:
       ASPNETCORE_URLS: http://+:8080
       Tenant__Id: ${TENANT_ID:?TENANT_ID is required}
       Database__ConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB:-platform_db};Username=${POSTGRES_USER:-platform};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      Security__MasterEncryptionKey: ${MASTER_ENCRYPTION_KEY:-replace_with_32_char_master_key_for_entropy_ok!}
       DataProtection__KeyPath: /app/dp-keys
       DataProtection__ApplicationName: APIHunterPlatform
       Authentication__RequireHttps: "true"
@@ -83,6 +84,7 @@ services:
       DOTNET_ENVIRONMENT: Production
       Tenant__Id: ${TENANT_ID:?TENANT_ID is required}
       Database__ConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB:-platform_db};Username=${POSTGRES_USER:-platform};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      Security__MasterEncryptionKey: ${MASTER_ENCRYPTION_KEY:-replace_with_32_char_master_key_for_entropy_ok!}
       DataProtection__KeyPath: /app/dp-keys
       DataProtection__ApplicationName: APIHunterPlatform
       ScannerRuntime__RuntimeMode: Disabled
