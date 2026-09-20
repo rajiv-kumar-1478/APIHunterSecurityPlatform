@@ -54,7 +54,8 @@ public sealed class ProductionSecurityConfigurationValidator
         }
 
         var databaseConnection = configuration["Database:ConnectionString"]
-            ?? configuration.GetConnectionString("Default");
+            ?? configuration.GetConnectionString("Default")
+            ?? configuration["DATABASE_URL"];
         if (string.IsNullOrWhiteSpace(databaseConnection))
         {
             violations.Add("Database:ConnectionString is required in Production and cannot be empty.");

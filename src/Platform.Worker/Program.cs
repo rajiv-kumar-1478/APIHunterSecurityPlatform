@@ -55,6 +55,7 @@ builder.Services.Configure<ScanJobConsumerOptions>(builder.Configuration.GetSect
 var connectionString = builder.Configuration["Database:ConnectionString"]
     ?? builder.Configuration.GetConnectionString("Default")
     ?? builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? builder.Configuration["DATABASE_URL"]
     ?? "Host=localhost;Database=apihunter_platform;Username=postgres;Password=postgres";
 
 builder.Services.AddDbContext<PlatformDbContext>(options =>

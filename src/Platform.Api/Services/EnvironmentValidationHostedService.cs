@@ -16,7 +16,9 @@ public class EnvironmentValidationHostedService(
         var issues = new List<string>();
 
         // 1. Connection string verification
-        var connStr = configuration["Database:ConnectionString"] ?? configuration.GetConnectionString("Default");
+        var connStr = configuration["Database:ConnectionString"]
+                   ?? configuration.GetConnectionString("Default")
+                   ?? configuration["DATABASE_URL"];
         if (string.IsNullOrWhiteSpace(connStr) && !environment.IsEnvironment("Testing"))
         {
             issues.Add("Database connection string is missing or empty.");

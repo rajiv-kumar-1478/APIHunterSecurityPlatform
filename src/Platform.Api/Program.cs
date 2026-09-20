@@ -106,7 +106,8 @@ try
     // Database
     // ─────────────────────────────────────────────────────────────────────────
     var connStr = builder.Configuration["Database:ConnectionString"]
-               ?? builder.Configuration.GetConnectionString("Default");
+               ?? builder.Configuration.GetConnectionString("Default")
+               ?? builder.Configuration["DATABASE_URL"];
 
     builder.Services.AddDbContext<PlatformDbContext>(opts =>
     {

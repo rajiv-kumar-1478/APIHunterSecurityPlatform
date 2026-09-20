@@ -1,0 +1,100 @@
+services:
+  # ─── 1. Backend Web API (ASP.NET Core / .NET 10) ───────────────────────────
+  - type: web
+    name: apihunter-api
+    runtime: docker
+    dockerfilePath: deployment/docker/Dockerfile.api
+    dockerContext: .
+    plan: starter
+    region: oregon
+    healthCheckPath: /api/v1/health/ready
+    envVars:
+      - key: ASPNETCORE_ENVIRONMENT
+        value: Production
+      - key: ASPNETCORE_URLS
+        value: http://+:8080
+      - key: Database__ConnectionString
+        fromDatabase:
+          name: apihunter-postgres
+          property: connectionString
+      - key: Security__MasterEncryptionKey
+        generateValue: true
+      - key: Authentication__JwtSecret
+        generateValue: true
+      - key: DataProtection__KeyPath
+        value: /app/dp-keys
+      - key: DataProtection__ApplicationName
+        value: APIHunterPlatform
+      - key: Tenant__Id
+        value: 00000000-0000-0000-0000-000000000001
+      - key: Seed__AdminEmail
+        value: admin@apihunter.local
+      - key: Seed__AdminPassword
+        generateValue: true
+      - key: Cors__AllowedOrigins__0
+        fromService:
+          type: web
+          name: apihunter-frontend
+          property: url
+      - key: ScannerRuntime__RuntimeMode
+        value: Disabled
+
+  # ─── 2. Background Worker Engine ──────────────────────────────────────────
+  - type: worker
+    name: apihunter-worker
+    runtime: docker
+    dockerfilePath: deployment/docker/Dockerfile.worker
+    dockerContext: .
+    plan: starter
+    region: oregon
+    envVars:
+      - key: DOTNET_ENVIRONMENT
+        value: Production
+      - key: Database__ConnectionString
+        fromDatabase:
+          name: apihunter-postgres
+          property: connectionString
+      - key: Security__MasterEncryptionKey
+        fromService:
+          type: web
+          name: apihunter-api
+          envVarKey: Security__MasterEncryptionKey
+      - key: DataProtection__KeyPath
+        value: /app/dp-keys
+      - key: DataProtection__ApplicationName
+        value: APIHunterPlatform
+      - key: Tenant__Id
+        value: 00000000-0000-0000-0000-000000000001
+      - key: ScannerRuntime__RuntimeMode
+        value: Disabled
+      - key: ScanJobConsumer__Enabled
+        value: "false"
+      - key: CampaignScheduler__GlobalEnabled
+        value: "false"
+
+  # ─── 3. Next.js Frontend Dashboard (App Router / Turbopack) ───────────────
+  - type: web
+    name: apihunter-frontend
+    runtime: node
+    rootDir: frontend/dashboard
+    plan: starter
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: apihunter-api
+          property: url
+
+databases:
+  # ─── Managed PostgreSQL Instance ─────────────────────────────────────────
+  - name: apihunter-postgres
+    databaseName: platform_db
+    user: platform
+    plan: starter
+    region: oregon
+    ipAllowList: [] # Private internal network access only
