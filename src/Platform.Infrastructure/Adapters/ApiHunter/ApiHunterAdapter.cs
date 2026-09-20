@@ -73,7 +73,7 @@ public class ApiHunterAdapter : IApiHunterSource
         return new ApiHunterSourceSummaryDto(0, 0, 0, 0, false);
     }
 
-    public async Task<List<ApiHunterKeySourceDto>> FetchKeysIncrementalAsync(long lastSyncedId, int batchSize = 1000, CancellationToken ct = default)
+    public async Task<List<ApiHunterKeySourceDto>> FetchKeysIncrementalAsync(long lastSyncedId, int batchSize = 2500, CancellationToken ct = default)
     {
         var result = new List<ApiHunterKeySourceDto>();
         if (string.IsNullOrWhiteSpace(_connectionString)) return result;
@@ -85,7 +85,7 @@ public class ApiHunterAdapter : IApiHunterSource
 
             var (keysTable, refsTable) = await ResolveTableNamesAsync(conn, ct);
 
-            // Fetch keys batch
+            // Fetch keys batch prioritizing Valid (1) and ValidNoCredits (7) keys first
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = $@"
                 SELECT ""Id"", ""ApiKey"", ""Status"", ""ApiType"", ""SearchProvider"", ""LastCheckedUTC"", 
@@ -93,7 +93,13 @@ public class ApiHunterAdapter : IApiHunterSource
                        ""AwsAccountId"", ""AwsRiskLevel""
                 FROM {keysTable}
                 WHERE ""Id"" > @lastSyncedId
-                ORDER BY ""Id"" ASC
+                ORDER BY CASE 
+                    WHEN ""Status"" = 1 THEN 1 
+                    WHEN ""Status"" = 7 THEN 2 
+                    WHEN ""Status"" = 6 THEN 3 
+                    WHEN ""Status"" = 0 THEN 4 
+                    ELSE 5 
+                END, ""Id"" ASC
                 LIMIT @batchSize;";
 
             cmd.Parameters.AddWithValue("lastSyncedId", lastSyncedId);
@@ -106,27 +112,36 @@ public class ApiHunterAdapter : IApiHunterSource
             {
                 while (await reader.ReadAsync(ct))
                 {
-                    var id = reader.GetInt64(0);
-                    var apiKey = reader.GetString(1);
-                    var status = reader.GetInt32(2);
-                    var apiType = reader.GetInt32(3);
-                    var searchProvider = reader.GetInt32(4);
-                    var lastChecked = reader.IsDBNull(5) ? (DateTime?)null : reader.GetDateTime(5);
-                    var firstFound = reader.GetDateTime(6);
-                    var lastFound = reader.GetDateTime(7);
-                    var validationResp = reader.IsDBNull(8) ? null : reader.GetString(8);
-                    var balance = reader.IsDBNull(9) ? null : reader.GetString(9);
-                    var accountTier = reader.IsDBNull(10) ? null : reader.GetString(10);
-                    var awsAccount = reader.IsDBNull(11) ? null : reader.GetString(11);
-                    var awsRisk = reader.IsDBNull(12) ? null : reader.GetString(12);
+                    try
+                    {
+                        var id = GetSafeLong(reader, 0);
+                        var apiKey = reader.IsDBNull(1) ? null : reader.GetValue(1)?.ToString();
+                        if (string.IsNullOrWhiteSpace(apiKey)) continue;
 
-                    var dto = new ApiHunterKeySourceDto(
-                        id, apiKey, status, apiType, searchProvider, lastChecked, firstFound, lastFound,
-                        validationResp, balance, accountTier, awsAccount, awsRisk, new List<ApiHunterRepoSourceDto>());
+                        var status = GetSafeInt(reader, 2, -99);
+                        var apiType = GetSafeInt(reader, 3, -99);
+                        var searchProvider = GetSafeInt(reader, 4, 0);
+                        var lastChecked = reader.IsDBNull(5) ? (DateTime?)null : GetSafeDateTime(reader, 5);
+                        var firstFound = GetSafeDateTime(reader, 6);
+                        var lastFound = GetSafeDateTime(reader, 7);
+                        var validationResp = reader.IsDBNull(8) ? null : reader.GetValue(8)?.ToString();
+                        var balance = reader.IsDBNull(9) ? null : reader.GetValue(9)?.ToString();
+                        var accountTier = reader.IsDBNull(10) ? null : reader.GetValue(10)?.ToString();
+                        var awsAccount = reader.IsDBNull(11) ? null : reader.GetValue(11)?.ToString();
+                        var awsRisk = reader.IsDBNull(12) ? null : reader.GetValue(12)?.ToString();
 
-                    keyIds.Add(id);
-                    keyMap[id] = dto;
-                    result.Add(dto);
+                        var dto = new ApiHunterKeySourceDto(
+                            id, apiKey, status, apiType, searchProvider, lastChecked, firstFound, lastFound,
+                            validationResp, balance, accountTier, awsAccount, awsRisk, new List<ApiHunterRepoSourceDto>());
+
+                        keyIds.Add(id);
+                        keyMap[id] = dto;
+                        result.Add(dto);
+                    }
+                    catch (Exception rowEx)
+                    {
+                        _logger.LogWarning(rowEx, "Failed to parse individual APIKey record row.");
+                    }
                 }
             }
 
@@ -145,23 +160,30 @@ public class ApiHunterAdapter : IApiHunterSource
                 await using var refReader = await refCmd.ExecuteReaderAsync(ct);
                 while (await refReader.ReadAsync(ct))
                 {
-                    var refId = refReader.GetInt64(0);
-                    var keyId = refReader.GetInt64(1);
-                    var repoUrl = refReader.IsDBNull(2) ? null : refReader.GetString(2);
-                    var repoOwner = refReader.IsDBNull(3) ? null : refReader.GetString(3);
-                    var repoName = refReader.IsDBNull(4) ? null : refReader.GetString(4);
-                    var filePath = refReader.IsDBNull(5) ? null : refReader.GetString(5);
-                    var fileUrl = refReader.IsDBNull(6) ? null : refReader.GetString(6);
-                    var lineNum = refReader.GetInt32(7);
-                    var codeCtx = refReader.IsDBNull(8) ? null : refReader.GetString(8);
-                    var foundUtc = refReader.GetDateTime(9);
-
-                    var repoDto = new ApiHunterRepoSourceDto(
-                        refId, keyId, repoUrl, repoOwner, repoName, filePath, fileUrl, lineNum, codeCtx, foundUtc);
-
-                    if (keyMap.TryGetValue(keyId, out var keyDto))
+                    try
                     {
-                        keyDto.References.Add(repoDto);
+                        var refId = GetSafeLong(refReader, 0);
+                        var keyId = GetSafeLong(refReader, 1);
+                        var repoUrl = refReader.IsDBNull(2) ? null : refReader.GetValue(2)?.ToString();
+                        var repoOwner = refReader.IsDBNull(3) ? null : refReader.GetValue(3)?.ToString();
+                        var repoName = refReader.IsDBNull(4) ? null : refReader.GetValue(4)?.ToString();
+                        var filePath = refReader.IsDBNull(5) ? null : refReader.GetValue(5)?.ToString();
+                        var fileUrl = refReader.IsDBNull(6) ? null : refReader.GetValue(6)?.ToString();
+                        var lineNum = GetSafeInt(refReader, 7, 0);
+                        var codeCtx = refReader.IsDBNull(8) ? null : refReader.GetValue(8)?.ToString();
+                        var foundUtc = GetSafeDateTime(refReader, 9);
+
+                        var repoDto = new ApiHunterRepoSourceDto(
+                            refId, keyId, repoUrl, repoOwner, repoName, filePath, fileUrl, lineNum, codeCtx, foundUtc);
+
+                        if (keyMap.TryGetValue(keyId, out var keyDto))
+                        {
+                            keyDto.References.Add(repoDto);
+                        }
+                    }
+                    catch (Exception refEx)
+                    {
+                        _logger.LogWarning(refEx, "Failed to parse individual RepoReference record row.");
                     }
                 }
             }
@@ -233,5 +255,48 @@ public class ApiHunterAdapter : IApiHunterSource
             return ("\"APIKeys\"", "\"RepoReferences\"");
         }
     }
+
+    private static int GetSafeInt(NpgsqlDataReader reader, int index, int defaultValue = -99)
+    {
+        if (reader.IsDBNull(index)) return defaultValue;
+        try
+        {
+            var val = reader.GetValue(index);
+            return Convert.ToInt32(val);
+        }
+        catch
+        {
+            return defaultValue;
+        }
+    }
+
+    private static long GetSafeLong(NpgsqlDataReader reader, int index, long defaultValue = 0)
+    {
+        if (reader.IsDBNull(index)) return defaultValue;
+        try
+        {
+            var val = reader.GetValue(index);
+            return Convert.ToInt64(val);
+        }
+        catch
+        {
+            return defaultValue;
+        }
+    }
+
+    private static DateTime GetSafeDateTime(NpgsqlDataReader reader, int index)
+    {
+        if (reader.IsDBNull(index)) return DateTime.UtcNow;
+        try
+        {
+            var val = reader.GetValue(index);
+            if (val is DateTime dt) return dt.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(dt, DateTimeKind.Utc) : dt.ToUniversalTime();
+            if (val is DateTimeOffset dto) return dto.UtcDateTime;
+            if (DateTime.TryParse(val?.ToString(), out var parsed)) return DateTime.SpecifyKind(parsed, DateTimeKind.Utc);
+        }
+        catch { }
+        return DateTime.UtcNow;
+    }
 }
+
 
