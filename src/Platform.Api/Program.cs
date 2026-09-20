@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.HttpOverrides;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -139,6 +140,16 @@ try
         dpBuilder.PersistKeysToFileSystem(new DirectoryInfo(dpKeyPath));
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Forwarded Headers (Cloud Load Balancer / Reverse Proxy SSL & IP forwarding)
+    // ─────────────────────────────────────────────────────────────────────────
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.KnownNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Authentication + CSRF
     // ─────────────────────────────────────────────────────────────────────────
     builder.Services.AddAuthentication("Platform")
@@ -146,7 +157,7 @@ try
         {
             opts.Cookie.Name = "__ap_session";
             opts.Cookie.HttpOnly = true;
-            opts.Cookie.SameSite = SameSiteMode.Lax;
+            opts.Cookie.SameSite = builder.Environment.IsProduction() ? SameSiteMode.None : SameSiteMode.Lax;
             opts.Cookie.SecurePolicy = builder.Environment.IsProduction()
                 ? CookieSecurePolicy.Always
                 : CookieSecurePolicy.SameAsRequest;
@@ -202,7 +213,8 @@ try
     {
         opts.HeaderName = "X-CSRF-TOKEN";
         opts.Cookie.Name = "__ap_csrf";
-        opts.Cookie.SameSite = SameSiteMode.Strict;
+        opts.Cookie.SameSite = builder.Environment.IsProduction() ? SameSiteMode.None : SameSiteMode.Strict;
+        opts.Cookie.SecurePolicy = builder.Environment.IsProduction() ? CookieSecurePolicy.Always : CookieSecurePolicy.SameAsRequest;
         opts.Cookie.HttpOnly = true;
     });
 
@@ -576,6 +588,7 @@ try
     // ─────────────────────────────────────────────────────────────────────────
     // Middleware Pipeline
     // ─────────────────────────────────────────────────────────────────────────
+    app.UseForwardedHeaders();
     app.UseMiddleware<ErrorHandlingMiddleware>();
     app.UseMiddleware<CorrelationIdMiddleware>();
     Platform.Api.Middleware.SecurityHeadersMiddlewareExtensions.UsePlatformSecurityHeaders(app);
