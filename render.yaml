@@ -56,7 +56,4 @@ services:
       - key: NODE_ENV
         value: production
       - key: NEXT_PUBLIC_API_URL
-        fromService:
-          type: web
-          name: apihunter-api
-          property: host
+        value: https://apihunter-api.onrender.com

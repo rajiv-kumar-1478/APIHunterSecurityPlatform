@@ -7,6 +7,12 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 function normalizeApiBaseUrl(value: string | undefined): string {
   const configuredValue = value?.trim() || DEFAULT_API_BASE_URL;
   let normalized = configuredValue.replace(/\/+$/, "");
+
+  const withoutProtocol = normalized.replace(/^https?:\/\//i, "");
+  if (!withoutProtocol.includes(".") && !withoutProtocol.includes(":") && withoutProtocol !== "localhost") {
+    normalized = `${normalized}.onrender.com`;
+  }
+
   if (normalized && !normalized.startsWith("http://") && !normalized.startsWith("https://")) {
     normalized = `https://${normalized}`;
   }
