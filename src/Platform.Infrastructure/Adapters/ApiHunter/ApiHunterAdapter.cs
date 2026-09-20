@@ -15,7 +15,7 @@ public class ApiHunterAdapter : IApiHunterSource
 
     public ApiHunterAdapter(IOptions<ApiHunterSourceOptions> options, ILogger<ApiHunterAdapter> logger)
     {
-        _connectionString = options.Value.ConnectionString;
+        _connectionString = Platform.Infrastructure.Persistence.PostgresConnectionStringNormalizer.Normalize(options.Value.ConnectionString);
         _logger = logger;
     }
 

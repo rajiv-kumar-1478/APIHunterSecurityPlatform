@@ -52,11 +52,13 @@ builder.Services
     .ValidateOnStart();
 builder.Services.Configure<ScanJobConsumerOptions>(builder.Configuration.GetSection(ScanJobConsumerOptions.SectionName));
 
-var connectionString = builder.Configuration["Database:ConnectionString"]
+var rawConnectionString = builder.Configuration["Database:ConnectionString"]
     ?? builder.Configuration.GetConnectionString("Default")
     ?? builder.Configuration.GetConnectionString("DefaultConnection")
     ?? builder.Configuration["DATABASE_URL"]
     ?? "Host=localhost;Database=apihunter_platform;Username=postgres;Password=postgres";
+
+var connectionString = Platform.Infrastructure.Persistence.PostgresConnectionStringNormalizer.Normalize(rawConnectionString);
 
 builder.Services.AddDbContext<PlatformDbContext>(options =>
     options.UseNpgsql(connectionString, b => b.MigrationsAssembly("Platform.Infrastructure")));

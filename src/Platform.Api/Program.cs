@@ -106,9 +106,10 @@ try
     // ─────────────────────────────────────────────────────────────────────────
     // Database
     // ─────────────────────────────────────────────────────────────────────────
-    var connStr = builder.Configuration["Database:ConnectionString"]
+    var rawConnStr = builder.Configuration["Database:ConnectionString"]
                ?? builder.Configuration.GetConnectionString("Default")
                ?? builder.Configuration["DATABASE_URL"];
+    var connStr = PostgresConnectionStringNormalizer.Normalize(rawConnStr);
 
     builder.Services.AddDbContext<PlatformDbContext>(opts =>
     {
