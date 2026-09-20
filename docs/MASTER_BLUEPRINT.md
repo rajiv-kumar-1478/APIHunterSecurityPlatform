@@ -1,8 +1,8 @@
 # APIHunter Security Platform — Complete Master Blueprint
 
-**Reference:** Phase 1 → Phase 9.3 (this document's Phase 6 sections predate the later Phase 7/8/9 sections below)
-**Current position:** Phases 1–8 complete, and Phase 9 Steps 9.1–9.3 implemented and verified
-**Next:** Step 9.4 — SPEC-008.5/008.6 deployment-webhook and orchestration wiring (see `docs/IMPLEMENTATION_STATUS.md`)
+**Reference:** Phase 1 → Phase 9.4
+**Current position:** Phases 1–8 complete, and Phase 9 (Steps 9.1–9.4, CI/CD deployment webhooks, and 34-provider validation parity) fully implemented and verified
+**Next:** Operational monitoring, runtime container sandbox hard gate (Docker-gated), and production readiness
 **APIHunterV2:** Independent system; must remain isolated unless explicitly approved
 
 ---
@@ -2548,5 +2548,53 @@ Healthy     ──► Worker alive, 0 overdue, 0 auto-paused
 | 🟢 | Bounded DB queries | Indexed lookback ranges and strict pagination limits |
 | 🟢 | Next.js production build | `npm --prefix frontend/dashboard run build` compiles with 0 errors |
 | 🟢 | Phase 9.2 tests remain green | Full unit test suite (559 / 559) and integration suite passing |
+
+---
+
+# 94. Phase 9.4 — CI/CD Deployment Webhook Infrastructure & 34-Provider Parity
+
+## 94.1 Deployment Webhook Architecture
+
+Step 9.4 implements machine-to-machine CI/CD deployment verification webhooks. Authentication is strictly HMAC-SHA256 based with server-authoritative application target URLs:
+
+```text
+CI/CD Pipeline (e.g. GitHub Actions)
+       │
+       │ POST /api/v1/webhooks/deployments
+       │ X-Webhook-Id, X-Webhook-Timestamp, X-Hub-Signature-256
+       ▼
+DeploymentWebhookController [AllowAnonymous, IgnoreAntiforgeryToken]
+       │
+       ├── Reads raw payload & verifies HMAC via IDeploymentWebhookHandler
+       ├── Enforces ±5 min timestamp replay window & idempotency (deployment_webhook_records)
+       ├── Resolves server-authoritative target URL (registered_applications)
+       └── Enqueues SecurityScanJob (TriggeredBy = "CiCdWebhook")
+               │
+               ▼
+GenericScanWorker (Worker)
+       │
+       └── Calls IDeploymentScanOrchestrator.ExecuteDeploymentScanAsync (SPEC-008.6)
+```
+
+## 94.2 34-Provider Validation Parity Matrix
+
+The platform achieves 100% parity across all 34 APIHunter reference providers:
+- **10 Bespoke MVP Validators**: OpenAI, Anthropic, DeepSeek, Groq, AWS IAM (SigV4 STS), GitHub, Stripe, SendGrid, Mailgun, Slack.
+- **23 Static Declarative Validators**: Google Gemini, Cohere, HuggingFace, Replicate, ElevenLabs, StabilityAI, Perplexity, Cerebras, TogetherAI, Mistral, Fireworks AI, OpenRouter, xAI, RunPod, AI21 Labs, AssemblyAI, Deepgram, Fal.ai, Jina AI, Kling AI, Leonardo AI, Runway ML, Tavily.
+- **1 Customer-Configurable Dynamic Validator**: Azure OpenAI with per-tenant resource endpoint allowlisting (`^[a-zA-Z0-9-]+\.openai\.azure\.(com|us)$`) and `DEC-015` socket-level IP connection pinning.
+
+## 94.3 Acceptance Matrix
+
+| Gate | Requirement | Proof / Implementation |
+|---|---|---|
+| 🟢 | HMAC-SHA256 webhook authentication | `DeploymentWebhookHandlerTests` & `DeploymentWebhookControllerTests` |
+| 🟢 | Idempotent webhook delivery | Unique primary key on `deployment_webhook_records.WebhookId` (409 Conflict on replay) |
+| 🟢 | Data Protection encrypted secrets | `Platform.DeploymentWebhook.HmacSecret` via `IDataProtector` |
+| 🟢 | CI/CD Deployments Dashboard | Next.js 16 `/deployments` page with interactive registration, one-time copy modal, and instructions |
+| 🟢 | 34/34 Provider Parity | 10 bespoke + 23 declarative + 1 customer-configurable Azure OpenAI validator |
+| 🟢 | DEC-015 Socket Connection Pinning | `SocketsHttpHandler.ConnectCallback` pins TCP connection to validated IP address |
+| 🟢 | Fail-Closed Scanner Safety | Scanner execution remains fail-closed (`UnavailableScannerRuntime`) |
+| 🟢 | Next.js 16 Production Build | 17 static routes compiled with 0 errors |
+
 
 
