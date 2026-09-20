@@ -44,13 +44,15 @@ public class ApiHunterAdapter : IApiHunterSource
             await using var conn = new NpgsqlConnection(_connectionString);
             await conn.OpenAsync(ct);
 
+            var (keysTable, refsTable) = await ResolveTableNamesAsync(conn, ct);
+
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = @"
+            cmd.CommandText = $@"
                 SELECT 
-                    (SELECT COUNT(*) FROM ""APIKeys"") as TotalKeys,
-                    (SELECT COUNT(*) FROM ""APIKeys"" WHERE ""Status"" = 1) as ValidKeys,
-                    (SELECT COUNT(*) FROM ""APIKeys"" WHERE ""Status"" = 7) as ValidNoCreditsKeys,
-                    (SELECT COUNT(*) FROM ""RepoReferences"") as TotalRepoReferences;";
+                    (SELECT COUNT(*) FROM {keysTable}) as TotalKeys,
+                    (SELECT COUNT(*) FROM {keysTable} WHERE ""Status"" = 1) as ValidKeys,
+                    (SELECT COUNT(*) FROM {keysTable} WHERE ""Status"" = 7) as ValidNoCreditsKeys,
+                    (SELECT COUNT(*) FROM {refsTable}) as TotalRepoReferences;";
 
             await using var reader = await cmd.ExecuteReaderAsync(ct);
             if (await reader.ReadAsync(ct))
@@ -65,7 +67,7 @@ public class ApiHunterAdapter : IApiHunterSource
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to connect or fetch summary from APIHunter source database.");
+            _logger.LogError(ex, "Failed to connect or fetch summary from APIHunter source database. Exception: {Message}", ex.Message);
         }
 
         return new ApiHunterSourceSummaryDto(0, 0, 0, 0, false);
@@ -81,13 +83,15 @@ public class ApiHunterAdapter : IApiHunterSource
             await using var conn = new NpgsqlConnection(_connectionString);
             await conn.OpenAsync(ct);
 
+            var (keysTable, refsTable) = await ResolveTableNamesAsync(conn, ct);
+
             // Fetch keys batch
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = @"
+            cmd.CommandText = $@"
                 SELECT ""Id"", ""ApiKey"", ""Status"", ""ApiType"", ""SearchProvider"", ""LastCheckedUTC"", 
                        ""FirstFoundUTC"", ""LastFoundUTC"", ""ValidationResponse"", ""Balance"", ""AccountTier"", 
                        ""AwsAccountId"", ""AwsRiskLevel""
-                FROM ""APIKeys""
+                FROM {keysTable}
                 WHERE ""Id"" > @lastSyncedId
                 ORDER BY ""Id"" ASC
                 LIMIT @batchSize;";
@@ -130,10 +134,10 @@ public class ApiHunterAdapter : IApiHunterSource
             if (keyIds.Count > 0)
             {
                 await using var refCmd = conn.CreateCommand();
-                refCmd.CommandText = @"
+                refCmd.CommandText = $@"
                     SELECT ""Id"", ""APIKeyId"", ""RepoURL"", ""RepoOwner"", ""RepoName"", ""FilePath"", 
                            ""FileURL"", ""LineNumber"", ""CodeContext"", ""FoundUTC""
-                    FROM ""RepoReferences""
+                    FROM {refsTable}
                     WHERE ""APIKeyId"" = ANY(@keyIds);";
 
                 refCmd.Parameters.AddWithValue("keyIds", keyIds.ToArray());
@@ -164,7 +168,7 @@ public class ApiHunterAdapter : IApiHunterSource
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to execute read-only query against APIHunter database.");
+            _logger.LogError(ex, "Failed to execute read-only query against APIHunter database. Exception: {Message}", ex.Message);
         }
 
         return result;
@@ -196,4 +200,38 @@ public class ApiHunterAdapter : IApiHunterSource
             return new ComponentHealthResult("APIHunterSource", false, "Unhealthy", ex.Message, sw.Elapsed);
         }
     }
+
+    private static async Task<(string keysTable, string refsTable)> ResolveTableNamesAsync(NpgsqlConnection conn, CancellationToken ct)
+    {
+        try
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public';";
+            var tables = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            await using (var reader = await cmd.ExecuteReaderAsync(ct))
+            {
+                while (await reader.ReadAsync(ct))
+                {
+                    tables.Add(reader.GetString(0));
+                }
+            }
+
+            string keysTable = tables.Contains("APIKeys") ? "\"APIKeys\"" :
+                               tables.Contains("apikeys") ? "\"apikeys\"" :
+                               tables.Contains("api_keys") ? "\"api_keys\"" :
+                               tables.Contains("api_hunter_records") ? "\"api_hunter_records\"" : "\"APIKeys\"";
+
+            string refsTable = tables.Contains("RepoReferences") ? "\"RepoReferences\"" :
+                               tables.Contains("reporeferences") ? "\"reporeferences\"" :
+                               tables.Contains("repo_references") ? "\"repo_references\"" :
+                               tables.Contains("api_hunter_repo_references") ? "\"api_hunter_repo_references\"" : "\"RepoReferences\"";
+
+            return (keysTable, refsTable);
+        }
+        catch
+        {
+            return ("\"APIKeys\"", "\"RepoReferences\"");
+        }
+    }
 }
+
