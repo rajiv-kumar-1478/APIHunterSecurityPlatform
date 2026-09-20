@@ -231,6 +231,78 @@ public class AiProviderAdapterTests
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Cohere Tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task Cohere_Success_NormalizesResponseAndUsage()
+    {
+        var jsonResponse = """
+        {
+            "id": "cohere-resp-1",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    { "type": "text", "text": "{\"finding\": \"Cohere Security Analysis\"}" }
+                ]
+            },
+            "finish_reason": "COMPLETE",
+            "usage": {
+                "tokens": {
+                    "input_tokens": 120,
+                    "output_tokens": 45
+                }
+            }
+        }
+        """;
+        var client = CreateMockHttpClient(HttpStatusCode.OK, jsonResponse, new() { { "x-ratelimit-remaining", "950" } });
+        var config = new AiProviderConfig { ProviderName = "Cohere", ModelName = "command-r-plus-08-2024", EncryptedApiKey = _encryptedApiKey };
+        var adapter = new CohereProviderAdapter(client, _protectionProvider, config);
+
+        var request = new AiPromptRequest("System Prompt", "User Prompt");
+        var response = await adapter.CompletePromptAsync(request);
+
+        Assert.True(response.IsSuccess);
+        Assert.Equal("Cohere", response.ProviderName);
+        Assert.Equal("command-r-plus-08-2024", response.ModelName);
+        Assert.Equal("{\"finding\": \"Cohere Security Analysis\"}", response.NormalizedJsonContent);
+        Assert.Equal(120, response.PromptTokens);
+        Assert.Equal(45, response.CompletionTokens);
+        Assert.Equal(950, response.RateLimitRemaining);
+        Assert.False(response.IsRetryable);
+    }
+
+    [Fact]
+    public async Task Cohere_AuthFailure_ReturnsNonRetryableError()
+    {
+        var client = CreateMockHttpClient(HttpStatusCode.Unauthorized, "{\"message\": \"Invalid API Key\"}");
+        var config = new AiProviderConfig { ProviderName = "Cohere", ModelName = "command-r-plus-08-2024", EncryptedApiKey = _encryptedApiKey };
+        var adapter = new CohereProviderAdapter(client, _protectionProvider, config);
+
+        var response = await adapter.CompletePromptAsync(new AiPromptRequest("System", "User"));
+
+        Assert.False(response.IsSuccess);
+        Assert.Equal("AuthenticationFailure", response.ErrorCode);
+        Assert.False(response.IsRetryable);
+        Assert.DoesNotContain(RawApiKey, response.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task Cohere_RateLimited_ReturnsRetryableError()
+    {
+        var client = CreateMockHttpClient(HttpStatusCode.TooManyRequests, "{\"message\": \"Rate limit reached\"}", new() { { "x-ratelimit-remaining", "0" } });
+        var config = new AiProviderConfig { ProviderName = "Cohere", ModelName = "command-r-plus-08-2024", EncryptedApiKey = _encryptedApiKey };
+        var adapter = new CohereProviderAdapter(client, _protectionProvider, config);
+
+        var response = await adapter.CompletePromptAsync(new AiPromptRequest("System", "User"));
+
+        Assert.False(response.IsSuccess);
+        Assert.Equal("RateLimited", response.ErrorCode);
+        Assert.True(response.IsRetryable);
+        Assert.Equal(0, response.RateLimitRemaining);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Model Availability & Security Corrections Tests
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -286,14 +358,16 @@ public class AiProviderAdapterTests
         var anthropic = new AnthropicProviderAdapter(client, _protectionProvider, config);
         var deepSeek = new DeepSeekProviderAdapter(client, _protectionProvider, config);
         var groq = new GroqProviderAdapter(client, _protectionProvider, config);
+        var cohere = new CohereProviderAdapter(client, _protectionProvider, config);
 
         var request = new AiPromptRequest("Sys", "Usr");
         var res1 = await openAi.CompletePromptAsync(request);
         var res2 = await anthropic.CompletePromptAsync(request);
         var res3 = await deepSeek.CompletePromptAsync(request);
         var res4 = await groq.CompletePromptAsync(request);
+        var res5 = await cohere.CompletePromptAsync(request);
 
-        foreach (var res in new[] { res1, res2, res3, res4 })
+        foreach (var res in new[] { res1, res2, res3, res4, res5 })
         {
             Assert.DoesNotContain(RawApiKey, res.ErrorMessage ?? string.Empty);
             Assert.DoesNotContain(RawApiKey, res.RawResponseContent);

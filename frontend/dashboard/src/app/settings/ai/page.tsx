@@ -50,6 +50,57 @@ export default function AdminAiSettingsPage() {
   const [editModelName, setEditModelName] = useState('');
   const [editPriority, setEditPriority] = useState(100);
   const [editRawApiKey, setEditRawApiKey] = useState('');
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addProviderName, setAddProviderName] = useState('Cohere');
+  const [addModelName, setAddModelName] = useState('command-r-plus-08-2024');
+  const [addPriority, setAddPriority] = useState(100);
+  const [addRawApiKey, setAddRawApiKey] = useState('');
+
+  const handleProviderSelect = (name: string) => {
+    setAddProviderName(name);
+    switch (name) {
+      case 'Cohere':
+        setAddModelName('command-r-plus-08-2024');
+        break;
+      case 'OpenAI':
+        setAddModelName('gpt-4o');
+        break;
+      case 'Anthropic':
+        setAddModelName('claude-3-5-sonnet-20241022');
+        break;
+      case 'DeepSeek':
+        setAddModelName('deepseek-chat');
+        break;
+      case 'Groq':
+        setAddModelName('llama-3.3-70b-versatile');
+        break;
+      default:
+        break;
+    }
+  };
+
+  const handleCreateProvider = async () => {
+    try {
+      await apiRequest<unknown>('/api/v1/ai/providers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          providerName: addProviderName,
+          modelName: addModelName,
+          priority: addPriority,
+          isEnabled: true,
+          rawApiKey: addRawApiKey ? addRawApiKey : null,
+          capabilities: ['JsonOutput'],
+        }),
+      });
+      setActionMessage({ type: 'success', text: `Provider ${addProviderName} configured successfully.` });
+      setShowAddModal(false);
+      setAddRawApiKey('');
+      await fetchAiSettings();
+    } catch {
+      setActionMessage({ type: 'error', text: 'Failed to create provider configuration.' });
+    }
+  };
 
   const fetchAiSettings = useCallback(async () => {
     try {
@@ -175,28 +226,48 @@ export default function AdminAiSettingsPage() {
           </p>
         </div>
 
-        {/* Global AI Pause Toggle */}
-        {globalState && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: '#111827', padding: '10px 16px', borderRadius: '8px', border: '1px solid #374151' }}>
-            <span style={{ fontSize: '13px', fontWeight: '600', color: '#d1d5db' }}>GLOBAL AI ANALYSIS:</span>
-            <button
-              onClick={toggleGlobalAi}
-              style={{
-                backgroundColor: globalState.isEnabled ? '#10b981' : '#ef4444',
-                color: '#ffffff',
-                border: 'none',
-                padding: '6px 14px',
-                borderRadius: '6px',
-                fontWeight: '700',
-                fontSize: '12px',
-                cursor: 'pointer',
-                letterSpacing: '0.5px'
-              }}
-            >
-              {globalState.isEnabled ? '[ ENABLED ]' : '[ PAUSED ]'}
-            </button>
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <button
+            onClick={() => setShowAddModal(true)}
+            style={{
+              backgroundColor: '#4f46e5',
+              color: '#ffffff',
+              border: 'none',
+              padding: '8px 16px',
+              borderRadius: '6px',
+              fontWeight: '600',
+              fontSize: '13px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            + Add AI Provider
+          </button>
+          {/* Global AI Pause Toggle */}
+          {globalState && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: '#111827', padding: '10px 16px', borderRadius: '8px', border: '1px solid #374151' }}>
+              <span style={{ fontSize: '13px', fontWeight: '600', color: '#d1d5db' }}>GLOBAL AI ANALYSIS:</span>
+              <button
+                onClick={toggleGlobalAi}
+                style={{
+                  backgroundColor: globalState.isEnabled ? '#10b981' : '#ef4444',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  fontWeight: '700',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  letterSpacing: '0.5px'
+                }}
+              >
+                {globalState.isEnabled ? '[ ENABLED ]' : '[ PAUSED ]'}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {actionMessage && (
@@ -363,6 +434,77 @@ export default function AdminAiSettingsPage() {
                 style={{ backgroundColor: '#4f46e5', color: '#ffffff', border: 'none', padding: '6px 14px', borderRadius: '4px', cursor: 'pointer' }}
               >
                 Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Provider Modal */}
+      {showAddModal && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100 }}>
+          <div style={{ backgroundColor: '#111827', padding: '24px', borderRadius: '8px', width: '420px', border: '1px solid #374151' }}>
+            <h3 style={{ margin: '0 0 16px 0', color: '#ffffff' }}>Add AI Intelligence Provider</h3>
+            
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', fontSize: '12px', color: '#9ca3af', marginBottom: '4px' }}>Provider</label>
+              <select
+                value={addProviderName}
+                onChange={(e) => handleProviderSelect(e.target.value)}
+                style={{ width: '100%', padding: '8px', backgroundColor: '#1f2937', border: '1px solid #374151', color: '#ffffff', borderRadius: '4px' }}
+              >
+                <option value="Cohere">Cohere</option>
+                <option value="OpenAI">OpenAI</option>
+                <option value="Anthropic">Anthropic</option>
+                <option value="DeepSeek">DeepSeek</option>
+                <option value="Groq">Groq</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', fontSize: '12px', color: '#9ca3af', marginBottom: '4px' }}>Model Name</label>
+              <input
+                type="text"
+                value={addModelName}
+                onChange={(e) => setAddModelName(e.target.value)}
+                placeholder="e.g. command-r-plus-08-2024"
+                style={{ width: '100%', padding: '8px', backgroundColor: '#1f2937', border: '1px solid #374151', color: '#ffffff', borderRadius: '4px' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '14px' }}>
+              <label style={{ display: 'block', fontSize: '12px', color: '#9ca3af', marginBottom: '4px' }}>Priority (Higher = Preferred Fallback)</label>
+              <input
+                type="number"
+                value={addPriority}
+                onChange={(e) => setAddPriority(Number(e.target.value))}
+                style={{ width: '100%', padding: '8px', backgroundColor: '#1f2937', border: '1px solid #374151', color: '#ffffff', borderRadius: '4px' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '18px' }}>
+              <label style={{ display: 'block', fontSize: '12px', color: '#9ca3af', marginBottom: '4px' }}>Provider API Key</label>
+              <input
+                type="password"
+                placeholder="Paste API Key here..."
+                value={addRawApiKey}
+                onChange={(e) => setAddRawApiKey(e.target.value)}
+                style={{ width: '100%', padding: '8px', backgroundColor: '#1f2937', border: '1px solid #374151', color: '#ffffff', borderRadius: '4px' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                onClick={() => setShowAddModal(false)}
+                style={{ backgroundColor: '#374151', color: '#ffffff', border: 'none', padding: '6px 14px', borderRadius: '4px', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateProvider}
+                style={{ backgroundColor: '#4f46e5', color: '#ffffff', border: 'none', padding: '6px 14px', borderRadius: '4px', cursor: 'pointer' }}
+              >
+                Save Provider
               </button>
             </div>
           </div>

@@ -247,4 +247,43 @@ public class AiModelRouterTests : IDisposable
         Assert.Equal("System", usedProvider);
         _mockClientFactory.Verify(f => f.CreateClient(It.IsAny<string>()), Times.Never);
     }
+
+    [Fact]
+    public async Task Router_SelectsCohereProvider_WhenConfiguredAndHighestPriority()
+    {
+        var cohere = new AiProviderConfig
+        {
+            ProviderName = "Cohere",
+            ModelName = "command-r-plus-08-2024",
+            Priority = 150,
+            IsEnabled = true,
+            EncryptedApiKey = _encryptedKey1,
+            HealthStatus = AiHealthStatus.Healthy
+        };
+
+        _dbContext.AiProviderConfigs.Add(cohere);
+        await _dbContext.SaveChangesAsync();
+
+        var cohereSuccessJson = """
+        {
+            "id": "cohere-123",
+            "message": {
+                "role": "assistant",
+                "content": [ { "type": "text", "text": "{\"analysis\": \"Cohere Verified\"}" } ]
+            },
+            "usage": { "tokens": { "input_tokens": 80, "output_tokens": 25 } }
+        }
+        """;
+
+        _mockClientFactory.Setup(f => f.CreateClient(It.IsAny<string>()))
+            .Returns(CreateMockHttpClient(HttpStatusCode.OK, cohereSuccessJson));
+
+        var router = new AiModelRouter(_dbContext, _mockClientFactory.Object, _protectionProvider, _mockLogger.Object);
+        var (response, usedProvider, usedModel) = await router.ExecuteWithFallbackAsync(new AiPromptRequest("Sys", "Usr"));
+
+        Assert.True(response.IsSuccess);
+        Assert.Equal("Cohere", usedProvider);
+        Assert.Equal("command-r-plus-08-2024", usedModel);
+        Assert.Equal("{\"analysis\": \"Cohere Verified\"}", response.NormalizedJsonContent);
+    }
 }

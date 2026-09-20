@@ -35,7 +35,8 @@ public class ResponsePolicyOptions
         "sendgrid",
         "mailgun",
         "groq",
-        "deepseek"
+        "deepseek",
+        "cohere"
     };
 
     public HashSet<RemediationActionType> DisallowedActionTypesInProduction { get; set; } = new()

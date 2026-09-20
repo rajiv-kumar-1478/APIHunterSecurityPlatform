@@ -480,6 +480,7 @@ export default function CredentialsPage() {
               <option value="Mailgun">Mailgun</option>
               <option value="DeepSeek">DeepSeek</option>
               <option value="Groq">Groq</option>
+              <option value="Cohere">Cohere</option>
               <option value="Slack">Slack</option>
             </select>
 

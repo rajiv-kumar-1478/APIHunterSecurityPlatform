@@ -233,6 +233,7 @@ public class AiModelRouter : IAiModelRouter
             "ANTHROPIC" => new AnthropicProviderAdapter(client, _protectionProvider, config),
             "DEEPSEEK" => new DeepSeekProviderAdapter(client, _protectionProvider, config),
             "GROQ" => new GroqProviderAdapter(client, _protectionProvider, config),
+            "COHERE" => new CohereProviderAdapter(client, _protectionProvider, config),
             _ => new OpenAiProviderAdapter(client, _protectionProvider, config)
         };
     }
