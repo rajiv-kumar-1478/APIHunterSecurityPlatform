@@ -286,7 +286,9 @@ public class RepositoryAcquisitionService(
             var sizeBytes = entry.Length;
 
             // Calculate SHA-256 content hash safely
-            using var entryStream = entry.DataStream;
+            // Note: Do NOT wrap entry.DataStream in 'using' because TarReader manages its lifecycle.
+            // Disposing it causes 'Cannot access a disposed object: SubReadStream' on subsequent GetNextEntryAsync() calls.
+            var entryStream = entry.DataStream;
             if (entryStream == null) continue;
 
             using var sha256 = System.Security.Cryptography.SHA256.Create();
