@@ -15,6 +15,13 @@ public static class PostgresConnectionStringNormalizer
             return string.Empty;
 
         var trimmed = connectionString.Trim();
+        if ((trimmed.StartsWith("\"") && trimmed.EndsWith("\"")) || (trimmed.StartsWith("'") && trimmed.EndsWith("'")))
+        {
+            if (trimmed.Length >= 2)
+            {
+                trimmed = trimmed.Substring(1, trimmed.Length - 2).Trim();
+            }
+        }
 
         if (trimmed.Equals("InMemory", StringComparison.OrdinalIgnoreCase))
             return "InMemory";
@@ -92,6 +99,7 @@ public static class PostgresConnectionStringNormalizer
                     builder.TrustServerCertificate = true;
                     builder.MaxPoolSize = 10;
                     builder.Multiplexing = false;
+                    builder.NoResetOnClose = true;
                 }
 
                 return builder.ConnectionString;
