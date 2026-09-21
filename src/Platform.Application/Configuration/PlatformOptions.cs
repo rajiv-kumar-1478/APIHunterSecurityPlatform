@@ -107,7 +107,7 @@ public class GitHubOptions
     public string PrivateKeyPem { get; set; } = string.Empty;
     public long InstallationId { get; set; }
     public string PersonalAccessToken { get; set; } = string.Empty;
-    public string UserAgent { get; set; } = "APIHunterPlatform/1.0";
+    public string UserAgent { get; set; } = "APIHunterPlatform";
 }
 
 public class ObjectStoreOptions

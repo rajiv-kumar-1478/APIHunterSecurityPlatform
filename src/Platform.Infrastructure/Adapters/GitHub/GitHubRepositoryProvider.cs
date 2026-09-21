@@ -85,9 +85,9 @@ public class GitHubRepositoryProvider(
 
     private async Task<GitHubClient> CreateClientAsync(CancellationToken ct)
     {
-        var client = new GitHubClient(new Octokit.ProductHeaderValue(options.Value.UserAgent));
+        var productHeader = CreateProductHeader(options.Value.UserAgent);
+        var client = new GitHubClient(productHeader);
         var token = await GetActiveTokenAsync(ct);
-
 
         if (!string.IsNullOrWhiteSpace(token))
         {
@@ -95,6 +95,24 @@ public class GitHubRepositoryProvider(
         }
 
         return client;
+    }
+
+    internal static Octokit.ProductHeaderValue CreateProductHeader(string? userAgent)
+    {
+        if (string.IsNullOrWhiteSpace(userAgent))
+        {
+            return new Octokit.ProductHeaderValue("APIHunterPlatform", "1.0");
+        }
+
+        var slashIdx = userAgent.IndexOf('/');
+        if (slashIdx > 0)
+        {
+            var name = userAgent[..slashIdx].Trim();
+            var version = userAgent[(slashIdx + 1)..].Trim();
+            return new Octokit.ProductHeaderValue(name, string.IsNullOrEmpty(version) ? "1.0" : version);
+        }
+
+        return new Octokit.ProductHeaderValue(userAgent.Trim());
     }
 
     private async Task<string?> GetActiveTokenAsync(CancellationToken ct)

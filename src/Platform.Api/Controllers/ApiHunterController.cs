@@ -328,6 +328,21 @@ public class ApiHunterController(
                 message = $"Queued acquisition & snapshot analysis for repository '{repo.FullName}'."
             });
         }
+        catch (Octokit.NotFoundException nfEx)
+        {
+            logger.LogWarning(nfEx, "Repository not found on GitHub for URL {Url}", request?.Url);
+            return NotFound(new { title = "Repository not found", error = $"Repository does not exist or is private on GitHub: {nfEx.Message}" });
+        }
+        catch (Octokit.RateLimitExceededException rlEx)
+        {
+            logger.LogWarning(rlEx, "GitHub API rate limit exceeded while querying {Url}", request?.Url);
+            return StatusCode(429, new { title = "GitHub rate limit exceeded", error = "GitHub API rate limit exceeded. Please wait or configure GitHub credentials." });
+        }
+        catch (Octokit.ApiException apiEx)
+        {
+            logger.LogWarning(apiEx, "GitHub API error for {Url}", request?.Url);
+            return StatusCode((int)apiEx.StatusCode, new { title = "GitHub API Error", error = apiEx.Message });
+        }
         catch (ArgumentException ex)
         {
             return BadRequest(new { title = "Invalid repository URL", error = ex.Message });

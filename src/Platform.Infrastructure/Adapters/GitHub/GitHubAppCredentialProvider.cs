@@ -48,7 +48,7 @@ public class GitHubAppCredentialProvider(
             var opts = options.Value;
             logger.LogInformation("Refreshing GitHub App installation access token for App ID {AppId}, Installation ID {InstallationId}", opts.AppId, opts.InstallationId);
 
-            var jwtClient = new GitHubClient(new Octokit.ProductHeaderValue(opts.UserAgent))
+            var jwtClient = new GitHubClient(GitHubRepositoryProvider.CreateProductHeader(opts.UserAgent))
             {
                 Credentials = new Credentials(CreateJwtToken(opts.AppId, opts.PrivateKeyPem), AuthenticationType.Bearer)
             };
