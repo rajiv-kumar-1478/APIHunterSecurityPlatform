@@ -354,11 +354,6 @@ try
         builder.Configuration.GetSection(ContinuousRevalidationOptions.SectionName));
     builder.Services.AddScoped<ValidationStateChangeProcessor>();
     builder.Services.AddHostedService<Platform.Infrastructure.Workers.ContinuousRevalidationWorker>();
-    builder.Services.AddHostedService<Platform.Worker.Workers.RepositoryAcquisitionWorker>();
-    builder.Services.AddHostedService<Platform.Worker.Workers.SnapshotAnalysisWorker>();
-    builder.Services.AddHostedService<Platform.Worker.Workers.StaleJobSweepWorker>();
-    builder.Services.AddHostedService<Platform.Worker.Workers.CredentialValidationWorker>();
-    builder.Services.AddHostedService<Platform.Worker.Workers.IncidentEngineWorker>();
 
     // Phase 6 Step 7 — Security Alerting & High-Fidelity Notifications
     builder.Services.Configure<SecurityAlertOptions>(
@@ -576,6 +571,9 @@ try
     builder.Services.Configure<CampaignSchedulerOptions>(builder.Configuration.GetSection(CampaignSchedulerOptions.SectionName));
     builder.Services.Configure<ScanJobConsumerOptions>(builder.Configuration.GetSection(ScanJobConsumerOptions.SectionName));
     builder.Services.AddSingleton<ScanJobHeartbeatService>();
+    builder.Services.AddSingleton<IDatabaseErrorClassifier, PostgreSqlDatabaseErrorClassifier>();
+    builder.Services.AddScoped<ICampaignScheduleCalculator, CampaignScheduleCalculator>();
+    builder.Services.AddScoped<ICampaignDispatchService, CampaignDispatchService>();
 
     builder.Services.AddHostedService<Platform.Worker.Workers.RepositoryAcquisitionWorker>();
     builder.Services.AddHostedService<Platform.Worker.Workers.SnapshotAnalysisWorker>();
