@@ -73,6 +73,7 @@ interface SummaryData {
     validNoCredits: number;
     repoReferences: number;
   };
+  availableApiTypes?: string[];
   lastSync: {
     id: string;
     lastSyncedKeyId: number;
@@ -109,6 +110,12 @@ export default function ApiHunterPage() {
   const [records, setRecords] = useState<ApiHunterRecord[]>([]);
   const [totalRecords, setTotalRecords] = useState(0);
   const [statusFilter, setStatusFilter] = useState("all");
+  const [apiTypeFilter, setApiTypeFilter] = useState("all");
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [hasReposFilter, setHasReposFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [availableApiTypes, setAvailableApiTypes] = useState<string[]>([]);
+  const [availableProviders, setAvailableProviders] = useState<string[]>(["GitHub"]);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -129,8 +136,9 @@ export default function ApiHunterPage() {
         }>("/api/v1/auth/me");
         setUser(userData);
 
+        await fetchFilters();
         await fetchSummary();
-        await fetchRecords(statusFilter, page);
+        await fetchRecords(statusFilter, apiTypeFilter, providerFilter, hasReposFilter, searchQuery, page);
       } catch {
         router.replace("/login");
       } finally {
@@ -138,24 +146,64 @@ export default function ApiHunterPage() {
       }
     }
     init();
-  }, [router, page, statusFilter]);
+  }, [router, page, statusFilter, apiTypeFilter, providerFilter, hasReposFilter]);
+
+  async function fetchFilters() {
+    try {
+      const data = await apiRequest<{ apiTypes: string[]; providers: string[] }>("/api/v1/apihunter/filters");
+      if (data.apiTypes && data.apiTypes.length > 0) {
+        setAvailableApiTypes(data.apiTypes);
+      }
+      if (data.providers && data.providers.length > 0) {
+        setAvailableProviders(data.providers);
+      }
+    } catch {
+      // Fallback
+    }
+  }
 
   async function fetchSummary() {
     try {
       const data = await apiRequest<SummaryData>("/api/v1/apihunter/summary");
       setSummary(data);
+      if (data.availableApiTypes && data.availableApiTypes.length > 0) {
+        setAvailableApiTypes(data.availableApiTypes);
+      }
     } catch (error: unknown) {
       console.error("Failed to fetch APIHunter summary", error);
     }
   }
 
-  async function fetchRecords(filter: string, currentPage: number) {
+  async function fetchRecords(
+    status: string,
+    apiType: string,
+    provider: string,
+    hasRepos: string,
+    search: string,
+    currentPage: number
+  ) {
     try {
       const query = new URLSearchParams({
-        status: filter,
+        status,
         page: String(currentPage),
         pageSize: "15",
       });
+
+      if (apiType && apiType !== "all") {
+        query.append("apiType", apiType);
+      }
+      if (provider && provider !== "all") {
+        query.append("searchProvider", provider);
+      }
+      if (hasRepos === "yes") {
+        query.append("hasRepos", "true");
+      } else if (hasRepos === "no") {
+        query.append("hasRepos", "false");
+      }
+      if (search && search.trim()) {
+        query.append("search", search.trim());
+      }
+
       const data = await apiRequest<ApiHunterRecordListResponse>(
         `/api/v1/apihunter/records?${query.toString()}`,
       );
@@ -164,6 +212,22 @@ export default function ApiHunterPage() {
     } catch (error: unknown) {
       console.error("Failed to fetch records", error);
     }
+  }
+
+  function handleSearchSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setPage(1);
+    fetchRecords(statusFilter, apiTypeFilter, providerFilter, hasReposFilter, searchQuery, 1);
+  }
+
+  function handleResetFilters() {
+    setStatusFilter("all");
+    setApiTypeFilter("all");
+    setProviderFilter("all");
+    setHasReposFilter("all");
+    setSearchQuery("");
+    setPage(1);
+    fetchRecords("all", "all", "all", "all", "", 1);
   }
 
   async function handleSync() {
@@ -177,7 +241,7 @@ export default function ApiHunterPage() {
         `Sync ${result.status}! Imported: ${result.recordsImported}, Updated: ${result.recordsUpdated}`,
       );
       await fetchSummary();
-      await fetchRecords(statusFilter, page);
+      await fetchRecords(statusFilter, apiTypeFilter, providerFilter, hasReposFilter, searchQuery, page);
     } catch {
       setSyncMessage("Synchronization error occurred.");
     } finally {
@@ -332,30 +396,123 @@ export default function ApiHunterPage() {
         </div>
       </div>
 
-      {/* Filter Tabs & Content Table */}
-      <div className="glass-card overflow-hidden border-[#00d4ff]/10">
-        <div className="p-4 border-b border-[#00d4ff]/10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            {["all", "Valid", "ValidNoCredits", "Unverified"].map((f) => (
+      {/* Filter Tabs & Search Controls Bar */}
+      <div className="glass-card overflow-hidden border-[#00d4ff]/10 mb-8">
+        <div className="p-4 border-b border-[#00d4ff]/10 space-y-3">
+          {/* Top Filter Controls: Status Tabs & Search Input */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {["all", "Valid", "ValidNoCredits", "Unverified"].map((f) => (
+                <button
+                  key={f}
+                  onClick={() => {
+                    setStatusFilter(f);
+                    setPage(1);
+                  }}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    statusFilter === f
+                      ? "bg-[#00d4ff]/20 text-[#00d4ff] border border-[#00d4ff]/30 shadow-sm"
+                      : "text-[#7ba3c8] hover:text-white hover:bg-white/5"
+                  }`}
+                >
+                  {f === "all" ? "All Records" : f}
+                </button>
+              ))}
+            </div>
+
+            {/* Quick Search Bar */}
+            <form onSubmit={handleSearchSubmit} className="flex items-center gap-2 max-w-md w-full">
+              <div className="relative flex-1">
+                <input
+                  type="text"
+                  placeholder="Search key, provider, balance, tier, or ID..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 bg-[#050811] border border-white/10 rounded-lg text-xs text-white placeholder-[#4a6580] focus:border-[#00d4ff]/50 focus:outline-none transition-all"
+                />
+                <svg className="w-4 h-4 text-[#7ba3c8] absolute left-2.5 top-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </div>
               <button
-                key={f}
-                onClick={() => {
-                  setStatusFilter(f);
-                  setPage(1);
-                }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-                  statusFilter === f
-                    ? "bg-[#00d4ff]/20 text-[#00d4ff] border border-[#00d4ff]/30 shadow-sm"
-                    : "text-[#7ba3c8] hover:text-white hover:bg-white/5"
-                }`}
+                type="submit"
+                className="px-3 py-1.5 bg-[#00d4ff]/20 hover:bg-[#00d4ff]/30 text-[#00d4ff] border border-[#00d4ff]/30 rounded-lg text-xs font-semibold transition-all"
               >
-                {f === "all" ? "All Records" : f}
+                Search
               </button>
-            ))}
+            </form>
           </div>
 
-          <div className="text-xs text-[#7ba3c8]">
-            Showing {records.length} of {totalRecords} records
+          {/* Secondary Schema Filters Row: API Type dropdown, Provider dropdown, Repos Filter */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-white/5 text-xs">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* API Type Dropdown */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-semibold text-[#7ba3c8] uppercase">API Type:</span>
+                <select
+                  value={apiTypeFilter}
+                  onChange={(e) => {
+                    setApiTypeFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  className="bg-[#050811] border border-white/10 rounded-lg px-2.5 py-1 text-xs text-[#e8f4ff] focus:border-[#00d4ff]/50 focus:outline-none transition-all"
+                >
+                  <option value="all">All Types ({availableApiTypes.length > 0 ? `${availableApiTypes.length} Available` : "All"})</option>
+                  {availableApiTypes.map((type) => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Search Provider Dropdown */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-semibold text-[#7ba3c8] uppercase">Provider:</span>
+                <select
+                  value={providerFilter}
+                  onChange={(e) => {
+                    setProviderFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  className="bg-[#050811] border border-white/10 rounded-lg px-2.5 py-1 text-xs text-[#e8f4ff] focus:border-[#00d4ff]/50 focus:outline-none transition-all"
+                >
+                  <option value="all">All Providers</option>
+                  {availableProviders.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Has Linked Repositories Filter */}
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px] font-semibold text-[#7ba3c8] uppercase">Linked Repos:</span>
+                <select
+                  value={hasReposFilter}
+                  onChange={(e) => {
+                    setHasReposFilter(e.target.value);
+                    setPage(1);
+                  }}
+                  className="bg-[#050811] border border-white/10 rounded-lg px-2.5 py-1 text-xs text-[#e8f4ff] focus:border-[#00d4ff]/50 focus:outline-none transition-all"
+                >
+                  <option value="all">All (With & Without Repos)</option>
+                  <option value="yes">Has Linked Repositories</option>
+                  <option value="no">Zero Repo References</option>
+                </select>
+              </div>
+
+              {/* Clear All Filters Button */}
+              {(statusFilter !== "all" || apiTypeFilter !== "all" || providerFilter !== "all" || hasReposFilter !== "all" || searchQuery) && (
+                <button
+                  onClick={handleResetFilters}
+                  className="text-xs text-[#ff4757] hover:underline font-medium"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+
+            <div className="text-xs text-[#7ba3c8]">
+              Found <span className="text-white font-semibold">{totalRecords.toLocaleString()}</span> matching records
+            </div>
           </div>
         </div>
 

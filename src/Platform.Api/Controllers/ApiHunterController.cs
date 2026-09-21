@@ -31,6 +31,13 @@ public class ApiHunterController(
 
             var lastSync = await db.ApiHunterSyncStates.OrderByDescending(s => s.LastSyncStartedAtUtc).FirstOrDefaultAsync(ct);
 
+            var availableApiTypes = await db.ApiHunterRecords
+                .Where(r => !string.IsNullOrEmpty(r.ApiType))
+                .Select(r => r.ApiType)
+                .Distinct()
+                .OrderBy(t => t)
+                .ToListAsync(ct);
+
             return Ok(new
             {
                 source = sourceSummary,
@@ -41,6 +48,7 @@ public class ApiHunterController(
                     validNoCredits = importedValidNoCredits,
                     repoReferences = importedRepos
                 },
+                availableApiTypes,
                 lastSync = lastSync is null ? null : new
                 {
                     lastSync.Id,
@@ -61,10 +69,43 @@ public class ApiHunterController(
         }
     }
 
+    [HttpGet("filters")]
+    [RequireAuth]
+    public async Task<IActionResult> GetFilters(CancellationToken ct = default)
+    {
+        try
+        {
+            var apiTypes = await db.ApiHunterRecords
+                .Where(r => !string.IsNullOrEmpty(r.ApiType))
+                .Select(r => r.ApiType)
+                .Distinct()
+                .OrderBy(t => t)
+                .ToListAsync(ct);
+
+            var providers = await db.ApiHunterRecords
+                .Where(r => !string.IsNullOrEmpty(r.SearchProvider))
+                .Select(r => r.SearchProvider)
+                .Distinct()
+                .OrderBy(p => p)
+                .ToListAsync(ct);
+
+            return Ok(new { apiTypes, providers });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error occurred while retrieving filters");
+            return StatusCode(500, new { title = "Failed to retrieve filters", error = ex.Message });
+        }
+    }
+
     [HttpGet("records")]
     [RequireAuth]
     public async Task<IActionResult> GetRecords(
         [FromQuery] string? status,
+        [FromQuery] string? apiType,
+        [FromQuery] string? searchProvider,
+        [FromQuery] bool? hasRepos,
+        [FromQuery] string? search,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
@@ -80,6 +121,35 @@ public class ApiHunterController(
                 {
                     query = query.Where(r => r.Status == parsedStatus);
                 }
+            }
+
+            if (!string.IsNullOrWhiteSpace(apiType) && !apiType.Equals("all", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(r => r.ApiType.ToLower() == apiType.ToLower());
+            }
+
+            if (!string.IsNullOrWhiteSpace(searchProvider) && !searchProvider.Equals("all", StringComparison.OrdinalIgnoreCase))
+            {
+                query = query.Where(r => r.SearchProvider.ToLower() == searchProvider.ToLower());
+            }
+
+            if (hasRepos.HasValue)
+            {
+                query = hasRepos.Value 
+                    ? query.Where(r => r.RepoReferences.Any())
+                    : query.Where(r => !r.RepoReferences.Any());
+            }
+
+            if (!string.IsNullOrWhiteSpace(search))
+            {
+                var term = search.Trim().ToLower();
+                query = query.Where(r => 
+                    r.MaskedKey.ToLower().Contains(term) ||
+                    r.ApiType.ToLower().Contains(term) ||
+                    r.SearchProvider.ToLower().Contains(term) ||
+                    (r.Balance != null && r.Balance.ToLower().Contains(term)) ||
+                    (r.AccountTier != null && r.AccountTier.ToLower().Contains(term)) ||
+                    r.SourceRecordId.ToString().Contains(term));
             }
 
             var total = await query.CountAsync(ct);
