@@ -13,11 +13,13 @@ public class ApiHunterAdapter : IApiHunterSource
 {
     private readonly string _connectionString;
     private readonly ILogger<ApiHunterAdapter> _logger;
+    private readonly IApiHunterStatusMapper _statusMapper;
 
     public ApiHunterAdapter(
         IOptions<ApiHunterSourceOptions> options,
         IConfiguration configuration,
-        ILogger<ApiHunterAdapter> logger)
+        ILogger<ApiHunterAdapter> logger,
+        IApiHunterStatusMapper? statusMapper = null)
     {
         var rawConnStr = !string.IsNullOrWhiteSpace(options.Value.ConnectionString)
             ? options.Value.ConnectionString
@@ -30,6 +32,7 @@ public class ApiHunterAdapter : IApiHunterSource
 
         _connectionString = Platform.Infrastructure.Persistence.PostgresConnectionStringNormalizer.Normalize(rawConnStr);
         _logger = logger;
+        _statusMapper = statusMapper ?? new ApiHunterStatusMapper();
     }
 
     public async Task<ApiHunterSourceSummaryDto> GetSummaryAsync(CancellationToken ct = default)
@@ -221,6 +224,134 @@ public class ApiHunterAdapter : IApiHunterSource
         }
 
         return result;
+    }
+
+    public async Task<ApiHunterKeyDetailsDto?> GetKeyDetailsAsync(long keyId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(_connectionString)) return null;
+
+        try
+        {
+            await using var conn = new NpgsqlConnection(_connectionString);
+            await conn.OpenAsync(ct);
+
+            var (keysTable, refsTable) = await ResolveTableNamesAsync(conn, ct);
+
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $@"
+                SELECT ""Id"", ""ApiKey"", ""Status"", ""ApiType"", ""SearchProvider"", ""LastCheckedUTC"", 
+                       ""FirstFoundUTC"", ""LastFoundUTC"", ""TimesDisplayed"", ""ErrorCount"", ""ValidationResponse"", 
+                       ""Balance"", ""AccountTier"", ""DiscoveredByTelegramId"", ""Metadata"",
+                       ""AwsAccountId"", ""AwsUserArn"", ""AwsUserId"", ""AwsCredentialType"", ""AwsAttachedPolicies"", 
+                       ""AwsRiskLevel"", ""AwsIsRootAccount""
+                FROM {keysTable}
+                WHERE ""Id"" = @keyId
+                LIMIT 1;";
+
+            cmd.Parameters.AddWithValue("keyId", keyId);
+
+            ApiHunterKeyDetailsDto? dto = null;
+            await using (var reader = await cmd.ExecuteReaderAsync(ct))
+            {
+                if (await reader.ReadAsync(ct))
+                {
+                    var apiKey = reader.IsDBNull(1) ? string.Empty : reader.GetValue(1)?.ToString() ?? string.Empty;
+                    var statusInt = GetSafeInt(reader, 2, -99);
+                    var apiTypeInt = GetSafeInt(reader, 3, -99);
+                    var providerInt = GetSafeInt(reader, 4, 0);
+                    var lastChecked = reader.IsDBNull(5) ? (DateTime?)null : GetSafeDateTime(reader, 5);
+                    var firstFound = GetSafeDateTime(reader, 6);
+                    var lastFound = GetSafeDateTime(reader, 7);
+                    var timesDisplayed = GetSafeInt(reader, 8, 0);
+                    var errorCount = GetSafeInt(reader, 9, 0);
+                    var validationResponse = reader.IsDBNull(10) ? null : reader.GetValue(10)?.ToString();
+                    var balance = reader.IsDBNull(11) ? null : reader.GetValue(11)?.ToString();
+                    var accountTier = reader.IsDBNull(12) ? null : reader.GetValue(12)?.ToString();
+                    var telegramId = reader.IsDBNull(13) ? (long?)null : GetSafeLong(reader, 13);
+                    var metadata = reader.IsDBNull(14) ? null : reader.GetValue(14)?.ToString();
+
+                    var awsAccountId = reader.IsDBNull(15) ? null : reader.GetValue(15)?.ToString();
+                    var awsUserArn = reader.IsDBNull(16) ? null : reader.GetValue(16)?.ToString();
+                    var awsUserId = reader.IsDBNull(17) ? null : reader.GetValue(17)?.ToString();
+                    var awsCredType = reader.IsDBNull(18) ? null : reader.GetValue(18)?.ToString();
+                    var awsPolicies = reader.IsDBNull(19) ? null : reader.GetValue(19)?.ToString();
+                    var awsRiskLevel = reader.IsDBNull(20) ? null : reader.GetValue(20)?.ToString();
+                    var awsIsRoot = !reader.IsDBNull(21) && reader.GetBoolean(21);
+
+                    ApiHunterAwsMetadataDto? awsMetadata = null;
+                    if (!string.IsNullOrEmpty(awsAccountId) || !string.IsNullOrEmpty(awsUserArn) || !string.IsNullOrEmpty(awsRiskLevel) || awsIsRoot)
+                    {
+                        awsMetadata = new ApiHunterAwsMetadataDto(awsAccountId, awsUserArn, awsUserId, awsCredType, awsPolicies, awsRiskLevel, awsIsRoot);
+                    }
+
+                    var apiTypeName = _statusMapper.MapApiType(apiTypeInt);
+                    var statusDomain = _statusMapper.MapStatus(statusInt);
+                    var statusName = statusDomain.ToString();
+                    var searchProvider = providerInt == 1 ? "GitHub" : (providerInt == 0 ? "GitHub" : $"Provider_{providerInt}");
+
+                    var firstFoundUtc = firstFound.Kind == DateTimeKind.Utc ? firstFound : DateTime.SpecifyKind(firstFound, DateTimeKind.Utc);
+                    var firstFoundIst = firstFoundUtc.AddHours(5).AddMinutes(30).ToString("yyyy-MM-dd HH:mm:ss");
+
+                    string? lastCheckedIst = null;
+                    if (lastChecked.HasValue)
+                    {
+                        var lastCheckedUtc = lastChecked.Value.Kind == DateTimeKind.Utc ? lastChecked.Value : DateTime.SpecifyKind(lastChecked.Value, DateTimeKind.Utc);
+                        lastCheckedIst = lastCheckedUtc.AddHours(5).AddMinutes(30).ToString("yyyy-MM-dd HH:mm:ss");
+                    }
+
+                    dto = new ApiHunterKeyDetailsDto(
+                        ApiKey: apiKey,
+                        ApiTypeName: apiTypeName,
+                        Status: statusInt,
+                        StatusName: statusName,
+                        SearchProvider: searchProvider,
+                        Balance: balance,
+                        AccountTier: accountTier,
+                        FirstFoundUTC: firstFound,
+                        LastFoundUTC: lastFound,
+                        LastCheckedUTC: lastChecked,
+                        ErrorCount: errorCount,
+                        FirstFoundIST: firstFoundIst,
+                        LastCheckedIST: lastCheckedIst,
+                        TimesDisplayed: timesDisplayed,
+                        ValidationResponse: validationResponse,
+                        Metadata: metadata,
+                        DiscoveredByTelegramId: telegramId,
+                        AwsMetadata: awsMetadata,
+                        Sources: new List<ApiHunterSourceReferenceDto>());
+                }
+            }
+
+            if (dto != null)
+            {
+                await using var refCmd = conn.CreateCommand();
+                refCmd.CommandText = $@"
+                    SELECT ""RepoURL"", ""FileURL"", ""FoundUTC""
+                    FROM {refsTable}
+                    WHERE ""APIKeyId"" = @keyId;";
+                refCmd.Parameters.AddWithValue("keyId", keyId);
+
+                await using var refReader = await refCmd.ExecuteReaderAsync(ct);
+                while (await refReader.ReadAsync(ct))
+                {
+                    var repoUrl = refReader.IsDBNull(0) ? null : refReader.GetValue(0)?.ToString();
+                    var fileUrl = refReader.IsDBNull(1) ? null : refReader.GetValue(1)?.ToString();
+                    var foundUtc = GetSafeDateTime(refReader, 2);
+                    var sourceUrl = !string.IsNullOrWhiteSpace(fileUrl) ? fileUrl : (repoUrl ?? string.Empty);
+                    if (!string.IsNullOrWhiteSpace(sourceUrl))
+                    {
+                        dto.Sources.Add(new ApiHunterSourceReferenceDto(sourceUrl, foundUtc));
+                    }
+                }
+            }
+
+            return dto;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to fetch key details for APIHunter key ID {KeyId}", keyId);
+            return null;
+        }
     }
 
     public async Task<ComponentHealthResult> HealthCheckAsync(CancellationToken ct = default)

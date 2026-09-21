@@ -252,21 +252,138 @@ public class ApiHunterSyncService(
         }
     }
 
+    public async Task<ApiHunterKeyDetailsDto?> RevealKeyDetailsAsync(Guid recordId, CancellationToken ct = default)
+    {
+        var record = await db.ApiHunterRecords
+            .Include(r => r.RepoReferences)
+            .FirstOrDefaultAsync(r => r.Id == recordId, ct);
+        if (record is null) return null;
+
+        await auditService.RecordAsync(
+            AuditEventCode.CredentialRevealed, 
+            null, 
+            null, 
+            "127.0.0.1", 
+            new { recordId, sourceRecordId = record.SourceRecordId }, 
+            ct);
+
+        ApiHunterKeyDetailsDto? liveDetails = null;
+        if (record.SourceRecordId > 0)
+        {
+            try
+            {
+                liveDetails = await source.GetKeyDetailsAsync(record.SourceRecordId, ct);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed to fetch live key details from APIHunter source for key ID {KeyId}", record.SourceRecordId);
+            }
+        }
+
+        if (liveDetails != null && !string.IsNullOrWhiteSpace(liveDetails.ApiKey))
+        {
+            // Cache plaintext key in local record so it persists
+            try
+            {
+                if (record.RawKeyEncrypted != liveDetails.ApiKey)
+                {
+                    record.RawKeyEncrypted = liveDetails.ApiKey;
+                    record.UpdatedAtUtc = DateTime.UtcNow;
+                    await db.SaveChangesAsync(ct);
+                }
+            }
+            catch (Exception dbEx)
+            {
+                logger.LogWarning(dbEx, "Failed to update cached key in local record {RecordId}", recordId);
+            }
+
+            return liveDetails;
+        }
+
+        // Fallback: Reconstruct from local record if source DB is unreachable
+        string unmaskedKey = record.RawKeyEncrypted;
+        if (!string.IsNullOrWhiteSpace(record.RawKeyEncrypted))
+        {
+            try
+            {
+                unmaskedKey = _protector.Unprotect(record.RawKeyEncrypted);
+            }
+            catch
+            {
+                try
+                {
+                    var base64Bytes = Convert.FromBase64String(record.RawKeyEncrypted);
+                    var decoded = System.Text.Encoding.UTF8.GetString(base64Bytes);
+                    if (!string.IsNullOrWhiteSpace(decoded) && !record.RawKeyEncrypted.StartsWith("CfDJ8"))
+                    {
+                        unmaskedKey = decoded;
+                    }
+                }
+                catch
+                {
+                    unmaskedKey = record.RawKeyEncrypted;
+                }
+            }
+        }
+
+        var firstFoundUtc = record.FirstFoundUtc.Kind == DateTimeKind.Utc ? record.FirstFoundUtc : DateTime.SpecifyKind(record.FirstFoundUtc, DateTimeKind.Utc);
+        var firstFoundIst = firstFoundUtc.AddHours(5).AddMinutes(30).ToString("yyyy-MM-dd HH:mm:ss");
+
+        string? lastCheckedIst = null;
+        if (record.LastCheckedUtc.HasValue)
+        {
+            var lastCheckedUtc = record.LastCheckedUtc.Value.Kind == DateTimeKind.Utc ? record.LastCheckedUtc.Value : DateTime.SpecifyKind(record.LastCheckedUtc.Value, DateTimeKind.Utc);
+            lastCheckedIst = lastCheckedUtc.AddHours(5).AddMinutes(30).ToString("yyyy-MM-dd HH:mm:ss");
+        }
+
+        ApiHunterAwsMetadataDto? fallbackAws = null;
+        if (!string.IsNullOrEmpty(record.AwsAccountId) || !string.IsNullOrEmpty(record.AwsRiskLevel))
+        {
+            fallbackAws = new ApiHunterAwsMetadataDto(record.AwsAccountId, null, null, null, null, record.AwsRiskLevel, false);
+        }
+
+        var sources = record.RepoReferences.Select(r => new ApiHunterSourceReferenceDto(
+            !string.IsNullOrWhiteSpace(r.FileUrl) ? r.FileUrl : r.RepoUrl,
+            r.FoundUtc
+        )).ToList();
+
+        int statusCode = record.Status switch
+        {
+            PlatformKeyStatus.Valid => 1,
+            PlatformKeyStatus.ValidNoCredits => 7,
+            PlatformKeyStatus.Invalid => 0,
+            PlatformKeyStatus.Unverified => -99,
+            PlatformKeyStatus.Error => 6,
+            _ => -99
+        };
+
+        return new ApiHunterKeyDetailsDto(
+            ApiKey: unmaskedKey,
+            ApiTypeName: record.ApiType,
+            Status: statusCode,
+            StatusName: record.Status.ToString(),
+            SearchProvider: record.SearchProvider,
+            Balance: record.Balance,
+            AccountTier: record.AccountTier,
+            FirstFoundUTC: record.FirstFoundUtc,
+            LastFoundUTC: record.LastFoundUtc,
+            LastCheckedUTC: record.LastCheckedUtc,
+            ErrorCount: 0,
+            FirstFoundIST: firstFoundIst,
+            LastCheckedIST: lastCheckedIst,
+            TimesDisplayed: 0,
+            ValidationResponse: record.ValidationResponse,
+            Metadata: null,
+            DiscoveredByTelegramId: null,
+            AwsMetadata: fallbackAws,
+            Sources: sources
+        );
+    }
+
     public async Task<string?> RevealKeyAsync(Guid recordId, CancellationToken ct = default)
     {
-        var record = await db.ApiHunterRecords.FindAsync(new object[] { recordId }, ct);
-        if (record is null || string.IsNullOrWhiteSpace(record.RawKeyEncrypted)) return null;
-
-        await auditService.RecordAsync(AuditEventCode.CredentialRevealed, null, null, "127.0.0.1", new { recordId, sourceRecordId = record.SourceRecordId }, ct);
-        try
-        {
-            return _protector.Unprotect(record.RawKeyEncrypted);
-        }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to unprotect RawKeyEncrypted payload for record {RecordId}", recordId);
-            return record.RawKeyEncrypted;
-        }
+        var details = await RevealKeyDetailsAsync(recordId, ct);
+        return details?.ApiKey;
     }
 
     private static string MaskKey(string key)

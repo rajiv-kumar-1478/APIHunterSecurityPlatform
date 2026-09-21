@@ -137,10 +137,15 @@ public class ApiHunterController(
     {
         try
         {
-            var rawKey = await syncService.RevealKeyAsync(id, ct);
-            if (rawKey is null) return NotFound(new { title = "Credential record not found" });
+            var details = await syncService.RevealKeyDetailsAsync(id, ct);
+            if (details is null) return NotFound(new { title = "Credential record not found" });
 
-            return Ok(new { recordId = id, rawKey });
+            return Ok(new
+            {
+                recordId = id,
+                rawKey = details.ApiKey,
+                details
+            });
         }
         catch (Exception ex)
         {
