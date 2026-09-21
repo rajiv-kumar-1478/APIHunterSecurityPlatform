@@ -451,6 +451,38 @@ public class ScanJobService
                 return requestedHost.Equals(appHost, StringComparison.OrdinalIgnoreCase)
                     || requestedHost.EndsWith("." + appHost, StringComparison.OrdinalIgnoreCase);
             });
+
+            if (!isAuthorized)
+            {
+                // Prevent SSRF to localhost or private network ranges
+                var isPrivateHost = requestedHost.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+                    || requestedHost.StartsWith("127.", StringComparison.OrdinalIgnoreCase)
+                    || requestedHost.StartsWith("10.", StringComparison.OrdinalIgnoreCase)
+                    || requestedHost.StartsWith("192.168.", StringComparison.OrdinalIgnoreCase)
+                    || requestedHost.StartsWith("169.254.", StringComparison.OrdinalIgnoreCase)
+                    || requestedHost.EndsWith(".local", StringComparison.OrdinalIgnoreCase)
+                    || requestedHost.EndsWith(".internal", StringComparison.OrdinalIgnoreCase);
+
+                if (!isPrivateHost && requestedHost.Contains('.'))
+                {
+                    // Auto-register and authorize new public security target for ad-hoc operator scans
+                    var newTarget = new SecurityTarget
+                    {
+                        Id = Guid.NewGuid(),
+                        Name = requestedHost,
+                        BaseUrl = $"{requestedUri.Scheme}://{requestedHost}",
+                        TargetType = "Website",
+                        Enabled = true,
+                        CreatedAtUtc = DateTime.UtcNow,
+                        UpdatedAtUtc = DateTime.UtcNow
+                    };
+
+                    _dbContext.SecurityTargets.Add(newTarget);
+                    await _dbContext.SaveChangesAsync(ct);
+                    _logger.LogInformation("Auto-authorized and registered security target '{Target}' for scanning.", requestedHost);
+                    isAuthorized = true;
+                }
+            }
         }
 
         if (!isAuthorized)
