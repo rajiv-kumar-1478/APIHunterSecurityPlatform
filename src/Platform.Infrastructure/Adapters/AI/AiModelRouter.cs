@@ -220,6 +220,82 @@ public class AiModelRouter : IAiModelRouter
             eligible.Add(c);
         }
 
+        // Automatic fallback: check if AI keys are supplied via environment variables
+        if (eligible.Count == 0)
+        {
+            var keyProtector = _protectionProvider.CreateProtector("Platform.AiProvider.ApiKey");
+
+            var groqKey = Environment.GetEnvironmentVariable("GROQ_API_KEY");
+            if (!string.IsNullOrWhiteSpace(groqKey))
+            {
+                eligible.Add(new AiProviderConfig
+                {
+                    ProviderName = "Groq",
+                    ModelName = "llama-3.3-70b-versatile",
+                    EncryptedApiKey = keyProtector.Protect(groqKey.Trim()),
+                    CapabilitiesJson = "[\"JsonOutput\",\"Investigation\"]",
+                    IsEnabled = true,
+                    Priority = 100
+                });
+            }
+
+            var openAiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+            if (!string.IsNullOrWhiteSpace(openAiKey))
+            {
+                eligible.Add(new AiProviderConfig
+                {
+                    ProviderName = "OpenAI",
+                    ModelName = "gpt-4o-mini",
+                    EncryptedApiKey = keyProtector.Protect(openAiKey.Trim()),
+                    CapabilitiesJson = "[\"JsonOutput\",\"Investigation\"]",
+                    IsEnabled = true,
+                    Priority = 90
+                });
+            }
+
+            var anthropicKey = Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY");
+            if (!string.IsNullOrWhiteSpace(anthropicKey))
+            {
+                eligible.Add(new AiProviderConfig
+                {
+                    ProviderName = "Anthropic",
+                    ModelName = "claude-3-5-haiku-20241022",
+                    EncryptedApiKey = keyProtector.Protect(anthropicKey.Trim()),
+                    CapabilitiesJson = "[\"JsonOutput\",\"Investigation\"]",
+                    IsEnabled = true,
+                    Priority = 85
+                });
+            }
+
+            var cohereKey = Environment.GetEnvironmentVariable("COHERE_API_KEY");
+            if (!string.IsNullOrWhiteSpace(cohereKey))
+            {
+                eligible.Add(new AiProviderConfig
+                {
+                    ProviderName = "Cohere",
+                    ModelName = "command-r",
+                    EncryptedApiKey = keyProtector.Protect(cohereKey.Trim()),
+                    CapabilitiesJson = "[\"JsonOutput\",\"Investigation\"]",
+                    IsEnabled = true,
+                    Priority = 80
+                });
+            }
+
+            var deepseekKey = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY");
+            if (!string.IsNullOrWhiteSpace(deepseekKey))
+            {
+                eligible.Add(new AiProviderConfig
+                {
+                    ProviderName = "DeepSeek",
+                    ModelName = "deepseek-chat",
+                    EncryptedApiKey = keyProtector.Protect(deepseekKey.Trim()),
+                    CapabilitiesJson = "[\"JsonOutput\",\"Investigation\"]",
+                    IsEnabled = true,
+                    Priority = 95
+                });
+            }
+        }
+
         return eligible;
     }
 

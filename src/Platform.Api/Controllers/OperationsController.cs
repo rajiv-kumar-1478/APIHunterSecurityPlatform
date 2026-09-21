@@ -21,6 +21,7 @@ public class OperationsController(
     ILogger<OperationsController> logger) : ControllerBase
 {
     [HttpGet("health-overview")]
+    [HttpGet("dashboard")]
     public async Task<IActionResult> GetHealthOverview(CancellationToken ct)
     {
         var tenantId = tenantContext.TenantId;

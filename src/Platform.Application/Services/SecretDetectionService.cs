@@ -21,7 +21,8 @@ public class SecretDetectionService(
     SnapshotService snapshotService,
     IOptions<DetectionOptions> options,
     ILogger<SecretDetectionService> logger,
-    IObjectStore? objectStore = null)
+    IObjectStore? objectStore = null,
+    IRepositoryProvider? repositoryProvider = null)
 {
     private readonly IDataProtector _rawProtector = dataProtectionProvider.CreateProtector("Platform.SecretCandidate.RawValue");
     private readonly IDataProtector _contextProtector = dataProtectionProvider.CreateProtector("Platform.CandidateOccurrence.RawContext");
@@ -41,6 +42,14 @@ public class SecretDetectionService(
             .Where(sf => sf.SnapshotId == snapshotId && !sf.IsAnalyzed)
             .ToListAsync(ct);
 
+        // Self-healing: If all files were marked analyzed but 0 candidates were found (e.g. earlier ephemeral disk wipe), re-evaluate!
+        if (filesToAnalyze.Count == 0 && snapshot.CandidatesFound == 0)
+        {
+            filesToAnalyze = await dbContext.SnapshotFiles
+                .Where(sf => sf.SnapshotId == snapshotId)
+                .ToListAsync(ct);
+        }
+
         int totalCandidatesFound = 0;
         var opts = options.Value;
 
@@ -48,37 +57,85 @@ public class SecretDetectionService(
         var contentHashes = filesToAnalyze.Select(f => f.ContentHash).Distinct().ToList();
         var reusableOccurrencesMap = await snapshotService.GetReusableOccurrencesForHashesAsync(snapshot.RepositoryId, contentHashes, ct);
 
-        // 2. Load pending file contents from tarball archive in ObjectStore
+        // 2. Load pending file contents from tarball archive in ObjectStore (or re-stream from GitHub if ephemeral disk was cleared)
         var fileContents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Stream? archiveStream = null;
+
         if (objectStore != null && !string.IsNullOrWhiteSpace(snapshot.ArchiveObjectKey))
         {
             try
             {
-                await using var archiveStream = await objectStore.GetAsync(snapshot.ArchiveObjectKey, ct);
-                await using var gzipStream = new GZipStream(archiveStream, CompressionMode.Decompress);
-                using var tarReader = new TarReader(gzipStream);
-
-                var pendingPaths = filesToAnalyze
-                    .Where(f => !f.IsSkipped && !reusableOccurrencesMap.ContainsKey(f.ContentHash))
-                    .Select(f => f.FilePath)
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                TarEntry? entry;
-                while ((entry = await tarReader.GetNextEntryAsync(false, ct)) != null)
+                if (await objectStore.ExistsAsync(snapshot.ArchiveObjectKey, ct))
                 {
-                    if (entry.EntryType == TarEntryType.Directory || entry.EntryType == TarEntryType.SymbolicLink)
-                    {
-                        continue;
-                    }
+                    archiveStream = await objectStore.GetAsync(snapshot.ArchiveObjectKey, ct);
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "Failed reading existing object store archive {Key}", snapshot.ArchiveObjectKey);
+            }
+        }
 
-                    var rawName = entry.Name;
-                    var slashIdx = rawName.IndexOf('/');
-                    var relPath = slashIdx >= 0 ? rawName[(slashIdx + 1)..] : rawName;
+        // Ephemeral container self-healing: automatically stream from GitHub if file was lost on Render container restart
+        if (archiveStream == null && repositoryProvider != null && snapshot.Repository != null && !string.IsNullOrWhiteSpace(snapshot.CommitSha))
+        {
+            try
+            {
+                logger.LogInformation("Repository archive missing from ObjectStore for snapshot {SnapshotId}. Streaming from GitHub for {Owner}/{Name} @ {Commit}...",
+                    snapshotId, snapshot.Repository.Owner, snapshot.Repository.Name, snapshot.CommitSha);
 
-                    if (pendingPaths.Contains(relPath) && entry.DataStream != null && entry.Length < (opts.MaxFileSizeMb * 1024 * 1024))
+                var downloaded = await repositoryProvider.DownloadArchiveAsync(
+                    snapshot.Repository.Owner,
+                    snapshot.Repository.Name,
+                    snapshot.CommitSha,
+                    ct);
+
+                if (objectStore != null && !string.IsNullOrWhiteSpace(snapshot.ArchiveObjectKey))
+                {
+                    await objectStore.PutAsync(snapshot.ArchiveObjectKey, downloaded, "application/gzip", ct);
+                    archiveStream = await objectStore.GetAsync(snapshot.ArchiveObjectKey, ct);
+                }
+                else
+                {
+                    archiveStream = downloaded;
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed streaming archive from GitHub for snapshot {SnapshotId}", snapshotId);
+            }
+        }
+
+        if (archiveStream != null)
+        {
+            try
+            {
+                await using (archiveStream)
+                await using (var gzipStream = new GZipStream(archiveStream, CompressionMode.Decompress))
+                using (var tarReader = new TarReader(gzipStream))
+                {
+                    var pendingPaths = filesToAnalyze
+                        .Where(f => !f.IsSkipped && !reusableOccurrencesMap.ContainsKey(f.ContentHash))
+                        .Select(f => f.FilePath)
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                    TarEntry? entry;
+                    while ((entry = await tarReader.GetNextEntryAsync(false, ct)) != null)
                     {
-                        using var textReader = new StreamReader(entry.DataStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
-                        fileContents[relPath] = await textReader.ReadToEndAsync(ct);
+                        if (entry.EntryType == TarEntryType.Directory || entry.EntryType == TarEntryType.SymbolicLink)
+                        {
+                            continue;
+                        }
+
+                        var rawName = entry.Name;
+                        var slashIdx = rawName.IndexOf('/');
+                        var relPath = slashIdx >= 0 ? rawName[(slashIdx + 1)..] : rawName;
+
+                        if (pendingPaths.Contains(relPath) && entry.DataStream != null && entry.Length < (opts.MaxFileSizeMb * 1024 * 1024))
+                        {
+                            using var textReader = new StreamReader(entry.DataStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
+                            fileContents[relPath] = await textReader.ReadToEndAsync(ct);
+                        }
                     }
                 }
             }
@@ -86,6 +143,10 @@ public class SecretDetectionService(
             {
                 logger.LogError(ex, "Failed reading tarball archive for snapshot {SnapshotId}", snapshotId);
             }
+        }
+        else
+        {
+            logger.LogWarning("No archive stream available for snapshot {SnapshotId}. Files could not be extracted.", snapshotId);
         }
 
         foreach (var file in filesToAnalyze)
@@ -140,20 +201,32 @@ public class SecretDetectionService(
                 {
                     var occurrences = await ProcessFileContentScanAsync(file, content, snapshot.RepositoryId, ct);
                     totalCandidatesFound += occurrences.Count;
+                    file.IsAnalyzed = true;
                 }
-                file.IsAnalyzed = true;
+                else if (fileContents.Count > 0)
+                {
+                    // Archive was present and read, file was simply empty
+                    file.IsAnalyzed = true;
+                }
                 onFileProcessed?.Invoke(file.Id);
             }
             catch (Exception ex)
             {
                 logger.LogError(ex, "Failed analyzing file {FilePath} in snapshot {SnapshotId}", file.FilePath, snapshotId);
-                file.IsAnalyzed = true;
             }
         }
 
-        snapshot.CandidatesFound = totalCandidatesFound;
-        snapshot.AnalysisStatus = AnalysisStatus.Completed;
-        snapshot.AnalysisCompletedAtUtc = DateTime.UtcNow;
+        if (fileContents.Count > 0 || reusableOccurrencesMap.Count > 0)
+        {
+            snapshot.CandidatesFound = totalCandidatesFound;
+            snapshot.AnalysisStatus = AnalysisStatus.Completed;
+            snapshot.AnalysisCompletedAtUtc = DateTime.UtcNow;
+        }
+        else
+        {
+            logger.LogWarning("No file contents were loaded for snapshot {SnapshotId}. Archive could not be obtained; marking Failed for retry.", snapshotId);
+            snapshot.AnalysisStatus = AnalysisStatus.Failed;
+        }
 
         await dbContext.SaveChangesAsync(ct);
         return totalCandidatesFound;
