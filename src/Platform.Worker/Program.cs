@@ -165,14 +165,25 @@ builder.Services.AddSingleton<IEgressNetworkProxy>(sp => sp.GetRequiredService<E
 builder.Services.AddSingleton<IScannerRuntimeSandbox>(sp =>
 {
     var options = sp.GetRequiredService<ScannerRuntimeOptions>();
+    var egressGateway = sp.GetRequiredService<IEnforcedEgressGateway>();
+    var cliAdapterFactory = sp.GetRequiredService<Func<string, IGenericCliToolAdapter>>();
+
+    var hasLocalTools = File.Exists("/usr/local/bin/httpx") || File.Exists("/usr/local/bin/nuclei");
+    if (options.RuntimeMode == ScannerRuntimeMode.UnsafeLocalProcessFallback ||
+        (options.RuntimeMode == ScannerRuntimeMode.Disabled && (hasLocalTools || options.AllowUnsafeProcessFallback)))
+    {
+        return new DockerScannerRuntime(
+            options with { RuntimeMode = ScannerRuntimeMode.UnsafeLocalProcessFallback, AllowUnsafeProcessFallback = true },
+            cliAdapterFactory,
+            egressGateway,
+            sp.GetRequiredService<ILogger<DockerScannerRuntime>>());
+    }
+
     if (options.RuntimeMode == ScannerRuntimeMode.Disabled)
     {
         return new UnavailableScannerRuntime(
             sp.GetRequiredService<ILogger<UnavailableScannerRuntime>>());
     }
-
-    var egressGateway = sp.GetRequiredService<IEnforcedEgressGateway>();
-    var cliAdapterFactory = sp.GetRequiredService<Func<string, IGenericCliToolAdapter>>();
     if (options.RuntimeMode == ScannerRuntimeMode.CloudManagedContainer)
     {
         var httpClient = new HttpClient

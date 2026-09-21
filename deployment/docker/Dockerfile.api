@@ -34,5 +34,8 @@ WORKDIR /app
 COPY --from=build /app/publish .
 RUN mkdir -p /app/dp-keys /app/logs \
     && chown -R "$APP_UID:$APP_UID" /app
+ENV ScannerRuntime__RuntimeMode=UnsafeLocalProcessFallback
+ENV ScannerRuntime__AllowUnsafeProcessFallback=true
+
 USER $APP_UID
 ENTRYPOINT ["dotnet", "Platform.Api.dll"]
