@@ -1,6 +1,8 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Platform.Application.Persistence;
 using Platform.Application.Services;
 using Platform.Domain.Enums;
 
@@ -47,6 +49,26 @@ public class SnapshotAnalysisWorker(
 
                     await jobOrchestrator.CompleteJobAsync(job.Id, System.Text.Json.JsonSerializer.Serialize(new { CandidatesFound = count }), stoppingToken);
                     logger.LogInformation("Successfully completed snapshot analysis job {JobId} (Found {Count} candidate occurrences)", job.Id, count);
+
+                    // Auto-chain Stage 3: AI Deep Investigation to uncover obfuscated, split, or missed credentials
+                    try
+                    {
+                        var dbContext = scope.ServiceProvider.GetRequiredService<IPlatformDbContext>();
+                        var snapshot = await dbContext.RepositorySnapshots
+                            .AsNoTracking()
+                            .FirstOrDefaultAsync(s => s.Id == job.TargetEntityId, stoppingToken);
+
+                        if (snapshot != null)
+                        {
+                            var aiInvestigationService = scope.ServiceProvider.GetRequiredService<AiInvestigationService>();
+                            await aiInvestigationService.TriggerInvestigationAsync(snapshot.RepositoryId, snapshot.Id, stoppingToken);
+                            logger.LogInformation("Automatically dispatched AI Deep Investigation for Repository {RepoId}, Snapshot {SnapshotId}", snapshot.RepositoryId, snapshot.Id);
+                        }
+                    }
+                    catch (Exception aiEx)
+                    {
+                        logger.LogWarning(aiEx, "Could not auto-dispatch AI Deep Investigation for Snapshot {SnapshotId}", job.TargetEntityId);
+                    }
                 }
                 catch (Exception ex)
                 {

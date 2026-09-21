@@ -247,6 +247,7 @@ builder.Services.AddHttpClient("AiProviderHttpClient");
 builder.Services.AddScoped<Platform.Domain.Contracts.IAiModelRouter, Platform.Infrastructure.Adapters.AI.AiModelRouter>();
 builder.Services.AddScoped<Platform.Application.Services.AiProviderRegistryService>();
 builder.Services.AddScoped<Platform.Infrastructure.Services.AiInvestigationEngine>();
+builder.Services.AddScoped<Platform.Application.Services.AiInvestigationService>();
 builder.Services.AddSingleton<Platform.Application.Operations.IOperationalPromptSanitizer, Platform.Infrastructure.Operations.OperationalPromptSanitizer>();
 builder.Services.AddScoped<Platform.Application.Operations.IIncidentEngineService, Platform.Infrastructure.Operations.IncidentEngineService>();
 builder.Services.AddScoped<Platform.Application.Operations.IAiOperationalDiagnosisService, Platform.Infrastructure.Operations.AiOperationalDiagnosisService>();
