@@ -196,6 +196,22 @@ public class SecretDetectionService(
 
                 dbContext.CredentialCandidates.Add(candidate);
                 await dbContext.SaveChangesAsync(ct);
+
+                // Auto-enqueue validation job so CredentialValidationWorker immediately tests connection
+                dbContext.AnalysisJobs.Add(new AnalysisJob
+                {
+                    JobType = JobType.CredentialValidation,
+                    Status = JobStatus.Queued,
+                    TargetEntityType = "Candidate",
+                    TargetEntityId = candidate.Id,
+                    PayloadJson = System.Text.Json.JsonSerializer.Serialize(new
+                    {
+                        candidateId = candidate.Id,
+                        providerName = candidate.CredentialType
+                    }),
+                    QueuedAtUtc = DateTime.UtcNow
+                });
+                await dbContext.SaveChangesAsync(ct);
             }
             else
             {
