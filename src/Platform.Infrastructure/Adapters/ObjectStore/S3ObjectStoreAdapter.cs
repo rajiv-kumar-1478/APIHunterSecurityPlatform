@@ -23,13 +23,30 @@ public class S3ObjectStoreAdapter : IObjectStore
         var opts = options.Value;
         _bucketName = opts.BucketName;
 
-        var credentials = new BasicAWSCredentials(opts.AccessKeyId, opts.SecretAccessKey);
+        var credentials = new BasicAWSCredentials(
+            string.IsNullOrWhiteSpace(opts.AccessKeyId) ? "dummy" : opts.AccessKeyId,
+            string.IsNullOrWhiteSpace(opts.SecretAccessKey) ? "dummy" : opts.SecretAccessKey);
+
         var config = new AmazonS3Config
         {
-            ServiceURL = opts.ServiceUrl,
-            AuthenticationRegion = string.IsNullOrWhiteSpace(opts.Region) ? "auto" : opts.Region,
             ForcePathStyle = true
         };
+
+        if (!string.IsNullOrWhiteSpace(opts.ServiceUrl))
+        {
+            config.ServiceURL = opts.ServiceUrl;
+        }
+
+        if (!string.IsNullOrWhiteSpace(opts.Region))
+        {
+            config.RegionEndpoint = Amazon.RegionEndpoint.GetBySystemName(opts.Region);
+            config.AuthenticationRegion = opts.Region;
+        }
+        else if (string.IsNullOrWhiteSpace(opts.ServiceUrl))
+        {
+            config.RegionEndpoint = Amazon.RegionEndpoint.USEast1;
+            config.AuthenticationRegion = "us-east-1";
+        }
 
         _s3Client = new AmazonS3Client(credentials, config);
     }

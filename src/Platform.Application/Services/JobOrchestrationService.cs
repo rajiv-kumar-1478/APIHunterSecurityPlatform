@@ -64,22 +64,22 @@ public class JobOrchestrationService(
         // PostgreSQL-safe claim using Raw SQL inside transaction
         var sql = """
             WITH claimed AS (
-                SELECT id 
-                FROM analysis_jobs
-                WHERE status = 'Queued' 
-                   OR (status = 'Retrying' AND next_retry_at_utc <= {0})
-                ORDER BY priority DESC, queued_at_utc ASC
+                SELECT "Id" 
+                FROM "analysis_jobs"
+                WHERE "Status" = 'Queued' 
+                   OR ("Status" = 'Retrying' AND "NextRetryAtUtc" <= {0})
+                ORDER BY "Priority" DESC, "QueuedAtUtc" ASC
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )
-            UPDATE analysis_jobs
-            SET status = 'Running',
-                worker_instance_id = {1},
-                started_at_utc = {0},
-                last_heartbeat_at_utc = {0}
+            UPDATE "analysis_jobs"
+            SET "Status" = 'Running',
+                "WorkerInstanceId" = {1},
+                "StartedAtUtc" = {0},
+                "LastHeartbeatAtUtc" = {0}
             FROM claimed
-            WHERE analysis_jobs.id = claimed.id
-            RETURNING analysis_jobs.*;
+            WHERE "analysis_jobs"."Id" = claimed."Id"
+            RETURNING "analysis_jobs".*;
             """;
 
         var claimedJobs = await dbContext.AnalysisJobs

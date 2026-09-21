@@ -505,14 +505,21 @@ try
     builder.Services.AddScoped<IRepositoryProvider, Platform.Infrastructure.Adapters.GitHub.GitHubRepositoryProvider>();
     builder.Services.AddHttpClient("GitHubArchive");
 
-    if (builder.Environment.IsDevelopment())
+    builder.Services.AddScoped<IObjectStore>(sp =>
     {
-        builder.Services.AddScoped<IObjectStore, Platform.Infrastructure.Adapters.ObjectStore.FileSystemObjectStore>();
-    }
-    else
-    {
-        builder.Services.AddScoped<IObjectStore, Platform.Infrastructure.Adapters.ObjectStore.S3ObjectStoreAdapter>();
-    }
+        var opts = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ObjectStoreOptions>>().Value;
+        var env = sp.GetRequiredService<IHostEnvironment>();
+        if (env.IsDevelopment() || (string.IsNullOrWhiteSpace(opts.ServiceUrl) && string.IsNullOrWhiteSpace(opts.AccessKeyId)))
+        {
+            return new Platform.Infrastructure.Adapters.ObjectStore.FileSystemObjectStore(
+                env,
+                sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ObjectStoreOptions>>(),
+                sp.GetRequiredService<ILogger<Platform.Infrastructure.Adapters.ObjectStore.FileSystemObjectStore>>());
+        }
+        return new Platform.Infrastructure.Adapters.ObjectStore.S3ObjectStoreAdapter(
+            sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ObjectStoreOptions>>(),
+            sp.GetRequiredService<ILogger<Platform.Infrastructure.Adapters.ObjectStore.S3ObjectStoreAdapter>>());
+    });
 
     builder.Services.AddScoped<ISecretDetector, Platform.Infrastructure.Adapters.Detection.RegexSecretDetector>();
 
