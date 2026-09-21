@@ -1,4 +1,5 @@
 using System;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -17,6 +18,8 @@ namespace Platform.Infrastructure.Persistence.Migrations
     /// Down is intentionally irreversible (SQLSTATE 0A000) — removing these tables while
     /// webhook integrations are active would silently break CI/CD verification.
     /// </summary>
+    [DbContext(typeof(PlatformDbContext))]
+    [Migration("20260920000001_AddDeploymentWebhookTables")]
     public partial class AddDeploymentWebhookTables : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

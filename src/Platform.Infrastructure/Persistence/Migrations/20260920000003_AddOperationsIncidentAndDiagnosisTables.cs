@@ -1,4 +1,5 @@
 using System;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -9,6 +10,8 @@ namespace Platform.Infrastructure.Persistence.Migrations
     /// Phase 10 — Adds operational_incidents and ai_operational_diagnoses tables
     /// for autonomous incident detection, self-healing recovery, and AI-assisted root-cause diagnosis.
     /// </summary>
+    [DbContext(typeof(PlatformDbContext))]
+    [Migration("20260920000003_AddOperationsIncidentAndDiagnosisTables")]
     public partial class AddOperationsIncidentAndDiagnosisTables : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)

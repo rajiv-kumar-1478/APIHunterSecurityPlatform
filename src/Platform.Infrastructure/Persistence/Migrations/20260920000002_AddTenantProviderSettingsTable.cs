@@ -1,4 +1,5 @@
 using System;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
@@ -12,6 +13,8 @@ namespace Platform.Infrastructure.Persistence.Migrations
     /// Keyed by (TenantId, ProviderName) to enforce unique per-tenant provider configuration.
     /// Down is intentionally irreversible (SQLSTATE 0A000).
     /// </summary>
+    [DbContext(typeof(PlatformDbContext))]
+    [Migration("20260920000002_AddTenantProviderSettingsTable")]
     public partial class AddTenantProviderSettingsTable : Migration
     {
         protected override void Up(MigrationBuilder migrationBuilder)
