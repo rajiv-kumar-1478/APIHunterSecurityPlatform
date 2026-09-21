@@ -118,8 +118,16 @@ public class ApiHunterController(
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> TriggerSync(CancellationToken ct)
     {
-        var result = await syncService.SynchronizeAsync(ct);
-        return Ok(result);
+        try
+        {
+            var result = await syncService.SynchronizeAsync(ct);
+            return Ok(result);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error occurred while processing POST api/v1/apihunter/sync");
+            return StatusCode(500, new { title = "APIHunter synchronization failed", error = ex.Message });
+        }
     }
 
     [HttpPost("records/{id:guid}/reveal")]
@@ -127,9 +135,17 @@ public class ApiHunterController(
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> RevealKey([FromRoute] Guid id, CancellationToken ct)
     {
-        var rawKey = await syncService.RevealKeyAsync(id, ct);
-        if (rawKey is null) return NotFound(new { title = "Credential record not found" });
+        try
+        {
+            var rawKey = await syncService.RevealKeyAsync(id, ct);
+            if (rawKey is null) return NotFound(new { title = "Credential record not found" });
 
-        return Ok(new { recordId = id, rawKey });
+            return Ok(new { recordId = id, rawKey });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error occurred while revealing raw key for record {RecordId}", id);
+            return StatusCode(500, new { title = "Failed to reveal credential record", error = ex.Message });
+        }
     }
 }

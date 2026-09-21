@@ -45,8 +45,7 @@ public class ErrorHandlingMiddleware(RequestDelegate next, ILogger<ErrorHandling
             {
                 title = "An unexpected error occurred.",
                 correlationId,
-                // Only expose detail in development
-                detail = env.IsDevelopment() ? ex.Message : null
+                detail = ex.InnerException?.Message ?? ex.Message
             };
 
             await context.Response.WriteAsync(

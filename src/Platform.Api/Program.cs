@@ -183,11 +183,22 @@ try
 
                 var hasSessionId = Guid.TryParse(sidValue, out var sessionId);
                 var hasUserId = Guid.TryParse(subValue, out var userId);
-                var validatedSession = hasSessionId && hasUserId
-                    ? await ctx.HttpContext.RequestServices
-                        .GetRequiredService<AuthService>()
-                        .ValidateSessionAsync(sessionId, ctx.HttpContext.RequestAborted)
-                    : null;
+                ValidatedSession? validatedSession = null;
+
+                if (hasSessionId && hasUserId)
+                {
+                    try
+                    {
+                        validatedSession = await ctx.HttpContext.RequestServices
+                            .GetRequiredService<AuthService>()
+                            .ValidateSessionAsync(sessionId, ctx.HttpContext.RequestAborted);
+                    }
+                    catch (Exception ex)
+                    {
+                        var logger = ctx.HttpContext.RequestServices.GetService<ILogger<Program>>();
+                        logger?.LogError(ex, "Failed to validate session during principal validation.");
+                    }
+                }
 
                 if (validatedSession is null ||
                     validatedSession.UserId != userId ||
