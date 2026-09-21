@@ -167,17 +167,15 @@ public class ValidationStateChangeProcessor(
         var dbCtx = (DbContext)dbContext;
         if (dbCtx.Database.IsRelational())
         {
-            var rowsAffected = await dbCtx.Database.ExecuteSqlRawAsync(
-                """
-                UPDATE credential_validation_results
-                SET    processing_claim_token    = {0},
-                       processing_claimed_at_utc = {1}
-                WHERE  id = {2}
-                AND    processed_for_finding_at_utc IS NULL
-                AND    (processing_claim_token IS NULL
-                        OR processing_claimed_at_utc < {3})
-                """,
-                claimToken, now, resultId, now.AddMinutes(-_options.StaleClaimTimeoutMinutes));
+            var staleClaimCutoff = now.AddMinutes(-_options.StaleClaimTimeoutMinutes);
+            var rowsAffected = await dbCtx.Set<CredentialValidationResult>()
+                .Where(r => r.Id == resultId
+                         && r.ProcessedForFindingAtUtc == null
+                         && (r.ProcessingClaimToken == null || r.ProcessingClaimedAtUtc < staleClaimCutoff))
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(r => r.ProcessingClaimToken, claimToken)
+                    .SetProperty(r => r.ProcessingClaimedAtUtc, now),
+                    ct);
 
             return rowsAffected > 0;
         }
