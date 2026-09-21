@@ -55,6 +55,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: HOSTNAME
+        value: 0.0.0.0
       - key: NEXT_PUBLIC_API_URL
         value: https://apihunter-api.onrender.com
         
