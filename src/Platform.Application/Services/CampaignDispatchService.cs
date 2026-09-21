@@ -782,6 +782,7 @@ public sealed class CampaignDispatchService : ICampaignDispatchService
                 .AsNoTracking()
                 .Where(job => job.CampaignId == attempt.CampaignId
                     && job.CampaignOccurrenceKey == attempt.OccurrenceKey)
+                .OrderBy(job => job.Id)
                 .Take(2)
                 .ToListAsync(ct);
 
@@ -807,6 +808,7 @@ public sealed class CampaignDispatchService : ICampaignDispatchService
                     && audit.DispatchedScanJobId == job.Id
                     && (audit.Decision == SchedulerDecision.Dispatched
                         || audit.Decision == SchedulerDecision.QueuedNext))
+                .OrderBy(audit => audit.Id)
                 .Take(2)
                 .ToListAsync(ct);
 

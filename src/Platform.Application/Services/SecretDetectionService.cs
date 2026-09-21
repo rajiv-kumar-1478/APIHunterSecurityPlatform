@@ -110,33 +110,96 @@ public class SecretDetectionService(
         {
             try
             {
+                var newlyCatalogedFiles = new List<SnapshotFile>();
+                var pendingPaths = filesToAnalyze
+                    .Where(f => !f.IsSkipped && !reusableOccurrencesMap.ContainsKey(f.ContentHash))
+                    .Select(f => NormalizePath(f.FilePath))
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
                 await using (archiveStream)
                 await using (var gzipStream = new GZipStream(archiveStream, CompressionMode.Decompress))
                 using (var tarReader = new TarReader(gzipStream))
                 {
-                    var pendingPaths = filesToAnalyze
-                        .Where(f => !f.IsSkipped && !reusableOccurrencesMap.ContainsKey(f.ContentHash))
-                        .Select(f => f.FilePath)
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
                     TarEntry? entry;
                     while ((entry = await tarReader.GetNextEntryAsync(false, ct)) != null)
                     {
-                        if (entry.EntryType == TarEntryType.Directory || entry.EntryType == TarEntryType.SymbolicLink)
+                        if (entry.EntryType == TarEntryType.Directory || entry.EntryType == TarEntryType.SymbolicLink || entry.EntryType == TarEntryType.HardLink)
                         {
                             continue;
                         }
 
                         var rawName = entry.Name;
-                        var slashIdx = rawName.IndexOf('/');
-                        var relPath = slashIdx >= 0 ? rawName[(slashIdx + 1)..] : rawName;
+                        if (rawName.Contains("..")) continue;
 
-                        if (pendingPaths.Contains(relPath) && entry.DataStream != null && entry.Length < (opts.MaxFileSizeMb * 1024 * 1024))
+                        var slashIdx = rawName.IndexOf('/');
+                        var relPath = NormalizePath(slashIdx >= 0 ? rawName[(slashIdx + 1)..] : rawName);
+                        if (string.IsNullOrWhiteSpace(relPath)) continue;
+
+                        if (filesToAnalyze.Count == 0)
                         {
-                            using var textReader = new StreamReader(entry.DataStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
-                            fileContents[relPath] = await textReader.ReadToEndAsync(ct);
+                            // Self-catalog snapshot files directly from archive if database records were missing
+                            var fileName = Path.GetFileName(relPath);
+                            var extension = Path.GetExtension(relPath).ToLowerInvariant();
+                            var sizeBytes = entry.Length;
+
+                            byte[] bytes = Array.Empty<byte>();
+                            if (entry.DataStream != null && sizeBytes <= (opts.MaxFileSizeMb * 1024 * 1024))
+                            {
+                                using var ms = new MemoryStream();
+                                await entry.DataStream.CopyToAsync(ms, ct);
+                                bytes = ms.ToArray();
+                            }
+
+                            using var sha256 = System.Security.Cryptography.SHA256.Create();
+                            var hashBytes = sha256.ComputeHash(bytes);
+                            var contentHash = Convert.ToHexString(hashBytes).ToLowerInvariant();
+
+                            bool isBinary = IsBinaryExtension(extension);
+                            bool isTooLarge = sizeBytes > (opts.MaxFileSizeMb * 1024 * 1024);
+                            bool isVendored = IsVendoredPath(relPath);
+
+                            SkipReason? skipReason = null;
+                            if (isBinary) skipReason = SkipReason.Binary;
+                            else if (isTooLarge) skipReason = SkipReason.TooLarge;
+                            else if (isVendored) skipReason = SkipReason.VendoredLib;
+
+                            var sf = new SnapshotFile
+                            {
+                                SnapshotId = snapshotId,
+                                FilePath = relPath,
+                                FileName = fileName,
+                                FileExtension = string.IsNullOrEmpty(extension) ? null : extension,
+                                ContentHash = contentHash,
+                                SizeBytes = sizeBytes,
+                                IsAnalyzed = false,
+                                IsBinary = isBinary,
+                                IsSkipped = skipReason.HasValue,
+                                SkipReason = skipReason
+                            };
+                            newlyCatalogedFiles.Add(sf);
+
+                            if (!sf.IsSkipped && !isBinary && bytes.Length > 0)
+                            {
+                                fileContents[relPath] = Encoding.UTF8.GetString(bytes);
+                            }
+                        }
+                        else if (pendingPaths.Contains(relPath) && entry.DataStream != null && entry.Length < (opts.MaxFileSizeMb * 1024 * 1024))
+                        {
+                            using var ms = new MemoryStream();
+                            await entry.DataStream.CopyToAsync(ms, ct);
+                            fileContents[relPath] = Encoding.UTF8.GetString(ms.ToArray());
                         }
                     }
+                }
+
+                if (newlyCatalogedFiles.Count > 0)
+                {
+                    logger.LogInformation("Self-cataloged {FileCount} snapshot files from archive for snapshot {SnapshotId}", newlyCatalogedFiles.Count, snapshotId);
+                    dbContext.SnapshotFiles.AddRange(newlyCatalogedFiles);
+                    snapshot.FileCount = newlyCatalogedFiles.Count;
+                    snapshot.TotalSizeBytes = newlyCatalogedFiles.Sum(f => f.SizeBytes);
+                    await dbContext.SaveChangesAsync(ct);
+                    filesToAnalyze = newlyCatalogedFiles;
                 }
             }
             catch (Exception ex)
@@ -197,15 +260,16 @@ public class SecretDetectionService(
             // 2. Perform actual regex secret detection if file content is available
             try
             {
-                if (fileContents.TryGetValue(file.FilePath, out var content) && !string.IsNullOrWhiteSpace(content))
+                var normPath = NormalizePath(file.FilePath);
+                if (fileContents.TryGetValue(normPath, out var content) && !string.IsNullOrWhiteSpace(content))
                 {
                     var occurrences = await ProcessFileContentScanAsync(file, content, snapshot.RepositoryId, ct);
                     totalCandidatesFound += occurrences.Count;
                     file.IsAnalyzed = true;
                 }
-                else if (fileContents.Count > 0)
+                else if (fileContents.Count > 0 || archiveStream != null)
                 {
-                    // Archive was present and read, file was simply empty
+                    // Archive was present and read, file was simply empty or had no secrets
                     file.IsAnalyzed = true;
                 }
                 onFileProcessed?.Invoke(file.Id);
@@ -216,15 +280,17 @@ public class SecretDetectionService(
             }
         }
 
-        if (fileContents.Count > 0 || reusableOccurrencesMap.Count > 0)
+        if (archiveStream != null || fileContents.Count > 0 || reusableOccurrencesMap.Count > 0)
         {
             snapshot.CandidatesFound = totalCandidatesFound;
             snapshot.AnalysisStatus = AnalysisStatus.Completed;
             snapshot.AnalysisCompletedAtUtc = DateTime.UtcNow;
+            logger.LogInformation("Snapshot {SnapshotId} analysis completed. Analyzed {FileCount} files, found {CandidatesFound} candidates.",
+                snapshotId, filesToAnalyze.Count, totalCandidatesFound);
         }
         else
         {
-            logger.LogWarning("No file contents were loaded for snapshot {SnapshotId}. Archive could not be obtained; marking Failed for retry.", snapshotId);
+            logger.LogWarning("No archive stream available for snapshot {SnapshotId}. Marking Failed for retry.", snapshotId);
             snapshot.AnalysisStatus = AnalysisStatus.Failed;
         }
 
@@ -328,4 +394,16 @@ public class SecretDetectionService(
 
         return createdOccurrences;
     }
+
+    private static string NormalizePath(string p) => p.Replace('\\', '/').TrimStart('.', '/').Trim();
+
+    private static bool IsBinaryExtension(string ext) =>
+        ext is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".ico" or ".pdf" or ".zip" or ".tar" or ".gz" or ".exe" or ".dll" or ".so" or ".dylib" or ".bin" or ".woff" or ".woff2" or ".ttf" or ".eot";
+
+    private static bool IsVendoredPath(string path) =>
+        path.StartsWith("node_modules/", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("vendor/", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith(".git/", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("dist/", StringComparison.OrdinalIgnoreCase) ||
+        path.StartsWith("build/", StringComparison.OrdinalIgnoreCase);
 }
