@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { AppLayout } from "@/components/AppLayout";
 import { apiRequest } from "@/lib/api-client";
 
@@ -103,6 +104,25 @@ interface ApiHunterRecord {
   repoCount: number;
 }
 
+interface AnalysisJobItem {
+  id: string;
+  jobType: string;
+  targetEntityType: string;
+  targetEntityId: string;
+  targetName?: string;
+  priority: number;
+  status: string;
+  retryCount: number;
+  maxRetries: number;
+  workerInstanceId?: string;
+  errorMessage?: string;
+  resultJson?: string;
+  queuedAtUtc: string;
+  startedAtUtc?: string;
+  completedAtUtc?: string;
+  lastHeartbeatAtUtc?: string;
+}
+
 export default function ApiHunterPage() {
   const router = useRouter();
   const [user, setUser] = useState<{ isPlatformAdmin: boolean; userId: string; email?: string } | null>(null);
@@ -128,6 +148,16 @@ export default function ApiHunterPage() {
   const [analyzingRepos, setAnalyzingRepos] = useState(false);
   const [analyzingRecordId, setAnalyzingRecordId] = useState<string | null>(null);
   const [analyzedUrls, setAnalyzedUrls] = useState<Record<string, boolean>>({});
+
+  // Analysis Jobs Queue Modal State
+  const [showJobsModal, setShowJobsModal] = useState(false);
+  const [jobs, setJobs] = useState<AnalysisJobItem[]>([]);
+  const [loadingJobs, setLoadingJobs] = useState(false);
+  const [jobsTotalCount, setJobsTotalCount] = useState(0);
+  const [jobsPage, setJobsPage] = useState(1);
+  const [jobStatusFilter, setJobStatusFilter] = useState<string>("all");
+  const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
+  const [sweepingJobs, setSweepingJobs] = useState(false);
 
   // Initial mount: authenticate user, load metadata, filters, and summary once
   useEffect(() => {
@@ -309,6 +339,47 @@ export default function ApiHunterPage() {
     }
   }
 
+  async function fetchJobs(page = 1, status = jobStatusFilter) {
+    setLoadingJobs(true);
+    try {
+      const q = new URLSearchParams({ page: String(page), pageSize: "10" });
+      if (status && status !== "all") q.append("status", status);
+      const data = await apiRequest<{ items: AnalysisJobItem[]; totalCount: number }>(`/api/v1/jobs?${q.toString()}`);
+      setJobs(data.items || []);
+      setJobsTotalCount(data.totalCount || 0);
+      setJobsPage(page);
+    } catch (e) {
+      console.error("Failed to fetch jobs", e);
+    } finally {
+      setLoadingJobs(false);
+    }
+  }
+
+  async function handleRetryJob(id: string) {
+    setRetryingJobId(id);
+    try {
+      await apiRequest(`/api/v1/jobs/${id}/retry`, { method: "POST" });
+      await fetchJobs(jobsPage, jobStatusFilter);
+    } catch (err: unknown) {
+      alert("Failed to retry job: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setRetryingJobId(null);
+    }
+  }
+
+  async function handleSweepStaleJobs() {
+    setSweepingJobs(true);
+    try {
+      const res = await apiRequest<{ sweptCount: number; message: string }>("/api/v1/jobs/sweep-stale?timeoutMinutes=0", { method: "POST" });
+      alert(res.message);
+      await fetchJobs(1, jobStatusFilter);
+    } catch (err: unknown) {
+      alert("Sweep error: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setSweepingJobs(false);
+    }
+  }
+
   async function handleReveal(id: string) {
     setRevealingId(id);
     try {
@@ -395,6 +466,20 @@ export default function ApiHunterPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
               </svg>
               {analyzingRepos ? "Queuing Repos..." : "Analyze Leaked Repos"}
+            </button>
+
+            <button
+              onClick={() => {
+                setShowJobsModal(true);
+                fetchJobs(1, "all");
+              }}
+              className="btn-secondary flex items-center gap-2 text-xs border border-[#00d4ff]/30 text-[#00d4ff] hover:bg-[#00d4ff]/10"
+              title="View repository acquisition and secret scanning queue"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+              </svg>
+              Analysis Queue
             </button>
 
             <button
@@ -1011,6 +1096,216 @@ export default function ApiHunterPage() {
                 <button
                   onClick={() => setRevealedData(null)}
                   className="btn-primary text-xs"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Repository Analysis Queue Modal */}
+      {showJobsModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 z-50 fade-in">
+          <div className="glass-card max-w-4xl w-full max-h-[92vh] flex flex-col border-[#00d4ff]/40 shadow-[0_0_50px_rgba(0,212,255,0.15)] overflow-hidden rounded-2xl">
+            {/* Header */}
+            <div className="p-5 border-b border-[#00d4ff]/15 flex items-center justify-between bg-white/[0.02]">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-[#00d4ff]/10 border border-[#00d4ff]/30 flex items-center justify-center text-[#00d4ff]">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-[#e8f4ff] flex items-center gap-2" style={{ fontFamily: "Outfit, sans-serif" }}>
+                    Repository Analysis & Scan Pipeline
+                    <span className="px-2 py-0.5 text-[11px] rounded-full bg-[#00d4ff]/10 text-[#00d4ff] border border-[#00d4ff]/30 font-mono">
+                      {jobsTotalCount} Total Jobs
+                    </span>
+                  </h3>
+                  <p className="text-xs text-[#7ba3c8]">
+                    Real-time status of repository acquisition (tarball download) and secret detection scans
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => fetchJobs(jobsPage, jobStatusFilter)}
+                  disabled={loadingJobs}
+                  className="px-3 py-1.5 rounded-lg border border-[#00d4ff]/30 text-[#00d4ff] hover:bg-[#00d4ff]/10 text-xs font-semibold flex items-center gap-1.5 transition-all"
+                >
+                  <svg className={`w-3.5 h-3.5 ${loadingJobs ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                  Refresh
+                </button>
+                <button
+                  onClick={handleSweepStaleJobs}
+                  disabled={sweepingJobs}
+                  className="px-3 py-1.5 rounded-lg border border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-xs font-semibold flex items-center gap-1.5 transition-all"
+                  title="Reset any stuck jobs back to retrying/queued state"
+                >
+                  {sweepingJobs ? "Sweeping…" : "Reset Stuck Jobs"}
+                </button>
+                <button
+                  onClick={() => setShowJobsModal(false)}
+                  className="p-1.5 rounded-lg text-[#7ba3c8] hover:text-white hover:bg-white/10 transition-colors ml-2"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
+
+            {/* Filter Tabs */}
+            <div className="px-5 py-3 border-b border-white/5 bg-white/[0.01] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                {["all", "Running", "Queued", "Succeeded", "Failed", "Retrying"].map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => {
+                      setJobStatusFilter(s);
+                      fetchJobs(1, s);
+                    }}
+                    className={`px-2.5 py-1 text-xs rounded-lg font-medium transition-all ${
+                      jobStatusFilter === s
+                        ? "bg-[#00d4ff]/20 text-[#00d4ff] border border-[#00d4ff]/30"
+                        : "text-[#7ba3c8] hover:text-white hover:bg-white/5"
+                    }`}
+                  >
+                    {s === "all" ? "All Statuses" : s}
+                  </button>
+                ))}
+              </div>
+              <Link
+                href="/security"
+                className="text-xs text-[#00d4ff] hover:underline flex items-center gap-1"
+              >
+                Go to Security Center (Findings) →
+              </Link>
+            </div>
+
+            {/* Jobs List */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {loadingJobs ? (
+                <div className="py-12 text-center text-[#7ba3c8]">Loading analysis jobs…</div>
+              ) : jobs.length === 0 ? (
+                <div className="py-12 text-center text-[#7ba3c8]">No analysis jobs found in this category.</div>
+              ) : (
+                jobs.map((job) => {
+                  let candidatesFound: number | null = null;
+                  if (job.resultJson) {
+                    try {
+                      const parsed = JSON.parse(job.resultJson);
+                      if (parsed.CandidatesFound !== undefined) {
+                        candidatesFound = parsed.CandidatesFound;
+                      }
+                    } catch {
+                      // Ignore JSON parse error
+                    }
+                  }
+
+                  return (
+                    <div
+                      key={job.id}
+                      className="p-4 rounded-xl border border-white/10 bg-white/[0.02] hover:border-white/20 transition-all flex flex-col md:flex-row md:items-center justify-between gap-4"
+                    >
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-sm text-[#e8f4ff] font-mono">
+                            {job.targetName || job.targetEntityId}
+                          </span>
+                          <span className={`px-2 py-0.5 text-[10px] font-mono rounded-md border ${
+                            job.jobType === "RepositoryAcquisition"
+                              ? "bg-purple-500/10 text-purple-300 border-purple-500/30"
+                              : "bg-cyan-500/10 text-cyan-300 border-cyan-500/30"
+                          }`}>
+                            {job.jobType === "RepositoryAcquisition" ? "1. Repo Acquisition" : "2. Secret Analysis"}
+                          </span>
+                        </div>
+
+                        <div className="text-xs text-[#7ba3c8] flex flex-wrap items-center gap-3">
+                          <span>Queued: {new Date(job.queuedAtUtc).toLocaleString()}</span>
+                          {job.startedAtUtc && (
+                            <span>Started: {new Date(job.startedAtUtc).toLocaleTimeString()}</span>
+                          )}
+                          {job.completedAtUtc && (
+                            <span>Finished: {new Date(job.completedAtUtc).toLocaleTimeString()}</span>
+                          )}
+                          {job.retryCount > 0 && (
+                            <span className="text-amber-400">Retry #{job.retryCount}/{job.maxRetries}</span>
+                          )}
+                        </div>
+
+                        {job.errorMessage && (
+                          <div className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg p-2 mt-1">
+                            Error: {job.errorMessage}
+                          </div>
+                        )}
+
+                        {candidatesFound !== null && (
+                          <div className="text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-2 mt-1 flex items-center justify-between">
+                            <span>Analysis complete: <strong>{candidatesFound} leaked candidate occurrence(s)</strong> detected!</span>
+                            <Link href="/security" className="text-xs text-[#00d4ff] hover:underline ml-2">
+                              View in Security Center →
+                            </Link>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-3 self-end md:self-center">
+                        <span className={`px-3 py-1 text-xs font-semibold rounded-full border ${
+                          job.status === "Succeeded" ? "badge-healthy" :
+                          job.status === "Running" ? "bg-[#00d4ff]/20 text-[#00d4ff] border-[#00d4ff]/40 animate-pulse" :
+                          job.status === "Queued" ? "badge-degraded" :
+                          job.status === "Retrying" ? "bg-amber-500/20 text-amber-300 border-amber-500/40" :
+                          "bg-rose-500/20 text-rose-300 border-rose-500/40"
+                        }`}>
+                          {job.status === "Running" ? "⚙️ Running" :
+                           job.status === "Queued" ? "⏳ Queued" :
+                           job.status === "Succeeded" ? "✅ Completed" :
+                           job.status === "Retrying" ? "🔄 Retrying" :
+                           "❌ Failed"}
+                        </span>
+
+                        {(job.status === "Failed" || job.status === "Retrying") && (
+                          <button
+                            onClick={() => handleRetryJob(job.id)}
+                            disabled={retryingJobId === job.id}
+                            className="px-2.5 py-1 text-xs rounded-lg border border-white/20 text-white hover:bg-white/10 transition-colors"
+                          >
+                            {retryingJobId === job.id ? "Retrying…" : "Retry"}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Modal Footer / Pagination */}
+            <div className="p-4 border-t border-[#00d4ff]/15 flex items-center justify-between bg-white/[0.02]">
+              <div className="text-xs text-[#7ba3c8]">
+                Showing page {jobsPage} of {Math.max(1, Math.ceil(jobsTotalCount / 10))} ({jobsTotalCount} jobs)
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  disabled={jobsPage <= 1}
+                  onClick={() => fetchJobs(jobsPage - 1, jobStatusFilter)}
+                  className="px-3 py-1 text-xs rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 disabled:opacity-40"
+                >
+                  Previous
+                </button>
+                <button
+                  disabled={jobsPage >= Math.ceil(jobsTotalCount / 10)}
+                  onClick={() => fetchJobs(jobsPage + 1, jobStatusFilter)}
+                  className="px-3 py-1 text-xs rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 disabled:opacity-40"
+                >
+                  Next
+                </button>
+                <button
+                  onClick={() => setShowJobsModal(false)}
+                  className="btn-primary text-xs ml-2"
                 >
                   Close
                 </button>
