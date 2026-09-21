@@ -83,6 +83,9 @@ builder.Services.AddScoped<ICurrentUserContextProvider>(sp => sp.GetRequiredServ
 builder.Services.AddScoped<IAuditService, AuditService>();
 
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("AiProviderHttpClient");
+builder.Services.AddScoped<Platform.Domain.Contracts.IAiModelRouter, Platform.Infrastructure.Adapters.AI.AiModelRouter>();
+builder.Services.AddScoped<Platform.Application.Services.AiProviderRegistryService>();
 builder.Services.AddScoped<IGitHubCredentialProvider, GitHubAppCredentialProvider>();
 builder.Services.AddScoped<IRepositoryProvider, GitHubRepositoryProvider>();
 builder.Services.AddScoped<IObjectStore, FileSystemObjectStore>();

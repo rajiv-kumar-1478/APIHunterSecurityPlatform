@@ -140,6 +140,48 @@ public class SsrfProtectionService
         return handler;
     }
 
+    /// <summary>
+    /// Creates an SSRF-safe HTTP handler for dynamic endpoints inferred by Autonomous AI Validation.
+    /// Strictly verifies that the destination is public HTTPS and not a loopback, RFC1918, or cloud metadata IP.
+    /// </summary>
+    public SocketsHttpHandler CreateDynamicSsrfHandler()
+    {
+        var handler = new SocketsHttpHandler
+        {
+            AllowAutoRedirect = false,
+            ConnectTimeout = TimeSpan.FromSeconds(10),
+            EnableMultipleHttp2Connections = true,
+            ConnectCallback = async (context, cancellationToken) =>
+            {
+                var host = context.DnsEndPoint.Host;
+                var port = context.DnsEndPoint.Port;
+                var targetUri = new Uri($"https://{host}:{port}");
+
+                var validationResult = await ValidateUriAsync(targetUri, cancellationToken);
+                if (!validationResult.IsAllowed || !validationResult.ValidatedIpAddresses.Any())
+                {
+                    throw new HttpRequestException($"SSRF Protection blocked connection to '{host}': {validationResult.DenialReason}");
+                }
+
+                var targetIp = validationResult.ValidatedIpAddresses.First();
+                var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+
+                try
+                {
+                    await socket.ConnectAsync(new IPEndPoint(targetIp, port), cancellationToken);
+                    return new NetworkStream(socket, ownsSocket: true);
+                }
+                catch
+                {
+                    socket.Dispose();
+                    throw;
+                }
+            }
+        };
+
+        return handler;
+    }
+
     public static bool IsBlockedIp(IPAddress ip, out string reason)
     {
         reason = string.Empty;

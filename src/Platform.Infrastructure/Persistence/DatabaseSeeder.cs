@@ -371,7 +371,11 @@ public static class BuiltInDetectionRules
             new() { Id = "assemblyai-api-key", Version = 1, Description = "AssemblyAI API Key", RegexPattern = @"(?i)assembly(?:_?ai)?\s*[:=]\s*['""]?([a-f0-9]{32})['""]?", CredentialType = "AssemblyAI", Confidence = "High" },
             new() { Id = "deepgram-api-key", Version = 1, Description = "Deepgram API Key", RegexPattern = @"(?i)deepgram\s*[:=]\s*['""]?([a-f0-9]{40})['""]?", CredentialType = "Deepgram", Confidence = "High" },
             new() { Id = "leonardo-api-key", Version = 1, Description = "Leonardo AI API Key", RegexPattern = @"(?i)leonardo(?:_?ai)?\s*[:=]\s*['""]?([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})['""]?", CredentialType = "LeonardoAI", Confidence = "High" },
-            new() { Id = "azure-openai-key", Version = 1, Description = "Azure OpenAI API Key", RegexPattern = @"(?i)azure[_-]?openai(?:[_-]?api)?[_-]?(?:key|secret)\s*[:=]\s*['""]?([a-f0-9]{32})['""]?", CredentialType = "AzureOpenAI", Confidence = "High" }
+            new() { Id = "azure-openai-key", Version = 1, Description = "Azure OpenAI API Key", RegexPattern = @"(?i)azure[_-]?openai(?:[_-]?api)?[_-]?(?:key|secret)\s*[:=]\s*['""]?([a-f0-9]{32})['""]?", CredentialType = "AzureOpenAI", Confidence = "High" },
+            new() { Id = "kiro-api-key", Version = 1, Description = "Kiro AI API Key Assignment", RegexPattern = @"(?i)(?:kiro(?:_api)?(?:_key)?)\s*[:=]\s*['""]?([a-zA-Z0-9_\-]{16,80})['""]?", CredentialType = "Kiro", Confidence = "High" },
+            new() { Id = "generic-env-api-key", Version = 1, Description = "Generic API/Secret Key in Environment or Config", RegexPattern = @"(?i)(?:[A-Z0-9_]*(?:API_KEY|SECRET_KEY|AUTH_TOKEN|ACCESS_TOKEN|PRIVATE_KEY|API_SECRET|CLIENT_SECRET)[A-Z0-9_]*)\s*[:=]\s*['""]?([A-Za-z0-9_\-\.]{16,128})['""]?", CredentialType = "GenericApiKey", Confidence = "High" },
+            new() { Id = "generic-bearer-token", Version = 1, Description = "Generic Bearer Token Authorization", RegexPattern = @"(?i)bearer\s+([a-zA-Z0-9_\-\.]{24,128})", CredentialType = "BearerToken", Confidence = "Medium" },
+            new() { Id = "generic-env-secret", Version = 1, Description = "Generic Environment Variable Secret", RegexPattern = @"(?i)(?:[A-Z0-9_]*(?:SECRET|PASSWORD|TOKEN)[A-Z0-9_]*)\s*[:=]\s*['""]?([A-Za-z0-9_\-\.]{16,128})['""]?", CredentialType = "GenericSecret", Confidence = "Medium" }
         };
     }
 }
