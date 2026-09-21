@@ -40,11 +40,11 @@ services:
       Seed__AdminEmail: ${ADMIN_EMAIL:?ADMIN_EMAIL is required}
       Seed__AdminPassword: ${ADMIN_PASSWORD:?ADMIN_PASSWORD is required}
       Cors__AllowedOrigins__0: ${FRONTEND_ORIGIN:?FRONTEND_ORIGIN is required}
-      ScannerRuntime__RuntimeMode: Disabled
+      ScannerRuntime__RuntimeMode: ${SCANNER_RUNTIME_MODE:-UnsafeLocalProcessFallback}
       ScannerRuntime__EgressGatewayMode: None
       ScannerRuntime__EgressNetworkName: ""
       ScannerRuntime__EgressGatewayEndpoint: ""
-      ScannerRuntime__AllowUnsafeProcessFallback: "false"
+      ScannerRuntime__AllowUnsafeProcessFallback: "true"
       Notification__EmailProvider: ${EMAIL_PROVIDER:-smtp}
       Smtp__Host: ${SMTP_HOST:-}
       Smtp__Port: ${SMTP_PORT:-587}
@@ -87,13 +87,13 @@ services:
       Security__MasterEncryptionKey: ${MASTER_ENCRYPTION_KEY:-replace_with_32_char_master_key_for_entropy_ok!}
       DataProtection__KeyPath: /app/dp-keys
       DataProtection__ApplicationName: APIHunterPlatform
-      ScannerRuntime__RuntimeMode: Disabled
+      ScannerRuntime__RuntimeMode: ${SCANNER_RUNTIME_MODE:-UnsafeLocalProcessFallback}
       ScannerRuntime__EgressGatewayMode: None
       ScannerRuntime__EgressNetworkName: ""
       ScannerRuntime__EgressGatewayEndpoint: ""
-      ScannerRuntime__AllowUnsafeProcessFallback: "false"
-      ScanJobConsumer__Enabled: "false"
-      CampaignScheduler__GlobalEnabled: "false"
+      ScannerRuntime__AllowUnsafeProcessFallback: "true"
+      ScanJobConsumer__Enabled: "true"
+      CampaignScheduler__GlobalEnabled: "true"
     volumes:
       - dp_keys:/app/dp-keys
     networks:

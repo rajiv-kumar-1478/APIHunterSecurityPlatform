@@ -41,7 +41,11 @@ services:
           name: apihunter-frontend
           property: host
       - key: ScannerRuntime__RuntimeMode
-        value: Disabled
+        value: UnsafeLocalProcessFallback
+      - key: ScannerRuntime__AllowUnsafeProcessFallback
+        value: "true"
+      - key: ScanJobConsumer__Enabled
+        value: "true"
 
   # ─── 2. Next.js Frontend Dashboard (App Router / Turbopack) ───────────────
   - type: web
