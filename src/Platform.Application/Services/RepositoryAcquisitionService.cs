@@ -342,7 +342,7 @@ public class RepositoryAcquisitionService(
             var alreadyActive = await dbContext.AnalysisJobs
                 .AnyAsync(j => j.JobType == JobType.RepositoryAcquisition &&
                                j.TargetEntityId == repo.Id &&
-                               (j.Status == JobStatus.Queued || j.Status == JobStatus.Running), ct);
+                               (j.Status == JobStatus.Queued || j.Status == JobStatus.Running || j.Status == JobStatus.Retrying), ct);
 
             if (!alreadyActive)
             {
@@ -424,7 +424,7 @@ public class RepositoryAcquisitionService(
             var alreadyActive = await dbContext.AnalysisJobs
                 .AnyAsync(j => j.JobType == JobType.RepositoryAcquisition &&
                                j.TargetEntityId == repo.Id &&
-                               (j.Status == JobStatus.Queued || j.Status == JobStatus.Running), ct);
+                               (j.Status == JobStatus.Queued || j.Status == JobStatus.Running || j.Status == JobStatus.Retrying), ct);
 
             if (!alreadyActive)
             {
@@ -450,7 +450,7 @@ public class RepositoryAcquisitionService(
         var alreadyActive = await dbContext.AnalysisJobs
             .AnyAsync(j => j.JobType == JobType.RepositoryAcquisition &&
                            j.TargetEntityId == repo.Id &&
-                           (j.Status == JobStatus.Queued || j.Status == JobStatus.Running), ct);
+                           (j.Status == JobStatus.Queued || j.Status == JobStatus.Running || j.Status == JobStatus.Retrying), ct);
 
         if (!alreadyActive)
         {

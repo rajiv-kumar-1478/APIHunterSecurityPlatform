@@ -49,51 +49,80 @@ public class JobOrchestrationService(
         return job;
     }
 
-    public async Task<AnalysisJob?> ClaimNextJobAsync(string workerInstanceId, CancellationToken ct = default)
+    public async Task<AnalysisJob?> ClaimNextJobAsync(string workerInstanceId, JobType? jobType = null, CancellationToken ct = default)
     {
         // Safe PostgreSQL row claiming with FOR UPDATE SKIP LOCKED
         // For testing/InMemory provider, fallback to LINQ optimistic lock
         var db = (DbContext)dbContext;
         if (!db.Database.IsRelational())
         {
-            return await ClaimNextJobInMemoryAsync(workerInstanceId, ct);
+            return await ClaimNextJobInMemoryAsync(workerInstanceId, jobType, ct);
         }
 
         var now = DateTime.UtcNow;
+        var jobTypeStr = jobType?.ToString();
 
-        // PostgreSQL-safe claim using Raw SQL inside transaction
-        var sql = """
-            WITH claimed AS (
-                SELECT "Id" 
-                FROM "analysis_jobs"
-                WHERE "Status" = 'Queued' 
-                   OR ("Status" = 'Retrying' AND "NextRetryAtUtc" <= {0})
-                ORDER BY "Priority" DESC, "QueuedAtUtc" ASC
-                FOR UPDATE SKIP LOCKED
-                LIMIT 1
-            )
-            UPDATE "analysis_jobs"
-            SET "Status" = 'Running',
-                "WorkerInstanceId" = {1},
-                "StartedAtUtc" = {0},
-                "LastHeartbeatAtUtc" = {0}
-            FROM claimed
-            WHERE "analysis_jobs"."Id" = claimed."Id"
-            RETURNING "analysis_jobs".*;
-            """;
+        // PostgreSQL-safe claim using Raw SQL inside transaction with FOR UPDATE SKIP LOCKED.
+        // Note: AnalysisJob uses xmin for optimistic concurrency (IsRowVersion),
+        // so RETURNING must explicitly include "analysis_jobs".xmin because * omits Postgres system columns.
+        var sql = jobType.HasValue
+            ? """
+                WITH claimed AS (
+                    SELECT "Id" 
+                    FROM "analysis_jobs"
+                    WHERE ("Status" = 'Queued' OR ("Status" = 'Retrying' AND "NextRetryAtUtc" <= {0}))
+                      AND "JobType" = {2}
+                    ORDER BY "Priority" DESC, "QueuedAtUtc" ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE "analysis_jobs"
+                SET "Status" = 'Running',
+                    "WorkerInstanceId" = {1},
+                    "StartedAtUtc" = {0},
+                    "LastHeartbeatAtUtc" = {0}
+                FROM claimed
+                WHERE "analysis_jobs"."Id" = claimed."Id"
+                RETURNING "analysis_jobs".*, "analysis_jobs".xmin;
+                """
+            : """
+                WITH claimed AS (
+                    SELECT "Id" 
+                    FROM "analysis_jobs"
+                    WHERE ("Status" = 'Queued' OR ("Status" = 'Retrying' AND "NextRetryAtUtc" <= {0}))
+                    ORDER BY "Priority" DESC, "QueuedAtUtc" ASC
+                    FOR UPDATE SKIP LOCKED
+                    LIMIT 1
+                )
+                UPDATE "analysis_jobs"
+                SET "Status" = 'Running',
+                    "WorkerInstanceId" = {1},
+                    "StartedAtUtc" = {0},
+                    "LastHeartbeatAtUtc" = {0}
+                FROM claimed
+                WHERE "analysis_jobs"."Id" = claimed."Id"
+                RETURNING "analysis_jobs".*, "analysis_jobs".xmin;
+                """;
 
-        var claimedJobs = await dbContext.AnalysisJobs
-            .FromSqlRaw(sql, now, workerInstanceId)
-            .ToListAsync(ct);
+        var claimedJobs = jobType.HasValue
+            ? await dbContext.AnalysisJobs.FromSqlRaw(sql, now, workerInstanceId, jobTypeStr!).ToListAsync(ct)
+            : await dbContext.AnalysisJobs.FromSqlRaw(sql, now, workerInstanceId).ToListAsync(ct);
 
         return claimedJobs.FirstOrDefault();
     }
 
-    private async Task<AnalysisJob?> ClaimNextJobInMemoryAsync(string workerInstanceId, CancellationToken ct)
+    private async Task<AnalysisJob?> ClaimNextJobInMemoryAsync(string workerInstanceId, JobType? jobType, CancellationToken ct)
     {
         var now = DateTime.UtcNow;
-        var eligibleJob = await dbContext.AnalysisJobs
-            .Where(j => j.Status == JobStatus.Queued || (j.Status == JobStatus.Retrying && j.NextRetryAtUtc <= now))
+        var query = dbContext.AnalysisJobs
+            .Where(j => j.Status == JobStatus.Queued || (j.Status == JobStatus.Retrying && j.NextRetryAtUtc <= now));
+
+        if (jobType.HasValue)
+        {
+            query = query.Where(j => j.JobType == jobType.Value);
+        }
+
+        var eligibleJob = await query
             .OrderByDescending(j => j.Priority)
             .ThenBy(j => j.QueuedAtUtc)
             .FirstOrDefaultAsync(ct);
@@ -189,9 +218,9 @@ public class JobOrchestrationService(
 
     public async Task<int> SweepStaleJobsAsync(int staleTimeoutMinutes = 5, CancellationToken ct = default)
     {
-        var cutoff = DateTime.UtcNow.AddMinutes(-staleTimeoutMinutes);
+        var cutoff = staleTimeoutMinutes <= 0 ? DateTime.UtcNow : DateTime.UtcNow.AddMinutes(-staleTimeoutMinutes);
         var staleJobs = await dbContext.AnalysisJobs
-            .Where(j => j.Status == JobStatus.Running && (j.LastHeartbeatAtUtc == null || j.LastHeartbeatAtUtc < cutoff))
+            .Where(j => j.Status == JobStatus.Running && (staleTimeoutMinutes <= 0 || j.LastHeartbeatAtUtc == null || j.LastHeartbeatAtUtc < cutoff))
             .ToListAsync(ct);
 
         foreach (var job in staleJobs)

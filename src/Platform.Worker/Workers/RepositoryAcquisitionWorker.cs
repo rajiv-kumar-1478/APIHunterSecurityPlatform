@@ -24,9 +24,9 @@ public class RepositoryAcquisitionWorker(
                 var acquisitionService = scope.ServiceProvider.GetRequiredService<RepositoryAcquisitionService>();
 
                 // Claim next RepositoryAcquisition job safely via FOR UPDATE SKIP LOCKED
-                var job = await jobOrchestrator.ClaimNextJobAsync(_workerInstanceId, stoppingToken);
+                var job = await jobOrchestrator.ClaimNextJobAsync(_workerInstanceId, Domain.Enums.JobType.RepositoryAcquisition, stoppingToken);
 
-                if (job == null || job.JobType != Domain.Enums.JobType.RepositoryAcquisition)
+                if (job == null)
                 {
                     await Task.Delay(3000, stoppingToken);
                     continue;

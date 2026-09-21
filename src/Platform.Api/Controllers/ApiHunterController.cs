@@ -295,7 +295,7 @@ public class ApiHunterController(
                 queuedCount = count,
                 message = count > 0
                     ? $"Dispatched {count} repository analysis jobs for record {id}."
-                    : "No unqueued repositories found for this credential record."
+                    : "All linked repositories for this credential record are already queued, currently analyzing, or already processed."
             });
         }
         catch (Exception ex)

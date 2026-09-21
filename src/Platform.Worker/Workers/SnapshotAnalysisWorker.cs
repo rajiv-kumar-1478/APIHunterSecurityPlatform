@@ -24,9 +24,9 @@ public class SnapshotAnalysisWorker(
                 var jobOrchestrator = scope.ServiceProvider.GetRequiredService<JobOrchestrationService>();
                 var detectionService = scope.ServiceProvider.GetRequiredService<SecretDetectionService>();
 
-                var job = await jobOrchestrator.ClaimNextJobAsync(_workerInstanceId, stoppingToken);
+                var job = await jobOrchestrator.ClaimNextJobAsync(_workerInstanceId, JobType.SnapshotAnalysis, stoppingToken);
 
-                if (job == null || job.JobType != JobType.SnapshotAnalysis)
+                if (job == null)
                 {
                     await Task.Delay(3000, stoppingToken);
                     continue;
