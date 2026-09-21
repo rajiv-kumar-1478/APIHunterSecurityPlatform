@@ -183,9 +183,46 @@ public class RepositoryAcquisitionService(
         var existingSnapshot = await dbContext.RepositorySnapshots
             .FirstOrDefaultAsync(s => s.RepositoryId == repositoryId && s.CommitSha == commitSha, ct);
 
-        if (existingSnapshot != null && existingSnapshot.AnalysisStatus == AnalysisStatus.Completed)
+        if (existingSnapshot != null)
         {
-            logger.LogInformation("Snapshot for {FullName} commit {Commit} already exists and is completed.", repo.FullName, commitSha);
+            var existingAnalysisJob = await dbContext.AnalysisJobs
+                .FirstOrDefaultAsync(j => j.JobType == JobType.SnapshotAnalysis && j.TargetEntityId == existingSnapshot.Id, ct);
+
+            if (existingAnalysisJob != null && existingAnalysisJob.Status == JobStatus.Succeeded)
+            {
+                logger.LogInformation("Snapshot for {FullName} commit {Commit} already exists and is completed.", repo.FullName, commitSha);
+                return existingSnapshot;
+            }
+
+            if (existingAnalysisJob != null && existingAnalysisJob.Status == JobStatus.Failed)
+            {
+                logger.LogInformation("Snapshot for {FullName} commit {Commit} exists but previous analysis job failed. Re-queueing analysis job.", repo.FullName, commitSha);
+                existingAnalysisJob.Status = JobStatus.Queued;
+                existingAnalysisJob.RetryCount = 0;
+                existingAnalysisJob.ErrorMessage = null;
+                existingAnalysisJob.StartedAtUtc = null;
+                existingAnalysisJob.CompletedAtUtc = null;
+                existingAnalysisJob.QueuedAtUtc = DateTime.UtcNow;
+                existingSnapshot.AnalysisStatus = AnalysisStatus.Pending;
+                await dbContext.SaveChangesAsync(ct);
+                return existingSnapshot;
+            }
+
+            if (existingAnalysisJob == null)
+            {
+                logger.LogInformation("Snapshot for {FullName} commit {Commit} exists but has no analysis job. Enqueueing SnapshotAnalysis.", repo.FullName, commitSha);
+                existingSnapshot.AnalysisStatus = AnalysisStatus.Pending;
+                await dbContext.SaveChangesAsync(ct);
+                await jobOrchestrationService.CreateJobAsync(
+                    JobType.SnapshotAnalysis,
+                    "Snapshot",
+                    existingSnapshot.Id,
+                    priority: 50,
+                    correlationId: Guid.NewGuid().ToString(),
+                    ct: ct);
+                return existingSnapshot;
+            }
+
             return existingSnapshot;
         }
 

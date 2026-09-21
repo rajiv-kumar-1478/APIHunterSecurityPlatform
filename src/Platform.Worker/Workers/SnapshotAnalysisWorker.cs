@@ -38,12 +38,26 @@ public class SnapshotAnalysisWorker(
 
                 try
                 {
+                    DateTime lastHeartbeat = DateTime.UtcNow;
                     var count = await detectionService.AnalyzeSnapshotAsync(
                         job.TargetEntityId,
                         onFileProcessed: fileId =>
                         {
-                            // Update checkpointing & heartbeat asynchronously
-                            _ = jobOrchestrator.UpdateCheckpointAsync(job.Id, fileId, stoppingToken);
+                            // Throttle checkpoint updates and use a dedicated scope to prevent DbContext thread collision
+                            if ((DateTime.UtcNow - lastHeartbeat).TotalSeconds >= 5)
+                            {
+                                lastHeartbeat = DateTime.UtcNow;
+                                try
+                                {
+                                    using var hbScope = scopeFactory.CreateScope();
+                                    var hbOrchestrator = hbScope.ServiceProvider.GetRequiredService<JobOrchestrationService>();
+                                    hbOrchestrator.UpdateCheckpointAsync(job.Id, fileId, stoppingToken).GetAwaiter().GetResult();
+                                }
+                                catch
+                                {
+                                    // Non-fatal heartbeat update
+                                }
+                            }
                         },
                         ct: stoppingToken);
 
