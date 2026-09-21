@@ -1,3 +1,6 @@
+using System.Formats.Tar;
+using System.IO.Compression;
+using System.Text;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -17,7 +20,8 @@ public class SecretDetectionService(
     IDataProtectionProvider dataProtectionProvider,
     SnapshotService snapshotService,
     IOptions<DetectionOptions> options,
-    ILogger<SecretDetectionService> logger)
+    ILogger<SecretDetectionService> logger,
+    IObjectStore? objectStore = null)
 {
     private readonly IDataProtector _rawProtector = dataProtectionProvider.CreateProtector("Platform.SecretCandidate.RawValue");
     private readonly IDataProtector _contextProtector = dataProtectionProvider.CreateProtector("Platform.CandidateOccurrence.RawContext");
@@ -44,6 +48,46 @@ public class SecretDetectionService(
         var contentHashes = filesToAnalyze.Select(f => f.ContentHash).Distinct().ToList();
         var reusableOccurrencesMap = await snapshotService.GetReusableOccurrencesForHashesAsync(snapshot.RepositoryId, contentHashes, ct);
 
+        // 2. Load pending file contents from tarball archive in ObjectStore
+        var fileContents = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (objectStore != null && !string.IsNullOrWhiteSpace(snapshot.ArchiveObjectKey))
+        {
+            try
+            {
+                await using var archiveStream = await objectStore.GetAsync(snapshot.ArchiveObjectKey, ct);
+                await using var gzipStream = new GZipStream(archiveStream, CompressionMode.Decompress);
+                using var tarReader = new TarReader(gzipStream);
+
+                var pendingPaths = filesToAnalyze
+                    .Where(f => !f.IsSkipped && !reusableOccurrencesMap.ContainsKey(f.ContentHash))
+                    .Select(f => f.FilePath)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                TarEntry? entry;
+                while ((entry = await tarReader.GetNextEntryAsync(false, ct)) != null)
+                {
+                    if (entry.EntryType == TarEntryType.Directory || entry.EntryType == TarEntryType.SymbolicLink)
+                    {
+                        continue;
+                    }
+
+                    var rawName = entry.Name;
+                    var slashIdx = rawName.IndexOf('/');
+                    var relPath = slashIdx >= 0 ? rawName[(slashIdx + 1)..] : rawName;
+
+                    if (pendingPaths.Contains(relPath) && entry.DataStream != null && entry.Length < (opts.MaxFileSizeMb * 1024 * 1024))
+                    {
+                        using var textReader = new StreamReader(entry.DataStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: 4096, leaveOpen: true);
+                        fileContents[relPath] = await textReader.ReadToEndAsync(ct);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger.LogError(ex, "Failed reading tarball archive for snapshot {SnapshotId}", snapshotId);
+            }
+        }
+
         foreach (var file in filesToAnalyze)
         {
             ct.ThrowIfCancellationRequested();
@@ -67,7 +111,7 @@ public class SecretDetectionService(
                     var newOccurrence = new CandidateOccurrence
                     {
                         CandidateId = prev.CandidateId,
-                        SnapshotFileId = file.Id, // Link to NEW SnapshotFileId
+                        SnapshotFileId = file.Id,
                         RepositoryId = snapshot.RepositoryId,
                         DetectionRuleId = prev.DetectionRuleId,
                         RuleVersion = prev.RuleVersion,
@@ -89,11 +133,14 @@ public class SecretDetectionService(
                 continue;
             }
 
-            // 2. Perform actual regex secret detection if file content is unique
+            // 2. Perform actual regex secret detection if file content is available
             try
             {
-                // In full acquisition pipeline, content is read from ObjectStore or workspace
-                // For direct file evaluation, if content is missing, skip
+                if (fileContents.TryGetValue(file.FilePath, out var content) && !string.IsNullOrWhiteSpace(content))
+                {
+                    var occurrences = await ProcessFileContentScanAsync(file, content, snapshot.RepositoryId, ct);
+                    totalCandidatesFound += occurrences.Count;
+                }
                 file.IsAnalyzed = true;
                 onFileProcessed?.Invoke(file.Id);
             }
@@ -115,6 +162,7 @@ public class SecretDetectionService(
     public async Task<List<CandidateOccurrence>> ProcessFileContentScanAsync(
         SnapshotFile snapshotFile,
         string fileContent,
+        Guid? repositoryId = null,
         CancellationToken ct = default)
     {
         var opts = options.Value;
@@ -169,7 +217,7 @@ public class SecretDetectionService(
                 {
                     CandidateId = candidate.Id,
                     SnapshotFileId = snapshotFile.Id,
-                    RepositoryId = snapshotFile.Snapshot.RepositoryId,
+                    RepositoryId = repositoryId ?? snapshotFile.Snapshot?.RepositoryId ?? Guid.Empty,
                     DetectionRuleId = match.RuleId,
                     RuleVersion = match.RuleVersion,
                     OccurrenceFingerprint = occurrenceFp,

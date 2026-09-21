@@ -348,6 +348,7 @@ public static class BuiltInDetectionRules
             new() { Id = "perplexity-api-key", Version = 1, Description = "Perplexity API Key", RegexPattern = @"pplx-[a-zA-Z0-9]{48}", CredentialType = "Perplexity", Confidence = "High" },
             new() { Id = "groq-api-key", Version = 1, Description = "Groq API Key", RegexPattern = @"gsk_[a-zA-Z0-9]{48}", CredentialType = "Groq", Confidence = "High" },
             new() { Id = "cohere-api-key", Version = 1, Description = "Cohere API Key", RegexPattern = @"[a-zA-Z0-9]{40}", CredentialType = "Cohere", Confidence = "Medium" },
+            new() { Id = "cohere-api-key-var", Version = 1, Description = "Cohere API Key Assignment", RegexPattern = @"(?i)(?:cohere(?:_api)?(?:_key)?)\s*[:=]\s*['""]?([a-zA-Z0-9_\-]{20,60})['""]?", CredentialType = "Cohere", Confidence = "High" },
             new() { Id = "deepseek-api-key", Version = 1, Description = "DeepSeek API Key", RegexPattern = @"sk-[a-f0-9]{32}", CredentialType = "DeepSeek", Confidence = "High" },
             new() { Id = "fireworks-api-key", Version = 1, Description = "Fireworks AI Key", RegexPattern = @"fw_[A-Za-z0-9_-]{30,80}", CredentialType = "FireworksAI", Confidence = "High" },
             new() { Id = "replicate-api-key", Version = 1, Description = "Replicate API Key", RegexPattern = @"r8_[a-zA-Z0-9]{32}", CredentialType = "Replicate", Confidence = "High" },
