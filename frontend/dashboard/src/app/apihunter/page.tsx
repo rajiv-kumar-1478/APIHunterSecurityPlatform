@@ -129,6 +129,7 @@ export default function ApiHunterPage() {
   const [analyzingRecordId, setAnalyzingRecordId] = useState<string | null>(null);
   const [analyzedUrls, setAnalyzedUrls] = useState<Record<string, boolean>>({});
 
+  // Initial mount: authenticate user, load metadata, filters, and summary once
   useEffect(() => {
     async function init() {
       try {
@@ -139,9 +140,7 @@ export default function ApiHunterPage() {
         }>("/api/v1/auth/me");
         setUser(userData);
 
-        await fetchFilters();
-        await fetchSummary();
-        await fetchRecords(statusFilter, apiTypeFilter, providerFilter, hasReposFilter, searchQuery, page);
+        await Promise.allSettled([fetchFilters(), fetchSummary()]);
       } catch {
         router.replace("/login");
       } finally {
@@ -149,7 +148,13 @@ export default function ApiHunterPage() {
       }
     }
     init();
-  }, [router, page, statusFilter, apiTypeFilter, providerFilter, hasReposFilter]);
+  }, [router]);
+
+  // Query records only when page or filter criteria change
+  useEffect(() => {
+    if (!user) return;
+    fetchRecords(statusFilter, apiTypeFilter, providerFilter, hasReposFilter, searchQuery, page);
+  }, [user, page, statusFilter, apiTypeFilter, providerFilter, hasReposFilter]);
 
   async function fetchFilters() {
     try {

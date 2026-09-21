@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using Platform.Application.Common;
 using Platform.Application.Persistence;
 using Platform.Application.Services;
@@ -16,8 +17,12 @@ public class ApiHunterController(
     ApiHunterSyncService syncService,
     RepositoryAcquisitionService acquisitionService,
     ICurrentUserContext currentUser,
+    IMemoryCache cache,
     ILogger<ApiHunterController> logger) : ControllerBase
 {
+    private const string SummaryCacheKey = "apihunter:summary:payload";
+    private const string FiltersCacheKey = "apihunter:filters:payload";
+
     public record AnalyzeUrlRequest(string Url);
 
     [HttpGet("summary")]
@@ -26,10 +31,22 @@ public class ApiHunterController(
     {
         try
         {
+            if (cache.TryGetValue(SummaryCacheKey, out object? cachedPayload) && cachedPayload != null)
+            {
+                return Ok(cachedPayload);
+            }
+
             var sourceSummary = await source.GetSummaryAsync(ct);
 
-            var importedValid = await db.ApiHunterRecords.CountAsync(r => r.Status == PlatformKeyStatus.Valid, ct);
-            var importedValidNoCredits = await db.ApiHunterRecords.CountAsync(r => r.Status == PlatformKeyStatus.ValidNoCredits, ct);
+            // Consolidated single query for local database counts
+            var statusCounts = await db.ApiHunterRecords
+                .Where(r => r.Status == PlatformKeyStatus.Valid || r.Status == PlatformKeyStatus.ValidNoCredits)
+                .GroupBy(r => r.Status)
+                .Select(g => new { Status = g.Key, Count = g.Count() })
+                .ToListAsync(ct);
+
+            var importedValid = statusCounts.FirstOrDefault(x => x.Status == PlatformKeyStatus.Valid)?.Count ?? 0;
+            var importedValidNoCredits = statusCounts.FirstOrDefault(x => x.Status == PlatformKeyStatus.ValidNoCredits)?.Count ?? 0;
             var importedTotal = importedValid + importedValidNoCredits;
             var importedRepos = await db.ApiHunterRepoReferences.CountAsync(ct);
 
@@ -42,7 +59,7 @@ public class ApiHunterController(
                 .OrderBy(t => t)
                 .ToListAsync(ct);
 
-            return Ok(new
+            var payload = new
             {
                 source = sourceSummary,
                 imported = new
@@ -64,7 +81,10 @@ public class ApiHunterController(
                     lastSync.LastSyncCompletedAtUtc,
                     lastSync.ErrorMessage
                 }
-            });
+            };
+
+            cache.Set(SummaryCacheKey, payload, TimeSpan.FromSeconds(60));
+            return Ok(payload);
         }
         catch (Exception ex)
         {
@@ -79,6 +99,11 @@ public class ApiHunterController(
     {
         try
         {
+            if (cache.TryGetValue(FiltersCacheKey, out object? cachedFilters) && cachedFilters != null)
+            {
+                return Ok(cachedFilters);
+            }
+
             var apiTypes = await db.ApiHunterRecords
                 .Where(r => (r.Status == PlatformKeyStatus.Valid || r.Status == PlatformKeyStatus.ValidNoCredits) && !string.IsNullOrEmpty(r.ApiType))
                 .Select(r => r.ApiType)
@@ -93,7 +118,9 @@ public class ApiHunterController(
                 .OrderBy(p => p)
                 .ToListAsync(ct);
 
-            return Ok(new { apiTypes, providers });
+            var payload = new { apiTypes, providers };
+            cache.Set(FiltersCacheKey, payload, TimeSpan.FromMinutes(10));
+            return Ok(payload);
         }
         catch (Exception ex)
         {
@@ -195,6 +222,8 @@ public class ApiHunterController(
         try
         {
             var result = await syncService.SynchronizeAsync(ct);
+            cache.Remove(SummaryCacheKey);
+            cache.Remove(FiltersCacheKey);
             return Ok(result);
         }
         catch (Exception ex)

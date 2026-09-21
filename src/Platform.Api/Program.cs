@@ -267,6 +267,7 @@ try
     builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
     builder.Services.AddScoped<AuthService>();
     builder.Services.AddScoped<UserService>();
+    builder.Services.AddMemoryCache();
     builder.Services.AddScoped<PermissionService>();
     builder.Services.AddScoped<IAuditService, AuditService>();
     builder.Services.AddScoped<AuditQueryService>();
