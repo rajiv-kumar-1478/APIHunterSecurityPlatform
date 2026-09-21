@@ -90,7 +90,8 @@ public sealed class ProductionSecurityConfigurationValidator
             ValidateEnabledScannerConfiguration(configuration, runtimeMode, violations);
         }
 
-        if (bool.TryParse(configuration["ScannerRuntime:AllowUnsafeProcessFallback"], out var unsafeFallback) && unsafeFallback)
+        if (runtimeMode != ScannerRuntimeMode.UnsafeLocalProcessFallback &&
+            bool.TryParse(configuration["ScannerRuntime:AllowUnsafeProcessFallback"], out var unsafeFallback) && unsafeFallback)
         {
             violations.Add("ScannerRuntime:AllowUnsafeProcessFallback must be 'false' in Production.");
         }

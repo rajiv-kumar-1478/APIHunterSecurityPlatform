@@ -33,6 +33,7 @@
     <ProjectReference Include="..\..\src\Platform.Domain\Platform.Domain.csproj" />
     <ProjectReference Include="..\..\src\Platform.Infrastructure\Platform.Infrastructure.csproj" />
     <ProjectReference Include="..\..\src\Platform.Worker\Platform.Worker.csproj" />
+    <ProjectReference Include="..\..\src\Platform.Api\Platform.Api.csproj" />
   </ItemGroup>
 
 </Project>
