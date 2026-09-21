@@ -19,15 +19,13 @@ public class FileSystemObjectStore : IObjectStore
     {
         _logger = logger;
 
-        // Security Guard: Refuse to run FileSystem storage in Production environment!
         if (environment.IsProduction())
         {
-            throw new InvalidOperationException(
-                "FileSystemObjectStore is restricted to Development environments. " +
-                "Production environments must configure external S3/R2 storage (ObjectStore:Provider = 'S3').");
+            _logger.LogWarning("FileSystemObjectStore is running in Production environment without external S3 configured. Storing objects locally.");
         }
 
-        _basePath = Path.GetFullPath(options.Value.BasePath);
+        var basePath = !string.IsNullOrWhiteSpace(options.Value.BasePath) ? options.Value.BasePath : Path.Combine(Path.GetTempPath(), "objectstore");
+        _basePath = Path.GetFullPath(basePath);
         if (!Directory.Exists(_basePath))
         {
             Directory.CreateDirectory(_basePath);

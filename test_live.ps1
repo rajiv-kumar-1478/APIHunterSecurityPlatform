@@ -14,13 +14,9 @@ $loginBody = @{
     rememberMe = $false
 } | ConvertTo-Json
 
-try {
-    $loginRes = Invoke-RestMethod -Uri "https://apihunter-api.onrender.com/api/v1/auth/login" -Method Post -Body $loginBody -ContentType "application/json" -Headers $loginHeaders -WebSession $session
-    Write-Host "Login Success!" ($loginRes | ConvertTo-Json)
-} catch {
-    Write-Host "Login Error:" $_.Exception.Message
-    if ($_.ErrorDetails) { Write-Host "Details:" $_.ErrorDetails.Message }
-}
+$loginRes = Invoke-RestMethod -Uri "https://apihunter-api.onrender.com/api/v1/auth/login" -Method Post -Body $loginBody -ContentType "application/json" -Headers $loginHeaders -WebSession $session
+Write-Host "Login Success! UserId:" $loginRes.userId
+$postLoginCsrf = $loginRes.csrfToken
 
 Write-Host "`n3. Calling summary..."
 try {
@@ -28,7 +24,11 @@ try {
     Write-Host "Summary Response:" ($sumRes | ConvertTo-Json)
 } catch {
     Write-Host "Summary Error:" $_.Exception.Message
-    if ($_.ErrorDetails) { Write-Host "Details:" $_.ErrorDetails.Message }
+    if ($_.Exception.Response) {
+        $stream = $_.Exception.Response.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($stream)
+        Write-Host "Summary 500 Body:" $reader.ReadToEnd()
+    }
 }
 
 Write-Host "`n4. Calling records..."
@@ -37,14 +37,25 @@ try {
     Write-Host "Records Response:" ($recRes | ConvertTo-Json)
 } catch {
     Write-Host "Records Error:" $_.Exception.Message
-    if ($_.ErrorDetails) { Write-Host "Details:" $_.ErrorDetails.Message }
+    if ($_.Exception.Response) {
+        $stream = $_.Exception.Response.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($stream)
+        Write-Host "Records 500 Body:" $reader.ReadToEnd()
+    }
 }
 
 Write-Host "`n5. Calling sync..."
 try {
-    $syncRes = Invoke-RestMethod -Uri "https://apihunter-api.onrender.com/api/v1/apihunter/sync" -Method Post -Headers $loginHeaders -WebSession $session
+    $syncHeaders = @{
+        "X-CSRF-TOKEN" = $postLoginCsrf
+    }
+    $syncRes = Invoke-RestMethod -Uri "https://apihunter-api.onrender.com/api/v1/apihunter/sync" -Method Post -Headers $syncHeaders -WebSession $session
     Write-Host "Sync Response:" ($syncRes | ConvertTo-Json)
 } catch {
     Write-Host "Sync Error:" $_.Exception.Message
-    if ($_.ErrorDetails) { Write-Host "Details:" $_.ErrorDetails.Message }
+    if ($_.Exception.Response) {
+        $stream = $_.Exception.Response.GetResponseStream()
+        $reader = New-Object System.IO.StreamReader($stream)
+        Write-Host "Sync 500/400 Body:" $reader.ReadToEnd()
+    }
 }
