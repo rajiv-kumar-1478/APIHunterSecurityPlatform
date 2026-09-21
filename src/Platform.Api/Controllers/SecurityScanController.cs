@@ -248,7 +248,7 @@ public class SecurityScanController : ControllerBase
         => GetReport(id, "html", baselineJobId, ct);
 
     [HttpPost("jobs")]
-    public async Task<ActionResult<SecurityScanJob>> CreateJob(
+    public async Task<ActionResult<ScanJobDetailDto>> CreateJob(
         [FromBody] CreateScanJobRequest request,
         CancellationToken ct)
     {
@@ -261,7 +261,8 @@ public class SecurityScanController : ControllerBase
         try
         {
             var job = await _scanJobService.CreateScanJobAsync(request, ct);
-            return CreatedAtAction(nameof(GetJob), new { id = job.Id }, job);
+            var detail = await _scanJobService.GetJobDetailAsync(job.Id, ct);
+            return CreatedAtAction(nameof(GetJob), new { id = job.Id }, detail);
         }
         catch (ArgumentException ex)
         {
@@ -278,7 +279,7 @@ public class SecurityScanController : ControllerBase
     }
 
     [HttpPost("jobs/{id:guid}/retry")]
-    public async Task<ActionResult<SecurityScanJob>> RetryJob(Guid id, CancellationToken ct)
+    public async Task<ActionResult<ScanJobDetailDto>> RetryJob(Guid id, CancellationToken ct)
     {
         try
         {
@@ -295,7 +296,8 @@ public class SecurityScanController : ControllerBase
             }
 
             var job = await _scanJobService.RetryScanJobAsync(id, ct);
-            return Ok(job);
+            var detail = await _scanJobService.GetJobDetailAsync(job.Id, ct);
+            return Ok(detail);
         }
         catch (KeyNotFoundException ex)
         {
@@ -312,7 +314,7 @@ public class SecurityScanController : ControllerBase
     }
 
     [HttpPost("jobs/{id:guid}/cancel")]
-    public async Task<ActionResult<SecurityScanJob>> CancelJob(
+    public async Task<ActionResult<ScanJobDetailDto>> CancelJob(
         Guid id,
         [FromBody] CancelScanJobApiRequest request,
         CancellationToken ct)
@@ -320,7 +322,8 @@ public class SecurityScanController : ControllerBase
         try
         {
             var job = await _scanJobService.CancelScanJobAsync(id, request.Reason, request.ExpectedVersion, ct);
-            return Ok(job);
+            var detail = await _scanJobService.GetJobDetailAsync(job.Id, ct);
+            return Ok(detail);
         }
         catch (KeyNotFoundException ex)
         {

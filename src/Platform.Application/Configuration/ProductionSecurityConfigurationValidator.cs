@@ -140,7 +140,11 @@ public sealed class ProductionSecurityConfigurationValidator
     {
         if (runtimeMode == ScannerRuntimeMode.UnsafeLocalProcessFallback)
         {
-            violations.Add("ScannerRuntime:RuntimeMode cannot be 'UnsafeLocalProcessFallback' in Production.");
+            if (!IsExplicitlyEnabled(configuration["ScannerRuntime:AllowUnsafeProcessFallback"]))
+            {
+                violations.Add("ScannerRuntime:RuntimeMode cannot be 'UnsafeLocalProcessFallback' in Production unless ScannerRuntime:AllowUnsafeProcessFallback is explicitly enabled.");
+            }
+            return;
         }
         else if (runtimeMode == ScannerRuntimeMode.CloudManagedContainer)
         {

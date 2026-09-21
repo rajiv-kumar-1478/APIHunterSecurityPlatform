@@ -558,7 +558,11 @@ try
     // Controllers + OpenAPI
     // ─────────────────────────────────────────────────────────────────────────
     builder.Services.AddControllersWithViews(options =>
-        options.Filters.Add<ApiAntiforgeryAuthorizationFilter>());
+        options.Filters.Add<ApiAntiforgeryAuthorizationFilter>())
+        .AddJsonOptions(opts =>
+        {
+            opts.JsonSerializerOptions.ReferenceHandler = System.Text.Json.Serialization.ReferenceHandler.IgnoreCycles;
+        });
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen(opts =>
     {
