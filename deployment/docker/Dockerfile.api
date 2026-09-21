@@ -6,13 +6,13 @@ RUN apt-get update \
     && ARCH=$(uname -m) \
     && if [ "$ARCH" = "x86_64" ]; then TOOL_ARCH="amd64"; elif [ "$ARCH" = "aarch64" ]; then TOOL_ARCH="arm64"; else TOOL_ARCH="amd64"; fi \
     && wget -q https://github.com/projectdiscovery/subfinder/releases/download/v2.6.6/subfinder_2.6.6_linux_${TOOL_ARCH}.zip \
-    && unzip -q subfinder_2.6.6_linux_${TOOL_ARCH}.zip -d /usr/local/bin/ \
+    && unzip -qo subfinder_2.6.6_linux_${TOOL_ARCH}.zip subfinder -d /usr/local/bin/ \
     && wget -q https://github.com/projectdiscovery/httpx/releases/download/v1.6.8/httpx_1.6.8_linux_${TOOL_ARCH}.zip \
-    && unzip -q httpx_1.6.8_linux_${TOOL_ARCH}.zip -d /usr/local/bin/ \
+    && unzip -qo httpx_1.6.8_linux_${TOOL_ARCH}.zip httpx -d /usr/local/bin/ \
     && wget -q https://github.com/projectdiscovery/katana/releases/download/v1.1.0/katana_1.1.0_linux_${TOOL_ARCH}.zip \
-    && unzip -q katana_1.1.0_linux_${TOOL_ARCH}.zip -d /usr/local/bin/ \
+    && unzip -qo katana_1.1.0_linux_${TOOL_ARCH}.zip katana -d /usr/local/bin/ \
     && wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.3.2/nuclei_3.3.2_linux_${TOOL_ARCH}.zip \
-    && unzip -q nuclei_3.3.2_linux_${TOOL_ARCH}.zip -d /usr/local/bin/ \
+    && unzip -qo nuclei_3.3.2_linux_${TOOL_ARCH}.zip nuclei -d /usr/local/bin/ \
     && chmod +x /usr/local/bin/subfinder /usr/local/bin/httpx /usr/local/bin/katana /usr/local/bin/nuclei \
     && rm -f *.zip \
     && rm -rf /var/lib/apt/lists/*
@@ -20,6 +20,7 @@ RUN apt-get update \
 FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
 WORKDIR /src
 COPY ["src/Platform.Api/Platform.Api.csproj", "src/Platform.Api/"]
+COPY ["src/Platform.Worker/Platform.Worker.csproj", "src/Platform.Worker/"]
 COPY ["src/Platform.Application/Platform.Application.csproj", "src/Platform.Application/"]
 COPY ["src/Platform.Domain/Platform.Domain.csproj", "src/Platform.Domain/"]
 COPY ["src/Platform.Infrastructure/Platform.Infrastructure.csproj", "src/Platform.Infrastructure/"]
