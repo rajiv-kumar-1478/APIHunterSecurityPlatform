@@ -39,38 +39,66 @@ public class ApiHunterAdapter : IApiHunterSource
             return new ApiHunterSourceSummaryDto(0, 0, 0, 0, false);
         }
 
+        long totalKeys = 0;
+        long validKeys = 0;
+        long validNoCredits = 0;
+        long totalRepos = 0;
+        bool connected = false;
+
         try
         {
             await using var conn = new NpgsqlConnection(_connectionString);
             await conn.OpenAsync(ct);
+            connected = true;
 
             var (keysTable, refsTable) = await ResolveTableNamesAsync(conn, ct);
 
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $@"
-                SELECT 
-                    (SELECT COUNT(*) FROM {keysTable}) as TotalKeys,
-                    (SELECT COUNT(*) FROM {keysTable} WHERE ""Status"" = 1) as ValidKeys,
-                    (SELECT COUNT(*) FROM {keysTable} WHERE ""Status"" = 7) as ValidNoCreditsKeys,
-                    (SELECT COUNT(*) FROM {refsTable}) as TotalRepoReferences;";
-
-            await using var reader = await cmd.ExecuteReaderAsync(ct);
-            if (await reader.ReadAsync(ct))
+            try
             {
-                var totalKeys = reader.GetInt64(0);
-                var validKeys = reader.GetInt64(1);
-                var validNoCredits = reader.GetInt64(2);
-                var totalRepos = reader.GetInt64(3);
+                await using var cmd = conn.CreateCommand();
+                cmd.CommandText = $@"
+                    SELECT 
+                        COUNT(*) as TotalKeys,
+                        SUM(CASE WHEN ""Status"" = 1 THEN 1 ELSE 0 END) as ValidKeys,
+                        SUM(CASE WHEN ""Status"" = 7 THEN 1 ELSE 0 END) as ValidNoCreditsKeys
+                    FROM {keysTable};";
 
-                return new ApiHunterSourceSummaryDto(totalKeys, validKeys, validNoCredits, totalRepos, true);
+                await using var reader = await cmd.ExecuteReaderAsync(ct);
+                if (await reader.ReadAsync(ct))
+                {
+                    totalKeys = GetSafeLong(reader, 0);
+                    validKeys = GetSafeLong(reader, 1);
+                    validNoCredits = GetSafeLong(reader, 2);
+                }
             }
+            catch (Exception keyEx)
+            {
+                _logger.LogWarning(keyEx, "Failed to query keys table from APIHunter source database.");
+            }
+
+            try
+            {
+                await using var refCmd = conn.CreateCommand();
+                refCmd.CommandText = $"SELECT COUNT(*) FROM {refsTable};";
+                var refRes = await refCmd.ExecuteScalarAsync(ct);
+                if (refRes != null && refRes != DBNull.Value)
+                {
+                    totalRepos = Convert.ToInt64(refRes);
+                }
+            }
+            catch (Exception refEx)
+            {
+                _logger.LogWarning(refEx, "Failed to query repo references table from APIHunter source database.");
+            }
+
+            return new ApiHunterSourceSummaryDto(totalKeys, validKeys, validNoCredits, totalRepos, connected);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to connect or fetch summary from APIHunter source database. Exception: {Message}", ex.Message);
         }
 
-        return new ApiHunterSourceSummaryDto(0, 0, 0, 0, false);
+        return new ApiHunterSourceSummaryDto(0, 0, 0, 0, connected);
     }
 
     public async Task<List<ApiHunterKeySourceDto>> FetchKeysIncrementalAsync(long lastSyncedId, int batchSize = 2500, CancellationToken ct = default)

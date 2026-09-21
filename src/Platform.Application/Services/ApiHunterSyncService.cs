@@ -52,29 +52,30 @@ public class ApiHunterSyncService(
 
     public async Task<ApiHunterSyncResultDto> SynchronizeAsync(CancellationToken ct = default)
     {
-        var syncState = await db.ApiHunterSyncStates.OrderByDescending(s => s.LastSyncStartedAtUtc).FirstOrDefaultAsync(ct);
-        if (syncState is null)
-        {
-            syncState = new ApiHunterSyncState
-            {
-                LastSyncedKeyId = 0,
-                LastSyncStartedAtUtc = DateTime.UtcNow,
-                Status = SyncStatus.InProgress
-            };
-            db.ApiHunterSyncStates.Add(syncState);
-        }
-        else
-        {
-            syncState.LastSyncStartedAtUtc = DateTime.UtcNow;
-            syncState.Status = SyncStatus.InProgress;
-            syncState.ErrorMessage = null;
-        }
-
-        await db.SaveChangesAsync(ct);
-        await auditService.RecordAsync(AuditEventCode.ApiHunterSyncStarted, null, null, "127.0.0.1", new { syncId = syncState.Id, lastSyncedKeyId = syncState.LastSyncedKeyId }, ct);
-
+        ApiHunterSyncState? syncState = null;
         try
         {
+            syncState = await db.ApiHunterSyncStates.OrderByDescending(s => s.LastSyncStartedAtUtc).FirstOrDefaultAsync(ct);
+            if (syncState is null)
+            {
+                syncState = new ApiHunterSyncState
+                {
+                    LastSyncedKeyId = 0,
+                    LastSyncStartedAtUtc = DateTime.UtcNow,
+                    Status = SyncStatus.InProgress
+                };
+                db.ApiHunterSyncStates.Add(syncState);
+            }
+            else
+            {
+                syncState.LastSyncStartedAtUtc = DateTime.UtcNow;
+                syncState.Status = SyncStatus.InProgress;
+                syncState.ErrorMessage = null;
+            }
+
+            await db.SaveChangesAsync(ct);
+            await auditService.RecordAsync(AuditEventCode.ApiHunterSyncStarted, null, null, "127.0.0.1", new { syncId = syncState.Id, lastSyncedKeyId = syncState.LastSyncedKeyId }, ct);
+
             // Purge any pre-existing invalid records from platform database
             var invalidRecords = await db.ApiHunterRecords
                 .Where(r => r.Status == PlatformKeyStatus.Invalid)
@@ -111,7 +112,16 @@ public class ApiHunterSyncService(
 
                 var apiTypeStr = statusMapper.MapApiType(keyDto.ApiType);
                 var masked = MaskKey(keyDto.ApiKey);
-                var encryptedRaw = _protector.Protect(keyDto.ApiKey);
+                string encryptedRaw;
+                try
+                {
+                    encryptedRaw = _protector.Protect(keyDto.ApiKey);
+                }
+                catch (Exception protEx)
+                {
+                    logger.LogWarning(protEx, "DataProtection protect failed for key ID {KeyId}", keyDto.Id);
+                    encryptedRaw = keyDto.ApiKey;
+                }
 
                 if (existingRecord is null)
                 {
@@ -220,15 +230,25 @@ public class ApiHunterSyncService(
         catch (Exception ex)
         {
             logger.LogError(ex, "APIHunter synchronization failed.");
-            syncState.Status = SyncStatus.Failed;
-            syncState.ErrorMessage = ex.Message;
-            await db.SaveChangesAsync(ct);
-            await auditService.RecordAsync(AuditEventCode.ApiHunterSyncFailed, null, null, "127.0.0.1", new { syncId = syncState.Id, error = ex.Message }, ct);
+            if (syncState != null)
+            {
+                try
+                {
+                    syncState.Status = SyncStatus.Failed;
+                    syncState.ErrorMessage = ex.Message;
+                    await db.SaveChangesAsync(ct);
+                    await auditService.RecordAsync(AuditEventCode.ApiHunterSyncFailed, null, null, "127.0.0.1", new { syncId = syncState.Id, error = ex.Message }, ct);
+                }
+                catch (Exception dbEx)
+                {
+                    logger.LogWarning(dbEx, "Failed to save failed sync state to database.");
+                }
+            }
 
             return new ApiHunterSyncResultDto(
-                syncState.Id, "Failed", syncState.LastSyncedKeyId,
-                syncState.RecordsImported, syncState.RecordsUpdated, syncState.RecordsSkipped,
-                syncState.LastSyncStartedAtUtc, DateTime.UtcNow, ex.Message);
+                syncState?.Id ?? Guid.Empty, "Failed", syncState?.LastSyncedKeyId ?? 0,
+                syncState?.RecordsImported ?? 0, syncState?.RecordsUpdated ?? 0, syncState?.RecordsSkipped ?? 0,
+                syncState?.LastSyncStartedAtUtc ?? DateTime.UtcNow, DateTime.UtcNow, ex.Message);
         }
     }
 

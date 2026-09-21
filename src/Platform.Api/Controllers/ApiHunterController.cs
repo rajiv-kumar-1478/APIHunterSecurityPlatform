@@ -13,43 +13,52 @@ namespace Platform.Api.Controllers;
 public class ApiHunterController(
     IPlatformDbContext db,
     IApiHunterSource source,
-    ApiHunterSyncService syncService) : ControllerBase
+    ApiHunterSyncService syncService,
+    ILogger<ApiHunterController> logger) : ControllerBase
 {
     [HttpGet("summary")]
     [RequireAuth]
     public async Task<IActionResult> GetSummary(CancellationToken ct)
     {
-        var sourceSummary = await source.GetSummaryAsync(ct);
-
-        var importedTotal = await db.ApiHunterRecords.CountAsync(r => r.Status != PlatformKeyStatus.Invalid, ct);
-        var importedValid = await db.ApiHunterRecords.CountAsync(r => r.Status == PlatformKeyStatus.Valid, ct);
-        var importedValidNoCredits = await db.ApiHunterRecords.CountAsync(r => r.Status == PlatformKeyStatus.ValidNoCredits, ct);
-        var importedRepos = await db.ApiHunterRepoReferences.CountAsync(ct);
-
-        var lastSync = await db.ApiHunterSyncStates.OrderByDescending(s => s.LastSyncStartedAtUtc).FirstOrDefaultAsync(ct);
-
-        return Ok(new
+        try
         {
-            source = sourceSummary,
-            imported = new
+            var sourceSummary = await source.GetSummaryAsync(ct);
+
+            var importedTotal = await db.ApiHunterRecords.CountAsync(r => r.Status != PlatformKeyStatus.Invalid, ct);
+            var importedValid = await db.ApiHunterRecords.CountAsync(r => r.Status == PlatformKeyStatus.Valid, ct);
+            var importedValidNoCredits = await db.ApiHunterRecords.CountAsync(r => r.Status == PlatformKeyStatus.ValidNoCredits, ct);
+            var importedRepos = await db.ApiHunterRepoReferences.CountAsync(ct);
+
+            var lastSync = await db.ApiHunterSyncStates.OrderByDescending(s => s.LastSyncStartedAtUtc).FirstOrDefaultAsync(ct);
+
+            return Ok(new
             {
-                total = importedTotal,
-                valid = importedValid,
-                validNoCredits = importedValidNoCredits,
-                repoReferences = importedRepos
-            },
-            lastSync = lastSync is null ? null : new
-            {
-                lastSync.Id,
-                lastSync.LastSyncedKeyId,
-                status = lastSync.Status.ToString(),
-                lastSync.RecordsImported,
-                lastSync.RecordsUpdated,
-                lastSync.LastSyncStartedAtUtc,
-                lastSync.LastSyncCompletedAtUtc,
-                lastSync.ErrorMessage
-            }
-        });
+                source = sourceSummary,
+                imported = new
+                {
+                    total = importedTotal,
+                    valid = importedValid,
+                    validNoCredits = importedValidNoCredits,
+                    repoReferences = importedRepos
+                },
+                lastSync = lastSync is null ? null : new
+                {
+                    lastSync.Id,
+                    lastSync.LastSyncedKeyId,
+                    status = lastSync.Status.ToString(),
+                    lastSync.RecordsImported,
+                    lastSync.RecordsUpdated,
+                    lastSync.LastSyncStartedAtUtc,
+                    lastSync.LastSyncCompletedAtUtc,
+                    lastSync.ErrorMessage
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error occurred while processing GET api/v1/apihunter/summary");
+            return StatusCode(500, new { title = "Failed to retrieve APIHunter summary", error = ex.Message });
+        }
     }
 
     [HttpGet("records")]
@@ -60,40 +69,48 @@ public class ApiHunterController(
         [FromQuery] int pageSize = 20,
         CancellationToken ct = default)
     {
-        var query = db.ApiHunterRecords.AsNoTracking()
-            .Where(r => r.Status != PlatformKeyStatus.Invalid);
-
-        if (!string.IsNullOrWhiteSpace(status) && !status.Equals("all", StringComparison.OrdinalIgnoreCase))
+        try
         {
-            if (Enum.TryParse<PlatformKeyStatus>(status, true, out var parsedStatus))
+            var query = db.ApiHunterRecords.AsNoTracking()
+                .Where(r => r.Status != PlatformKeyStatus.Invalid);
+
+            if (!string.IsNullOrWhiteSpace(status) && !status.Equals("all", StringComparison.OrdinalIgnoreCase))
             {
-                query = query.Where(r => r.Status == parsedStatus);
+                if (Enum.TryParse<PlatformKeyStatus>(status, true, out var parsedStatus))
+                {
+                    query = query.Where(r => r.Status == parsedStatus);
+                }
             }
+
+            var total = await query.CountAsync(ct);
+            var items = await query
+                .OrderByDescending(r => r.ImportedAtUtc)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(r => new ApiHunterRecordDto(
+                    r.Id,
+                    r.SourceRecordId,
+                    r.MaskedKey,
+                    r.Status.ToString(),
+                    r.ApiType,
+                    r.SearchProvider,
+                    r.FirstFoundUtc,
+                    r.LastFoundUtc,
+                    r.LastCheckedUtc,
+                    r.Balance,
+                    r.AccountTier,
+                    r.AwsAccountId,
+                    r.AwsRiskLevel,
+                    r.RepoReferences.Count))
+                .ToListAsync(ct);
+
+            return Ok(new PagedResult<ApiHunterRecordDto>(items, total, page, pageSize));
         }
-
-        var total = await query.CountAsync(ct);
-        var items = await query
-            .OrderByDescending(r => r.ImportedAtUtc)
-            .Skip((page - 1) * pageSize)
-            .Take(pageSize)
-            .Select(r => new ApiHunterRecordDto(
-                r.Id,
-                r.SourceRecordId,
-                r.MaskedKey,
-                r.Status.ToString(),
-                r.ApiType,
-                r.SearchProvider,
-                r.FirstFoundUtc,
-                r.LastFoundUtc,
-                r.LastCheckedUtc,
-                r.Balance,
-                r.AccountTier,
-                r.AwsAccountId,
-                r.AwsRiskLevel,
-                r.RepoReferences.Count))
-            .ToListAsync(ct);
-
-        return Ok(new PagedResult<ApiHunterRecordDto>(items, total, page, pageSize));
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error occurred while processing GET api/v1/apihunter/records");
+            return StatusCode(500, new { title = "Failed to retrieve APIHunter records", error = ex.Message });
+        }
     }
 
     [HttpPost("sync")]
