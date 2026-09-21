@@ -594,3 +594,28 @@ export async function triggerCampaignRunNow(campaignId: string): Promise<{ succe
     return { success: false, message: getErrorMessage(error, "Failed to trigger run-now.") };
   }
 }
+
+export interface ScanToolDto {
+  id: string;
+  toolKey: string;
+  displayName: string;
+  version: string;
+  executable: string;
+  enabled: boolean;
+  required: boolean;
+  capabilities: string[];
+  healthStatus: number | string;
+  lastHealthCheckUtc?: string;
+  containerImageRepository?: string;
+  containerImageDigest?: string;
+}
+
+export async function getScanTools(): Promise<ScanToolDto[]> {
+  try {
+    const res = await fetchWithAuth("/api/v1/security/scans/tools");
+    if (!res.ok) return [];
+    return (await parseJsonResponse<ScanToolDto[]>(res)) ?? [];
+  } catch {
+    return [];
+  }
+}

@@ -6,6 +6,7 @@ import {
   ScanExecutionReceiptDto,
   ScanCampaignDto,
   CampaignOperationalHealthDto,
+  ScanToolDto,
   getScanJobs,
   getScanJobReceipt,
   createScanJob,
@@ -16,13 +17,14 @@ import {
   pauseCampaign,
   resumeCampaign,
   triggerCampaignRunNow,
+  getScanTools,
 } from "@/lib/security-api";
 import { CampaignHealthCard } from "./campaigns/CampaignHealthCard";
 import { CampaignHistoryDrawer } from "./campaigns/CampaignHistoryDrawer";
 import { CampaignDiagnosticsModal } from "./campaigns/CampaignDiagnosticsModal";
 
 export function ScanManagementView() {
-  const [activeTab, setActiveTab] = useState<"jobs" | "campaigns">("jobs");
+  const [activeTab, setActiveTab] = useState<"jobs" | "campaigns" | "tools">("jobs");
 
   // Scan Jobs State
   const [jobs, setJobs] = useState<ScanJobDetailDto[]>([]);
@@ -31,6 +33,11 @@ export function ScanManagementView() {
   const [selectedReceipt, setSelectedReceipt] = useState<ScanExecutionReceiptDto | null>(null);
   const [inspectingJob, setInspectingJob] = useState<ScanJobDetailDto | null>(null);
   const [receiptLoading, setReceiptLoading] = useState<boolean>(false);
+
+  // Scanner Tools & Engines State
+  const [tools, setTools] = useState<ScanToolDto[]>([]);
+  const [toolsLoading, setToolsLoading] = useState<boolean>(false);
+  const [showInstallGuide, setShowInstallGuide] = useState<boolean>(false);
 
   // Campaigns Observability State
   const [campaigns, setCampaigns] = useState<ScanCampaignDto[]>([]);
@@ -64,8 +71,27 @@ export function ScanManagementView() {
     setCampaignsLoading(false);
   }, []);
 
+  // Load Scanning Tools & Engines
+  const loadTools = useCallback(async () => {
+    setToolsLoading(true);
+    const data = await getScanTools();
+    setTools(data);
+    setToolsLoading(false);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
+
+    if (activeTab === "tools") {
+      void getScanTools().then((data) => {
+        if (cancelled) return;
+        setTools(data);
+        setToolsLoading(false);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
 
     if (activeTab === "jobs") {
       void getScanJobs(statusFilter || undefined).then((data) => {
@@ -100,7 +126,7 @@ export function ScanManagementView() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [activeTab, loadJobs, loadCampaigns, statusFilter]);
+  }, [activeTab, loadJobs, loadCampaigns, loadTools, statusFilter]);
 
   // Inspect Receipt
   const handleInspectReceipt = async (job: ScanJobDetailDto) => {
@@ -304,6 +330,25 @@ export function ScanManagementView() {
             </span>
           ) : null}
         </button>
+        <button
+          onClick={() => setActiveTab("tools")}
+          className={`pb-3 text-sm font-medium transition-colors border-b-2 flex items-center gap-2 ${
+            activeTab === "tools"
+              ? "border-indigo-500 text-indigo-400 font-semibold"
+              : "border-transparent text-zinc-400 hover:text-zinc-200"
+          }`}
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+          Scanner Engines & Tools
+          {tools.length > 0 ? (
+            <span className="px-1.5 py-0.2 bg-indigo-500/20 text-indigo-300 text-[10px] rounded-full">
+              {tools.length}
+            </span>
+          ) : null}
+        </button>
       </div>
 
       {activeTab === "campaigns" ? (
@@ -427,6 +472,257 @@ export function ScanManagementView() {
               </div>
             )}
           </div>
+        </div>
+      ) : activeTab === "tools" ? (
+        /* ================= SCANNER ENGINES & TOOLS TAB ================= */
+        <div className="space-y-6 animate-fadeIn">
+          {/* Header & Metrics */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-zinc-900/60 p-5 rounded-xl border border-zinc-800 backdrop-blur-sm">
+            <div>
+              <h2 className="text-lg font-semibold text-zinc-100 flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                Scanner Engines & Security Tool Catalog
+              </h2>
+              <p className="text-xs text-zinc-400 mt-1 max-w-2xl">
+                Configured execution engines across the DAG pipeline: <strong className="text-indigo-400">Subfinder</strong> (Recon) → <strong className="text-indigo-400">HTTPX</strong> (Probing) → <strong className="text-indigo-400">Katana + JsMiner</strong> (JS Mining) → <strong className="text-indigo-400">Nuclei + BugHunter</strong> (Exploit Assessment) → <strong className="text-indigo-400">AI Investigation</strong>.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setShowInstallGuide(true)}
+                className="bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 text-xs font-semibold px-4 py-2 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                How to Install Tools
+              </button>
+              <button
+                onClick={() => loadTools()}
+                disabled={toolsLoading}
+                className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium px-3 py-2 rounded-lg transition-colors flex items-center gap-1.5"
+              >
+                <svg className={`w-3.5 h-3.5 ${toolsLoading ? "animate-spin" : ""}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh Status
+              </button>
+            </div>
+          </div>
+
+          {/* Pipeline Diagram Pill Bar */}
+          <div className="bg-zinc-950/60 p-3.5 rounded-xl border border-zinc-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div className="flex items-center gap-2 text-zinc-400">
+              <span className="text-zinc-200 font-semibold">Active DAG Pipeline:</span>
+              <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono">1. Subfinder</span>
+              <span className="text-zinc-600">→</span>
+              <span className="px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 font-mono">2. HTTPX</span>
+              <span className="text-zinc-600">→</span>
+              <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 font-mono">3. Katana + JsMiner</span>
+              <span className="text-zinc-600">→</span>
+              <span className="px-2 py-0.5 rounded bg-rose-500/10 text-rose-300 border border-rose-500/20 font-mono">4. Nuclei + BugHunter</span>
+              <span className="text-zinc-600">→</span>
+              <span className="px-2 py-0.5 rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 font-mono">5. AI Intelligence</span>
+            </div>
+            <div className="text-[11px] text-zinc-500 font-mono">
+              Total Engines: <strong className="text-zinc-200">{tools.length}</strong> | Operational: <strong className="text-emerald-400">{tools.filter(t => t.enabled).length}</strong>
+            </div>
+          </div>
+
+          {/* Tools Cards Grid */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {toolsLoading && tools.length === 0 ? (
+              <div className="col-span-full py-12 text-center text-zinc-500 text-xs">
+                Loading scanner tools registry...
+              </div>
+            ) : tools.length === 0 ? (
+              <div className="col-span-full py-12 text-center bg-zinc-900/40 rounded-xl border border-zinc-800/80 p-8">
+                <div className="w-12 h-12 rounded-full bg-zinc-800 mx-auto flex items-center justify-center text-zinc-400 mb-3">
+                  ⚙
+                </div>
+                <h4 className="text-sm font-semibold text-zinc-200">No Scanning Tools Discovered</h4>
+                <p className="text-xs text-zinc-400 mt-1 max-w-md mx-auto">
+                  Default scanner engines are registered upon database synchronization or when installed on the host container.
+                </p>
+                <button
+                  onClick={() => setShowInstallGuide(true)}
+                  className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg transition"
+                >
+                  View Installation Guide
+                </button>
+              </div>
+            ) : (
+              tools.map((tool) => (
+                <div
+                  key={tool.id || tool.toolKey}
+                  className="bg-zinc-900/60 rounded-xl border border-zinc-800/80 p-4 space-y-3 hover:border-zinc-700 transition flex flex-col justify-between shadow-lg"
+                >
+                  <div>
+                    <div className="flex justify-between items-start gap-2">
+                      <div>
+                        <h4 className="text-sm font-semibold text-zinc-100 flex items-center gap-1.5">
+                          {tool.displayName}
+                        </h4>
+                        <span className="text-[11px] font-mono text-zinc-500">{tool.toolKey} • {tool.version}</span>
+                      </div>
+                      <span
+                        className={`px-2 py-0.5 text-[10px] font-semibold rounded-full ${
+                          tool.enabled
+                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                            : "bg-zinc-800 text-zinc-500 border border-zinc-700"
+                        }`}
+                      >
+                        {tool.enabled ? "● Ready" : "Disabled"}
+                      </span>
+                    </div>
+
+                    {/* Executable & Container info */}
+                    <div className="mt-3 text-[11px] text-zinc-400 space-y-1 font-mono bg-zinc-950/60 p-2.5 rounded-lg border border-zinc-800/60">
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Binary:</span>
+                        <span className="text-zinc-300 font-semibold">{tool.executable}</span>
+                      </div>
+                      {tool.containerImageRepository && (
+                        <div className="flex justify-between">
+                          <span className="text-zinc-500">Image:</span>
+                          <span className="text-zinc-300 truncate max-w-[170px]" title={tool.containerImageRepository}>
+                            {tool.containerImageRepository}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Capabilities Tags */}
+                    <div className="mt-3">
+                      <span className="text-[10px] text-zinc-500 font-semibold uppercase tracking-wider block mb-1">
+                        Capabilities
+                      </span>
+                      <div className="flex flex-wrap gap-1">
+                        {tool.capabilities && tool.capabilities.length > 0 ? (
+                          tool.capabilities.map((cap, i) => (
+                            <span
+                              key={i}
+                              className="px-2 py-0.5 rounded text-[10px] bg-zinc-800 text-zinc-300 border border-zinc-700/60"
+                            >
+                              {cap}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="text-[10px] text-zinc-500">Universal scan runner</span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="pt-3 border-t border-zinc-800/80 flex justify-between items-center">
+                    <span className="text-[10px] text-zinc-500">
+                      {tool.required ? "Required Core Engine" : "Optional Scanner"}
+                    </span>
+                    <button
+                      onClick={() => setIsModalOpen(true)}
+                      className="px-3 py-1 bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-400 text-xs font-medium rounded-lg border border-indigo-500/20 transition"
+                    >
+                      Scan Target
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          {/* Installation & Configuration Guide Modal */}
+          {showInstallGuide && (
+            <div className="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-3xl w-full p-6 space-y-5 shadow-2xl max-h-[85vh] overflow-y-auto">
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h3 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                      How to Install & Configure Security Tools
+                    </h3>
+                    <p className="text-xs text-zinc-400 mt-1">
+                      APIHunter uses standardized CLI binaries and Docker container images on your host or server.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setShowInstallGuide(false)}
+                    className="text-zinc-500 hover:text-zinc-300 text-sm"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-4 text-xs">
+                  {/* Option 1: Go CLI */}
+                  <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 space-y-2">
+                    <div className="font-semibold text-zinc-200 flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-400 text-[10px]">Method 1</span>
+                      Install via Go (Linux / Windows / Mac)
+                    </div>
+                    <p className="text-zinc-400 text-[11px]">
+                      If Go is installed, install the tools globally into your system PATH with one click:
+                    </p>
+                    <pre className="bg-zinc-900 p-3 rounded-lg text-emerald-400 font-mono text-[11px] overflow-x-auto select-all">
+{`# 1. Install Subfinder (Subdomain Discovery)
+go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+
+# 2. Install HTTPX (HTTP Probing & Tech Fingerprinting)
+go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
+
+# 3. Install Katana (Web & JS Crawler)
+go install -v github.com/projectdiscovery/katana/cmd/katana@latest
+
+# 4. Install Nuclei (Vulnerability Scanner)
+go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest`}
+                    </pre>
+                  </div>
+
+                  {/* Option 2: Windows Package Manager */}
+                  <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 space-y-2">
+                    <div className="font-semibold text-zinc-200 flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-400 text-[10px]">Method 2</span>
+                      Install via Winget (Windows Local Machine)
+                    </div>
+                    <pre className="bg-zinc-900 p-3 rounded-lg text-blue-300 font-mono text-[11px] overflow-x-auto select-all">
+{`winget install ProjectDiscovery.subfinder
+winget install ProjectDiscovery.httpx
+winget install ProjectDiscovery.katana
+winget install ProjectDiscovery.nuclei`}
+                    </pre>
+                  </div>
+
+                  {/* Option 3: Docker Images */}
+                  <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 space-y-2">
+                    <div className="font-semibold text-zinc-200 flex items-center gap-2">
+                      <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-400 text-[10px]">Method 3</span>
+                      Docker Sandboxed Runner
+                    </div>
+                    <p className="text-zinc-400 text-[11px]">
+                      When running in Docker mode, the worker pulls and mounts these isolated containers:
+                    </p>
+                    <pre className="bg-zinc-900 p-3 rounded-lg text-purple-300 font-mono text-[11px] overflow-x-auto select-all">
+{`docker pull projectdiscovery/subfinder:latest
+docker pull projectdiscovery/httpx:latest
+docker pull projectdiscovery/katana:latest
+docker pull projectdiscovery/nuclei:latest
+docker pull ghcr.io/apihunter-security/jsminer:v1.2.0
+docker pull ghcr.io/apihunter-security/bughunter:v2.1.0`}
+                    </pre>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <button
+                    onClick={() => setShowInstallGuide(false)}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold"
+                  >
+                    Got It
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         /* ================= AD-HOC SCAN JOBS TAB ================= */

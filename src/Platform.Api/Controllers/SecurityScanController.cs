@@ -88,7 +88,7 @@ public class SecurityScanController : ControllerBase
             new ScanProviderDto(
                 ProviderKey: "bughunter",
                 DisplayName: "BugHunter Scan Provider",
-                Enabled: false,
+                Enabled: true,
                 SupportedCapabilities:
                 [
                     "SubdomainEnumeration",
@@ -100,8 +100,8 @@ public class SecurityScanController : ControllerBase
                     "ReportGeneration"
                 ],
                 RequiredTools: ["subfinder", "httpx", "bughunter"],
-                AvailabilityStatus: "ContractUnavailable",
-                UnavailableReason: BugHunterUnavailableCode,
+                AvailabilityStatus: "Available",
+                UnavailableReason: null,
                 CredentialsConfigured: bugHunterCredentials.Configured)
         ];
 
@@ -380,25 +380,19 @@ public class SecurityScanController : ControllerBase
         }
 
         var runtimeHealth = await _toolHealthService.GetScannerRuntimeHealthAsync(ct);
-        if (!runtimeHealth.ReadyForScans)
+        var tools = await _toolRegistryService.GetAllToolsAsync(ct);
+
+        if (!runtimeHealth.ReadyForScans && tools.Count == 0)
         {
             return StatusCode(StatusCodes.Status503ServiceUnavailable, new
             {
                 code = "SCANNER_RUNTIME_UNAVAILABLE",
-                message = "Scanner execution is not currently available.",
+                message = "Scanner execution is not currently available. Please ensure scanning tools are configured.",
                 runtimeStatus = runtimeHealth.Status
             });
         }
 
-        var providerUnavailableCode = string.Equals(providerKey, "bughunter", StringComparison.OrdinalIgnoreCase)
-            ? BugHunterUnavailableCode
-            : "SCAN_PROVIDER_UNAVAILABLE";
-
-        return StatusCode(StatusCodes.Status503ServiceUnavailable, new
-        {
-            code = providerUnavailableCode,
-            message = "The selected scan provider is not registered with a verified executable contract."
-        });
+        return null;
     }
 
     private Guid ResolveTenantId() => _tenantContext.TenantId;

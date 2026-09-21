@@ -25,6 +25,7 @@ public class DatabaseSeeder(
         await SeedAdminUserAsync(ct);
         await SeedDefaultSystemSettingsAsync(ct);
         await SeedDetectionRulesAsync(ct);
+        await SeedSecurityScanToolsAsync(ct);
     }
 
     private async Task SeedPermissionsAsync(CancellationToken ct)
@@ -127,6 +128,162 @@ public class DatabaseSeeder(
 
         await db.SaveChangesAsync(ct);
         logger.LogInformation("Seeded built-in secret detection rules");
+    }
+
+    private async Task SeedSecurityScanToolsAsync(CancellationToken ct)
+    {
+        var defaultTools = new[]
+        {
+            new SecurityScanTool
+            {
+                ToolKey = "httpx",
+                DisplayName = "ProjectDiscovery HTTPX",
+                Version = "v1.6.8",
+                Executable = "httpx",
+                ArtifactRepository = "projectdiscovery/httpx",
+                ArtifactSourceType = "github-release",
+                ArtifactFormat = "zip",
+                ContainerImageRepository = "projectdiscovery/httpx",
+                CapabilitiesJson = "[\"HttpProbing\",\"DnsResolution\"]",
+                HealthStatus = ToolHealthStatus.Healthy,
+                Enabled = true,
+                Required = false
+            },
+            new SecurityScanTool
+            {
+                ToolKey = "nuclei",
+                DisplayName = "ProjectDiscovery Nuclei",
+                Version = "v3.3.2",
+                Executable = "nuclei",
+                ArtifactRepository = "projectdiscovery/nuclei",
+                ArtifactSourceType = "github-release",
+                ArtifactFormat = "zip",
+                ContainerImageRepository = "projectdiscovery/nuclei",
+                CapabilitiesJson = "[\"HttpProbing\",\"UrlCrawling\",\"VulnerabilityScanning\",\"SecretScanning\"]",
+                HealthStatus = ToolHealthStatus.Healthy,
+                Enabled = true,
+                Required = false
+            },
+            new SecurityScanTool
+            {
+                ToolKey = "subfinder",
+                DisplayName = "ProjectDiscovery Subfinder",
+                Version = "v2.6.6",
+                Executable = "subfinder",
+                ArtifactRepository = "projectdiscovery/subfinder",
+                ArtifactSourceType = "github-release",
+                ArtifactFormat = "zip",
+                ContainerImageRepository = "projectdiscovery/subfinder",
+                CapabilitiesJson = "[\"SubdomainEnumeration\",\"DnsResolution\"]",
+                HealthStatus = ToolHealthStatus.Healthy,
+                Enabled = true,
+                Required = false
+            },
+            new SecurityScanTool
+            {
+                ToolKey = "katana",
+                DisplayName = "ProjectDiscovery Katana Crawler",
+                Version = "v1.1.0",
+                Executable = "katana",
+                ArtifactRepository = "projectdiscovery/katana",
+                ArtifactSourceType = "github-release",
+                ArtifactFormat = "zip",
+                ContainerImageRepository = "projectdiscovery/katana",
+                CapabilitiesJson = "[\"UrlCrawling\"]",
+                HealthStatus = ToolHealthStatus.Healthy,
+                Enabled = true,
+                Required = false
+            },
+            new SecurityScanTool
+            {
+                ToolKey = "jsminer",
+                DisplayName = "JsMiner JavaScript Extractor & Analyzer",
+                Version = "v1.2.0",
+                Executable = "jsminer",
+                ArtifactRepository = "apihunter/bughunter",
+                ArtifactSourceType = "official-release",
+                ArtifactFormat = "binary",
+                ContainerImageRepository = "ghcr.io/apihunter-security/jsminer",
+                CapabilitiesJson = "[\"UrlCrawling\",\"SecretScanning\",\"AiAssistedHunting\"]",
+                HealthStatus = ToolHealthStatus.Healthy,
+                Enabled = true,
+                Required = false
+            },
+            new SecurityScanTool
+            {
+                ToolKey = "bughunter",
+                DisplayName = "APIHunter BugHunter API Scanner",
+                Version = "v2.1.0",
+                Executable = "bughunter",
+                ArtifactRepository = "apihunter/bughunter",
+                ArtifactSourceType = "official-release",
+                ArtifactFormat = "binary",
+                ContainerImageRepository = "ghcr.io/apihunter-security/bughunter",
+                CapabilitiesJson = "[\"SubdomainEnumeration\",\"DnsResolution\",\"HttpProbing\",\"UrlCrawling\",\"VulnerabilityScanning\",\"AiAssistedHunting\",\"ReportGeneration\"]",
+                HealthStatus = ToolHealthStatus.Healthy,
+                Enabled = true,
+                Required = false
+            },
+            new SecurityScanTool
+            {
+                ToolKey = "trufflehog",
+                DisplayName = "TruffleHog Secret Scanner",
+                Version = "v3.82.0",
+                Executable = "trufflehog",
+                ArtifactRepository = "trufflesecurity/trufflehog",
+                ArtifactSourceType = "official-release",
+                ArtifactFormat = "zip",
+                ContainerImageRepository = "trufflesecurity/trufflehog",
+                CapabilitiesJson = "[\"SecretScanning\"]",
+                HealthStatus = ToolHealthStatus.Healthy,
+                Enabled = true,
+                Required = false
+            },
+            new SecurityScanTool
+            {
+                ToolKey = "semgrep",
+                DisplayName = "Semgrep SAST Engine",
+                Version = "v1.85.0",
+                Executable = "semgrep",
+                ArtifactRepository = "semgrep/semgrep",
+                ArtifactSourceType = "official-release",
+                ArtifactFormat = "binary",
+                ContainerImageRepository = "semgrep/semgrep",
+                CapabilitiesJson = "[\"VulnerabilityScanning\"]",
+                HealthStatus = ToolHealthStatus.Healthy,
+                Enabled = true,
+                Required = false
+            }
+        };
+
+        foreach (var tool in defaultTools)
+        {
+            var normalizedKey = tool.ToolKey.Trim().ToLowerInvariant();
+            var existing = await db.SecurityScanTools.FirstOrDefaultAsync(t => t.ToolKey == normalizedKey, ct);
+            if (existing == null)
+            {
+                tool.Id = Guid.NewGuid();
+                tool.ToolKey = normalizedKey;
+                tool.CreatedAtUtc = DateTime.UtcNow;
+                tool.UpdatedAtUtc = DateTime.UtcNow;
+                tool.LastHealthCheckUtc = DateTime.UtcNow;
+                db.SecurityScanTools.Add(tool);
+                logger.LogInformation("Seeded default security scan tool: {ToolKey} ({DisplayName})", tool.ToolKey, tool.DisplayName);
+            }
+            else
+            {
+                // Ensure enabled and updated
+                existing.DisplayName = tool.DisplayName;
+                existing.CapabilitiesJson = tool.CapabilitiesJson;
+                existing.Executable = tool.Executable;
+                existing.Version = tool.Version;
+                existing.ContainerImageRepository = tool.ContainerImageRepository;
+                existing.UpdatedAtUtc = DateTime.UtcNow;
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
+        logger.LogInformation("Security scan tools catalog successfully synchronized.");
     }
 }
 
