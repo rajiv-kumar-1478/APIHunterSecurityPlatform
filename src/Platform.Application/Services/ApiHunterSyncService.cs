@@ -76,13 +76,13 @@ public class ApiHunterSyncService(
             await db.SaveChangesAsync(ct);
             await auditService.RecordAsync(AuditEventCode.ApiHunterSyncStarted, null, null, "127.0.0.1", new { syncId = syncState.Id, lastSyncedKeyId = syncState.LastSyncedKeyId }, ct);
 
-            // Purge any pre-existing invalid records from platform database
-            var invalidRecords = await db.ApiHunterRecords
-                .Where(r => r.Status == PlatformKeyStatus.Invalid)
+            // Purge any pre-existing invalid or unverified records from platform database
+            var unneededRecords = await db.ApiHunterRecords
+                .Where(r => r.Status != PlatformKeyStatus.Valid && r.Status != PlatformKeyStatus.ValidNoCredits)
                 .ToListAsync(ct);
-            if (invalidRecords.Count > 0)
+            if (unneededRecords.Count > 0)
             {
-                db.ApiHunterRecords.RemoveRange(invalidRecords);
+                db.ApiHunterRecords.RemoveRange(unneededRecords);
                 await db.SaveChangesAsync(ct);
             }
 
@@ -93,10 +93,16 @@ public class ApiHunterSyncService(
             int updated = 0;
             int skipped = 0;
 
+            var incomingSourceIds = fetchedKeys.Select(k => k.Id).ToList();
+            var existingRecordMap = await db.ApiHunterRecords
+                .Include(r => r.RepoReferences)
+                .Where(r => incomingSourceIds.Contains(r.SourceRecordId))
+                .ToDictionaryAsync(r => r.SourceRecordId, ct);
+
             foreach (var keyDto in fetchedKeys)
             {
                 var domainStatus = statusMapper.MapStatus(keyDto.Status);
-                if (domainStatus == PlatformKeyStatus.Invalid)
+                if (domainStatus != PlatformKeyStatus.Valid && domainStatus != PlatformKeyStatus.ValidNoCredits)
                 {
                     skipped++;
                     if (keyDto.Id > syncState.LastSyncedKeyId)
@@ -106,9 +112,7 @@ public class ApiHunterSyncService(
                     continue;
                 }
 
-                var existingRecord = await db.ApiHunterRecords
-                    .Include(r => r.RepoReferences)
-                    .FirstOrDefaultAsync(r => r.SourceRecordId == keyDto.Id, ct);
+                existingRecordMap.TryGetValue(keyDto.Id, out var existingRecord);
 
                 var apiTypeStr = statusMapper.MapApiType(keyDto.ApiType);
                 var masked = MaskKey(keyDto.ApiKey);

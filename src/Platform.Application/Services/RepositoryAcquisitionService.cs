@@ -326,14 +326,163 @@ public class RepositoryAcquisitionService(
         return (count, totalBytes, files);
     }
 
+    public async Task<int> QueueAllPendingRepositoryAnalysesAsync(Guid? userId = null, CancellationToken ct = default)
+    {
+        // 1. Seed any repositories from APIHunter records that haven't been created yet
+        await SeedRepositoriesFromApiHunterAsync(userId, ct);
+
+        // 2. Query all repositories that have not yet been acquired or are pending
+        var targetRepos = await dbContext.Repositories
+            .Where(r => r.AcquisitionStatus == AcquisitionStatus.Pending || r.AcquisitionStatus == AcquisitionStatus.Failed)
+            .ToListAsync(ct);
+
+        int queued = 0;
+        foreach (var repo in targetRepos)
+        {
+            var alreadyActive = await dbContext.AnalysisJobs
+                .AnyAsync(j => j.JobType == JobType.RepositoryAcquisition &&
+                               j.TargetEntityId == repo.Id &&
+                               (j.Status == JobStatus.Queued || j.Status == JobStatus.Running), ct);
+
+            if (!alreadyActive)
+            {
+                await jobOrchestrationService.CreateJobAsync(
+                    JobType.RepositoryAcquisition,
+                    "Repository",
+                    repo.Id,
+                    priority: 50,
+                    queuedByUserId: userId,
+                    correlationId: Guid.NewGuid().ToString(),
+                    ct: ct);
+                queued++;
+            }
+        }
+
+        return queued;
+    }
+
+    public async Task<int> QueueRepositoryAnalysisByRecordIdAsync(Guid recordId, Guid? userId = null, CancellationToken ct = default)
+    {
+        var repoRefs = await dbContext.ApiHunterRepoReferences
+            .Where(rr => rr.ApiHunterRecordId == recordId && !string.IsNullOrWhiteSpace(rr.RepoOwner) && !string.IsNullOrWhiteSpace(rr.RepoName))
+            .ToListAsync(ct);
+
+        if (repoRefs.Count == 0) return 0;
+
+        int queued = 0;
+        foreach (var rRef in repoRefs.GroupBy(r => (r.RepoOwner.ToLowerInvariant(), r.RepoName.ToLowerInvariant())).Select(g => g.First()))
+        {
+            var owner = rRef.RepoOwner.Trim();
+            var name = rRef.RepoName.Trim();
+
+            var repo = await dbContext.Repositories
+                .FirstOrDefaultAsync(r => r.Owner.ToLower() == owner.ToLower() && r.Name.ToLower() == name.ToLower(), ct);
+
+            if (repo == null)
+            {
+                try
+                {
+                    var meta = await repositoryProvider.GetRepositoryMetadataAsync(owner, name, ct);
+                    repo = new Repository
+                    {
+                        Provider = repositoryProvider.ProviderName,
+                        ProviderRepoId = meta.ProviderRepoId,
+                        Owner = meta.Owner,
+                        Name = meta.Name,
+                        FullName = meta.FullName,
+                        Url = meta.Url,
+                        Description = meta.Description,
+                        IsPrivate = meta.IsPrivate,
+                        DefaultBranch = meta.DefaultBranch,
+                        AcquisitionStatus = AcquisitionStatus.Pending
+                    };
+                    dbContext.Repositories.Add(repo);
+                    await dbContext.SaveChangesAsync(ct);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Failed to fetch metadata for repo {Owner}/{Name}", owner, name);
+                    continue;
+                }
+            }
+
+            var existingSource = await dbContext.RepositorySources
+                .FirstOrDefaultAsync(rs => rs.RepositoryId == repo.Id && rs.ApiHunterRecordId == recordId, ct);
+            if (existingSource == null)
+            {
+                dbContext.RepositorySources.Add(new RepositorySource
+                {
+                    RepositoryId = repo.Id,
+                    DiscoveryType = DiscoveryType.ApiHunterSync,
+                    ApiHunterRecordId = recordId,
+                    ApiHunterRepoRefId = rRef.SourceReferenceId,
+                    DiscoveredViaQuery = $"APIHunter Record #{recordId}"
+                });
+                await dbContext.SaveChangesAsync(ct);
+            }
+
+            var alreadyActive = await dbContext.AnalysisJobs
+                .AnyAsync(j => j.JobType == JobType.RepositoryAcquisition &&
+                               j.TargetEntityId == repo.Id &&
+                               (j.Status == JobStatus.Queued || j.Status == JobStatus.Running), ct);
+
+            if (!alreadyActive)
+            {
+                await jobOrchestrationService.CreateJobAsync(
+                    JobType.RepositoryAcquisition,
+                    "Repository",
+                    repo.Id,
+                    priority: 60,
+                    queuedByUserId: userId,
+                    correlationId: Guid.NewGuid().ToString(),
+                    ct: ct);
+                queued++;
+            }
+        }
+
+        return queued;
+    }
+
+    public async Task<Repository> QueueRepositoryAnalysisByUrlAsync(string url, Guid? userId = null, CancellationToken ct = default)
+    {
+        var repo = await AddRepositoryAsync(url, userId, ct);
+
+        var alreadyActive = await dbContext.AnalysisJobs
+            .AnyAsync(j => j.JobType == JobType.RepositoryAcquisition &&
+                           j.TargetEntityId == repo.Id &&
+                           (j.Status == JobStatus.Queued || j.Status == JobStatus.Running), ct);
+
+        if (!alreadyActive)
+        {
+            await jobOrchestrationService.CreateJobAsync(
+                JobType.RepositoryAcquisition,
+                "Repository",
+                repo.Id,
+                priority: 70,
+                queuedByUserId: userId,
+                correlationId: Guid.NewGuid().ToString(),
+                ct: ct);
+        }
+
+        return repo;
+    }
+
     private static (string Owner, string Name) ParseGitHubUrl(string url)
     {
-        var match = Regex.Match(url, @"github\.com[/:]+([^/]+)/([^/\.]+)", RegexOptions.IgnoreCase);
-        if (!match.Success)
+        var clean = url.Trim();
+        var match = Regex.Match(clean, @"github\.com[/:]+([^/]+)/([^/\s\?#\.]+)", RegexOptions.IgnoreCase);
+        if (match.Success)
         {
-            throw new ArgumentException($"Invalid GitHub repository URL: {url}");
+            return (match.Groups[1].Value, match.Groups[2].Value);
         }
-        return (match.Groups[1].Value, match.Groups[2].Value);
+
+        var simpleMatch = Regex.Match(clean, @"^([^/\s]+)/([^/\s]+)$");
+        if (simpleMatch.Success)
+        {
+            return (simpleMatch.Groups[1].Value, simpleMatch.Groups[2].Value);
+        }
+
+        throw new ArgumentException($"Invalid GitHub repository URL or format: {url}");
     }
 
     private static bool IsBinaryExtension(string ext) =>

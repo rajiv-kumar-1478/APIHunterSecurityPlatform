@@ -125,6 +125,9 @@ export default function ApiHunterPage() {
   const [activeModalTab, setActiveModalTab] = useState<"structured" | "json">("structured");
   const [copiedKey, setCopiedKey] = useState(false);
   const [copiedJson, setCopiedJson] = useState(false);
+  const [analyzingRepos, setAnalyzingRepos] = useState(false);
+  const [analyzingRecordId, setAnalyzingRecordId] = useState<string | null>(null);
+  const [analyzedUrls, setAnalyzedUrls] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     async function init() {
@@ -249,6 +252,58 @@ export default function ApiHunterPage() {
     }
   }
 
+  async function handleAnalyzeAllRepos() {
+    if (!confirm("This will queue all leaked repositories from APIHunter for automated acquisition and secret analysis. Continue?")) {
+      return;
+    }
+    setAnalyzingRepos(true);
+    setSyncMessage(null);
+    try {
+      const res = await apiRequest<{ success: boolean; queuedCount: number; message: string }>("/api/v1/apihunter/analyze-repos", {
+        method: "POST",
+      });
+      setSyncMessage(res.message);
+      await fetchSummary();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to trigger repo analysis";
+      setSyncMessage(`Repo Analysis Error: ${msg}`);
+    } finally {
+      setAnalyzingRepos(false);
+    }
+  }
+
+  async function handleAnalyzeRecordRepos(recordId: string) {
+    setAnalyzingRecordId(recordId);
+    try {
+      const res = await apiRequest<{ success: boolean; queuedCount: number; message: string }>(`/api/v1/apihunter/records/${recordId}/analyze-repos`, {
+        method: "POST",
+      });
+      alert(res.message);
+      await fetchSummary();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to queue repo analysis";
+      alert(`Error: ${msg}`);
+    } finally {
+      setAnalyzingRecordId(null);
+    }
+  }
+
+  async function handleAnalyzeUrl(url: string) {
+    try {
+      const res = await apiRequest<{ success: boolean; message: string }>("/api/v1/apihunter/analyze-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      setAnalyzedUrls((prev) => ({ ...prev, [url]: true }));
+      alert(res.message);
+      await fetchSummary();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to queue URL";
+      alert(`Error: ${msg}`);
+    }
+  }
+
   async function handleReveal(id: string) {
     setRevealingId(id);
     try {
@@ -322,6 +377,22 @@ export default function ApiHunterPage() {
         {user.isPlatformAdmin && (
           <div className="flex items-center gap-3">
             <button
+              onClick={handleAnalyzeAllRepos}
+              disabled={analyzingRepos}
+              className="btn-secondary flex items-center gap-2 text-xs border border-[#00d4ff]/30 text-[#00d4ff] hover:bg-[#00d4ff]/10 disabled:opacity-50"
+            >
+              <svg
+                className={`w-4 h-4 ${analyzingRepos ? "animate-spin" : ""}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+              </svg>
+              {analyzingRepos ? "Queuing Repos..." : "Analyze Leaked Repos"}
+            </button>
+
+            <button
               onClick={handleSync}
               disabled={syncing}
               className="btn-primary flex items-center gap-2 text-xs"
@@ -356,7 +427,7 @@ export default function ApiHunterPage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
         <div className="glass-card p-5">
           <div className="flex items-center justify-between text-xs text-[#7ba3c8] mb-2 font-medium">
-            <span>APIHUNTER SOURCE</span>
+            <span>SOURCE VERIFIED</span>
             <span
               className={`w-2 h-2 rounded-full ${
                 summary?.source.isConnected ? "bg-[#00ff88]" : "bg-[#ff3366]"
@@ -364,15 +435,15 @@ export default function ApiHunterPage() {
             />
           </div>
           <div className="text-xl font-bold text-[#e8f4ff] mb-1">
-            {summary?.source.isConnected ? "Connected" : "Disconnected"}
+            {summary?.source.isConnected ? (summary?.source.totalKeys.toLocaleString() ?? "0") : "Offline"}
           </div>
           <div className="text-xs text-[#7ba3c8]">
-            Source Keys: {summary?.source.totalKeys.toLocaleString() ?? "0"}
+            {summary?.source.isConnected ? "Verified Active / No-Credits" : "Source Database Disconnected"}
           </div>
         </div>
 
         <div className="glass-card p-5">
-          <div className="text-xs text-[#7ba3c8] mb-2 font-medium">IMPORTED KEYS</div>
+          <div className="text-xs text-[#7ba3c8] mb-2 font-medium">IMPORTED VERIFIED</div>
           <div className="text-xl font-bold text-[#00d4ff] mb-1">
             {summary?.imported.total.toLocaleString() ?? "0"}
           </div>
@@ -402,7 +473,7 @@ export default function ApiHunterPage() {
           {/* Top Filter Controls: Status Tabs & Search Input */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-1.5">
-              {["all", "Valid", "ValidNoCredits", "Unverified"].map((f) => (
+              {["all", "Valid", "ValidNoCredits"].map((f) => (
                 <button
                   key={f}
                   onClick={() => {
@@ -415,7 +486,7 @@ export default function ApiHunterPage() {
                       : "text-[#7ba3c8] hover:text-white hover:bg-white/5"
                   }`}
                 >
-                  {f === "all" ? "All Records" : f}
+                  {f === "all" ? "All Verified" : f === "ValidNoCredits" ? "Valid (No Credits)" : f}
                 </button>
               ))}
             </div>
@@ -553,7 +624,27 @@ export default function ApiHunterPage() {
                       </span>
                     </td>
                     <td className="p-4 font-medium text-[#e8f4ff]">{r.apiType}</td>
-                    <td className="p-4 text-xs text-[#7ba3c8]">{r.repoCount} references</td>
+                    <td className="p-4 text-xs">
+                      {r.repoCount > 0 ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-2 py-0.5 rounded-full bg-[#00d4ff]/10 text-[#00d4ff] border border-[#00d4ff]/30 font-medium">
+                            {r.repoCount} linked
+                          </span>
+                          {user.isPlatformAdmin && (
+                            <button
+                              onClick={() => handleAnalyzeRecordRepos(r.id)}
+                              disabled={analyzingRecordId === r.id}
+                              title="Send linked repositories to automated analysis"
+                              className="text-[10px] text-[#7ba3c8] hover:text-[#00d4ff] hover:underline"
+                            >
+                              {analyzingRecordId === r.id ? "Queuing…" : "Analyze"}
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-[#4a6580]">0 repos</span>
+                      )}
+                    </td>
                     <td className="p-4 text-xs text-[#7ba3c8]">{new Date(r.firstFoundUtc).toLocaleDateString()}</td>
                     {user.isPlatformAdmin && (
                       <td className="p-4 text-right">
@@ -780,10 +871,25 @@ export default function ApiHunterPage() {
 
                   {/* Sources / Repositories */}
                   <div className="p-4 rounded-xl bg-white/[0.02] border border-white/5 space-y-2">
-                    <h4 className="text-xs font-semibold text-[#e8f4ff] uppercase tracking-wider flex items-center justify-between">
-                      <span>Source Repository References</span>
-                      <span className="text-[11px] text-[#7ba3c8] font-normal">{revealedData.details.Sources?.length || 0} links</span>
-                    </h4>
+                    <div className="flex items-center justify-between mb-2">
+                      <h4 className="text-xs font-semibold text-[#e8f4ff] uppercase tracking-wider flex items-center gap-2">
+                        <span>Source Repository References</span>
+                        <span className="text-[11px] px-2 py-0.5 rounded-full bg-[#00d4ff]/10 text-[#00d4ff] font-normal">{revealedData.details.Sources?.length || 0} links</span>
+                      </h4>
+                      {revealedData.details.Sources && revealedData.details.Sources.length > 0 && user.isPlatformAdmin && (
+                        <button
+                          onClick={() => handleAnalyzeRecordRepos(revealedData.id)}
+                          disabled={analyzingRecordId === revealedData.id}
+                          className="text-xs text-[#00d4ff] hover:underline flex items-center gap-1 font-medium"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          {analyzingRecordId === revealedData.id ? "Queuing..." : "Analyze All Linked Repos"}
+                        </button>
+                      )}
+                    </div>
                     {revealedData.details.Sources && revealedData.details.Sources.length > 0 ? (
                       <div className="space-y-2">
                         {revealedData.details.Sources.map((s, idx) => (
@@ -799,9 +905,24 @@ export default function ApiHunterPage() {
                               </svg>
                               <span className="truncate">{s.Source}</span>
                             </a>
-                            <span className="text-[10px] text-[#7ba3c8] font-mono shrink-0">
-                              {new Date(s.FoundUTC).toLocaleDateString()}
-                            </span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-[10px] text-[#7ba3c8] font-mono">
+                                {new Date(s.FoundUTC).toLocaleDateString()}
+                              </span>
+                              {user.isPlatformAdmin && (
+                                <button
+                                  onClick={() => handleAnalyzeUrl(s.Source)}
+                                  disabled={analyzedUrls[s.Source]}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-all ${
+                                    analyzedUrls[s.Source]
+                                      ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/40"
+                                      : "bg-[#00d4ff]/10 text-[#00d4ff] border-[#00d4ff]/30 hover:bg-[#00d4ff]/20"
+                                  }`}
+                                >
+                                  {analyzedUrls[s.Source] ? "Queued ✓" : "Send to Analysis"}
+                                </button>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>

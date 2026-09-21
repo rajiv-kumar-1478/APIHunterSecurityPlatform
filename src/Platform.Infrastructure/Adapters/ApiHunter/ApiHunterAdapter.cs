@@ -64,7 +64,8 @@ public class ApiHunterAdapter : IApiHunterSource
                         COUNT(*) as TotalKeys,
                         SUM(CASE WHEN ""Status"" = 1 THEN 1 ELSE 0 END) as ValidKeys,
                         SUM(CASE WHEN ""Status"" = 7 THEN 1 ELSE 0 END) as ValidNoCreditsKeys
-                    FROM {keysTable};";
+                    FROM {keysTable}
+                    WHERE ""Status"" IN (1, 7);";
 
                 await using var reader = await cmd.ExecuteReaderAsync(ct);
                 if (await reader.ReadAsync(ct))
@@ -123,13 +124,8 @@ public class ApiHunterAdapter : IApiHunterSource
                        ""FirstFoundUTC"", ""LastFoundUTC"", ""ValidationResponse"", ""Balance"", ""AccountTier"", 
                        ""AwsAccountId"", ""AwsRiskLevel""
                 FROM {keysTable}
-                WHERE ""Id"" > @lastSyncedId AND ""Status"" <> 0
-                ORDER BY CASE 
-                    WHEN ""Status"" = 1 THEN 1 
-                    WHEN ""Status"" = 7 THEN 2 
-                    WHEN ""Status"" = 6 THEN 3 
-                    ELSE 4 
-                END, ""Id"" ASC
+                WHERE ""Id"" > @lastSyncedId AND ""Status"" IN (1, 7)
+                ORDER BY ""Id"" ASC
                 LIMIT @batchSize;";
 
             cmd.Parameters.AddWithValue("lastSyncedId", lastSyncedId);

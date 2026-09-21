@@ -14,8 +14,12 @@ public class ApiHunterController(
     IPlatformDbContext db,
     IApiHunterSource source,
     ApiHunterSyncService syncService,
+    RepositoryAcquisitionService acquisitionService,
+    ICurrentUserContext currentUser,
     ILogger<ApiHunterController> logger) : ControllerBase
 {
+    public record AnalyzeUrlRequest(string Url);
+
     [HttpGet("summary")]
     [RequireAuth]
     public async Task<IActionResult> GetSummary(CancellationToken ct)
@@ -24,15 +28,15 @@ public class ApiHunterController(
         {
             var sourceSummary = await source.GetSummaryAsync(ct);
 
-            var importedTotal = await db.ApiHunterRecords.CountAsync(r => r.Status != PlatformKeyStatus.Invalid, ct);
             var importedValid = await db.ApiHunterRecords.CountAsync(r => r.Status == PlatformKeyStatus.Valid, ct);
             var importedValidNoCredits = await db.ApiHunterRecords.CountAsync(r => r.Status == PlatformKeyStatus.ValidNoCredits, ct);
+            var importedTotal = importedValid + importedValidNoCredits;
             var importedRepos = await db.ApiHunterRepoReferences.CountAsync(ct);
 
             var lastSync = await db.ApiHunterSyncStates.OrderByDescending(s => s.LastSyncStartedAtUtc).FirstOrDefaultAsync(ct);
 
             var availableApiTypes = await db.ApiHunterRecords
-                .Where(r => !string.IsNullOrEmpty(r.ApiType))
+                .Where(r => (r.Status == PlatformKeyStatus.Valid || r.Status == PlatformKeyStatus.ValidNoCredits) && !string.IsNullOrEmpty(r.ApiType))
                 .Select(r => r.ApiType)
                 .Distinct()
                 .OrderBy(t => t)
@@ -76,14 +80,14 @@ public class ApiHunterController(
         try
         {
             var apiTypes = await db.ApiHunterRecords
-                .Where(r => !string.IsNullOrEmpty(r.ApiType))
+                .Where(r => (r.Status == PlatformKeyStatus.Valid || r.Status == PlatformKeyStatus.ValidNoCredits) && !string.IsNullOrEmpty(r.ApiType))
                 .Select(r => r.ApiType)
                 .Distinct()
                 .OrderBy(t => t)
                 .ToListAsync(ct);
 
             var providers = await db.ApiHunterRecords
-                .Where(r => !string.IsNullOrEmpty(r.SearchProvider))
+                .Where(r => (r.Status == PlatformKeyStatus.Valid || r.Status == PlatformKeyStatus.ValidNoCredits) && !string.IsNullOrEmpty(r.SearchProvider))
                 .Select(r => r.SearchProvider)
                 .Distinct()
                 .OrderBy(p => p)
@@ -113,7 +117,7 @@ public class ApiHunterController(
         try
         {
             var query = db.ApiHunterRecords.AsNoTracking()
-                .Where(r => r.Status != PlatformKeyStatus.Invalid);
+                .Where(r => r.Status == PlatformKeyStatus.Valid || r.Status == PlatformKeyStatus.ValidNoCredits);
 
             if (!string.IsNullOrWhiteSpace(status) && !status.Equals("all", StringComparison.OrdinalIgnoreCase))
             {
@@ -221,6 +225,88 @@ public class ApiHunterController(
         {
             logger.LogError(ex, "Error occurred while revealing raw key for record {RecordId}", id);
             return StatusCode(500, new { title = "Failed to reveal credential record", error = ex.Message });
+        }
+    }
+
+    [HttpPost("analyze-repos")]
+    [RequireAdmin]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> AnalyzeAllLeakedRepos(CancellationToken ct)
+    {
+        try
+        {
+            var count = await acquisitionService.QueueAllPendingRepositoryAnalysesAsync(currentUser.UserId, ct);
+            return Ok(new
+            {
+                success = true,
+                queuedCount = count,
+                message = count > 0
+                    ? $"Successfully dispatched {count} repository acquisition & analysis jobs."
+                    : "All discovered repositories are already queued, running, or acquired."
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error occurred while dispatching bulk repository analysis");
+            return StatusCode(500, new { title = "Failed to dispatch repository analysis", error = ex.Message });
+        }
+    }
+
+    [HttpPost("records/{id:guid}/analyze-repos")]
+    [RequireAdmin]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> AnalyzeRecordRepos([FromRoute] Guid id, CancellationToken ct)
+    {
+        try
+        {
+            var count = await acquisitionService.QueueRepositoryAnalysisByRecordIdAsync(id, currentUser.UserId, ct);
+            return Ok(new
+            {
+                success = true,
+                queuedCount = count,
+                message = count > 0
+                    ? $"Dispatched {count} repository analysis jobs for record {id}."
+                    : "No unqueued repositories found for this credential record."
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error occurred while dispatching repository analysis for record {RecordId}", id);
+            return StatusCode(500, new { title = "Failed to dispatch repository analysis", error = ex.Message });
+        }
+    }
+
+    [HttpPost("analyze-url")]
+    [RequireAdmin]
+    [ValidateAntiForgeryToken]
+    public async Task<IActionResult> AnalyzeRepoUrl([FromBody] AnalyzeUrlRequest request, CancellationToken ct)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(request?.Url))
+            {
+                return BadRequest(new { title = "Repository URL is required" });
+            }
+
+            var repo = await acquisitionService.QueueRepositoryAnalysisByUrlAsync(request.Url, currentUser.UserId, ct);
+            return Ok(new
+            {
+                success = true,
+                repositoryId = repo.Id,
+                fullName = repo.FullName,
+                url = repo.Url,
+                status = repo.AcquisitionStatus.ToString(),
+                message = $"Queued acquisition & snapshot analysis for repository '{repo.FullName}'."
+            });
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { title = "Invalid repository URL", error = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error occurred while dispatching repository analysis for URL {Url}", request?.Url);
+            return StatusCode(500, new { title = "Failed to dispatch repository analysis", error = ex.Message });
         }
     }
 }
