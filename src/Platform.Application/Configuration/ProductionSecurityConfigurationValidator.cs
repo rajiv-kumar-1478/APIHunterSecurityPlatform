@@ -90,10 +90,10 @@ public sealed class ProductionSecurityConfigurationValidator
             ValidateEnabledScannerConfiguration(configuration, runtimeMode, violations);
         }
 
-        if (runtimeMode != ScannerRuntimeMode.UnsafeLocalProcessFallback &&
+        if (runtimeMode == ScannerRuntimeMode.LocalDocker &&
             bool.TryParse(configuration["ScannerRuntime:AllowUnsafeProcessFallback"], out var unsafeFallback) && unsafeFallback)
         {
-            violations.Add("ScannerRuntime:AllowUnsafeProcessFallback must be 'false' in Production.");
+            violations.Add("ScannerRuntime:AllowUnsafeProcessFallback must be 'false' in Production when using LocalDocker.");
         }
 
         if (violations.Count > 0)
