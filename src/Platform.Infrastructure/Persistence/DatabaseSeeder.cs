@@ -59,9 +59,15 @@ public class DatabaseSeeder(
             return;
         }
 
-        if (await db.Users.AnyAsync(u => u.IsPlatformAdmin, ct))
+        var existingAdmin = await db.Users.FirstOrDefaultAsync(u => u.Email == opts.AdminEmail.ToLower() || u.IsPlatformAdmin, ct);
+        if (existingAdmin != null)
         {
-            logger.LogDebug("Admin user already exists. Skipping seed.");
+            existingAdmin.Email = opts.AdminEmail.ToLower();
+            existingAdmin.PasswordHash = passwordHasher.HashPassword(existingAdmin, opts.AdminPassword);
+            existingAdmin.IsPlatformAdmin = true;
+            existingAdmin.IsActive = true;
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation("Admin user credentials synchronized from Seed configuration: {Email}", opts.AdminEmail);
             return;
         }
 
