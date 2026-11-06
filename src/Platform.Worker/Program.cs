@@ -32,6 +32,8 @@ builder.Services
     .ValidateOnStart();
 builder.Services.Configure<DatabaseOptions>(builder.Configuration.GetSection(DatabaseOptions.SectionName));
 builder.Services.Configure<GitHubOptions>(builder.Configuration.GetSection(GitHubOptions.SectionName));
+builder.Services.Configure<VpsSshOptions>(builder.Configuration.GetSection(VpsSshOptions.SectionName));
+
 builder.Services.Configure<ObjectStoreOptions>(builder.Configuration.GetSection(ObjectStoreOptions.SectionName));
 builder.Services.Configure<DetectionOptions>(builder.Configuration.GetSection(DetectionOptions.SectionName));
 builder.Services
@@ -87,7 +89,10 @@ builder.Services.AddHttpClient("AiProviderHttpClient");
 builder.Services.AddScoped<Platform.Domain.Contracts.IAiModelRouter, Platform.Infrastructure.Adapters.AI.AiModelRouter>();
 builder.Services.AddScoped<Platform.Application.Services.AiProviderRegistryService>();
 builder.Services.AddScoped<IGitHubCredentialProvider, GitHubAppCredentialProvider>();
-builder.Services.AddScoped<IRepositoryProvider, GitHubRepositoryProvider>();
+ builder.Services.AddScoped<IGitHubCredentialProvider, GitHubPatCredentialProvider>();
+
+builder.Services.AddSingleton<Platform.Infrastructure.Adapters.Ssh.IVpsSshConnectionFactory, Platform.Infrastructure.Adapters.Ssh.VpsSshConnectionFactory>();
+builder.Services.AddScoped<IRepositoryProvider, Platform.Infrastructure.Adapters.Ssh.VpsGitRepositoryProvider>();
 builder.Services.AddScoped<IObjectStore, FileSystemObjectStore>();
 builder.Services.AddScoped<ISecretDetector, RegexSecretDetector>();
 
@@ -100,6 +105,7 @@ builder.Services.AddScoped<JobOrchestrationService>();
 builder.Services.Configure<ValidationPolicyOptions>(builder.Configuration.GetSection(ValidationPolicyOptions.SectionName));
 builder.Services.AddSingleton<Platform.Infrastructure.Security.ValidationEndpointRegistry>();
 builder.Services.AddSingleton<Platform.Infrastructure.Security.SsrfProtectionService>();
+builder.Services.AddTransient<Platform.Application.Contracts.IAiValidationPlanExecutor, Platform.Infrastructure.Validators.AiValidationPlanExecutor>();
 builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.OpenAiCredentialValidator>();
 builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.AnthropicCredentialValidator>();
 builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.DeepSeekCredentialValidator>();
@@ -260,6 +266,9 @@ builder.Services.AddScoped<Platform.Application.Scanning.Verification.IRegistere
 builder.Services.AddHttpClient("AiProviderHttpClient");
 builder.Services.AddScoped<Platform.Domain.Contracts.IAiModelRouter, Platform.Infrastructure.Adapters.AI.AiModelRouter>();
 builder.Services.AddScoped<Platform.Application.Services.AiProviderRegistryService>();
+builder.Services.AddScoped<Platform.Application.Services.RepositoryContentReader>();
+builder.Services.Configure<Platform.Infrastructure.Services.AiInvestigationEngineOptions>(builder.Configuration.GetSection("AiInvestigation"));
+builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Platform.Infrastructure.Services.AiInvestigationEngineOptions>>().Value);
 builder.Services.AddScoped<Platform.Infrastructure.Services.AiInvestigationEngine>();
 builder.Services.AddScoped<Platform.Application.Services.AiInvestigationService>();
 builder.Services.AddSingleton<Platform.Application.Operations.IOperationalPromptSanitizer, Platform.Infrastructure.Operations.OperationalPromptSanitizer>();

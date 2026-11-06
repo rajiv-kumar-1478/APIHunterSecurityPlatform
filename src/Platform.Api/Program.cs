@@ -97,8 +97,9 @@ try
     builder.Services.Configure<SendGridOptions>(builder.Configuration.GetSection(SendGridOptions.SectionName));
     builder.Services.Configure<MailgunOptions>(builder.Configuration.GetSection(MailgunOptions.SectionName));
     builder.Services.Configure<SeedOptions>(builder.Configuration.GetSection(SeedOptions.SectionName));
-    builder.Services.Configure<ApiHunterSourceOptions>(builder.Configuration.GetSection(ApiHunterSourceOptions.SectionName));
-    builder.Services.Configure<GitHubOptions>(builder.Configuration.GetSection(GitHubOptions.SectionName));
+builder.Services.Configure<ApiHunterSourceOptions>(builder.Configuration.GetSection(ApiHunterSourceOptions.SectionName));
+builder.Services.Configure<GitHubOptions>(builder.Configuration.GetSection(GitHubOptions.SectionName));
+builder.Services.Configure<VpsSshOptions>(builder.Configuration.GetSection(VpsSshOptions.SectionName));
     builder.Services.Configure<ObjectStoreOptions>(builder.Configuration.GetSection(ObjectStoreOptions.SectionName));
     builder.Services.Configure<DetectionOptions>(builder.Configuration.GetSection(DetectionOptions.SectionName));
     builder.Services.Configure<AiRouterOptions>(builder.Configuration.GetSection(AiRouterOptions.SectionName));
@@ -275,6 +276,8 @@ try
     builder.Services.AddScoped<INotificationService, NotificationService>();
     builder.Services.AddScoped<IProviderSelector, ProviderSelector>();
     builder.Services.AddSingleton<IApiHunterStatusMapper, Platform.Infrastructure.Adapters.ApiHunter.ApiHunterStatusMapper>();
+    builder.Services.AddSingleton<Platform.Infrastructure.Adapters.Ssh.IVpsSshConnectionFactory, Platform.Infrastructure.Adapters.Ssh.VpsSshConnectionFactory>();
+    builder.Services.AddScoped<Platform.Infrastructure.Adapters.ApiHunter.IApiHunterConnectionFactory, Platform.Infrastructure.Adapters.ApiHunter.SshTunneledApiHunterConnectionFactory>();
     builder.Services.AddScoped<IApiHunterSource, Platform.Infrastructure.Adapters.ApiHunter.ApiHunterAdapter>();
     builder.Services.AddScoped<ApiHunterSyncService>();
 
@@ -289,6 +292,9 @@ try
     builder.Services.AddHttpClient("AiProviderHttpClient");
     builder.Services.AddScoped<IAiModelRouter, Platform.Infrastructure.Adapters.AI.AiModelRouter>();
     builder.Services.AddScoped<AiProviderRegistryService>();
+    builder.Services.AddScoped<Platform.Application.Services.RepositoryContentReader>();
+    builder.Services.Configure<Platform.Infrastructure.Services.AiInvestigationEngineOptions>(builder.Configuration.GetSection("AiInvestigation"));
+    builder.Services.AddSingleton(sp => sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Platform.Infrastructure.Services.AiInvestigationEngineOptions>>().Value);
     builder.Services.AddScoped<Platform.Infrastructure.Services.AiInvestigationEngine>();
     builder.Services.AddScoped<AiInvestigationService>();
     builder.Services.AddScoped<Platform.Application.Services.SecurityIntelligenceGraphBuilder>();
@@ -296,8 +302,9 @@ try
 
     // Phase 5 Application Services & Validation Plugins
     builder.Services.Configure<ValidationPolicyOptions>(builder.Configuration.GetSection(ValidationPolicyOptions.SectionName));
-    builder.Services.AddSingleton<Platform.Infrastructure.Security.ValidationEndpointRegistry>();
-    builder.Services.AddSingleton<Platform.Infrastructure.Security.SsrfProtectionService>();
+builder.Services.AddSingleton<Platform.Infrastructure.Security.ValidationEndpointRegistry>();
+builder.Services.AddSingleton<Platform.Infrastructure.Security.SsrfProtectionService>();
+builder.Services.AddTransient<Platform.Application.Contracts.IAiValidationPlanExecutor, Platform.Infrastructure.Validators.AiValidationPlanExecutor>();
     builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.OpenAiCredentialValidator>();
     builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.AnthropicCredentialValidator>();
     builder.Services.AddTransient<Platform.Application.Contracts.ICredentialValidator, Platform.Infrastructure.Validators.DeepSeekCredentialValidator>();
@@ -509,7 +516,7 @@ try
     // ─────────────────────────────────────────────────────────────────────────
     builder.Services.AddScoped<IGitHubCredentialProvider, Platform.Infrastructure.Adapters.GitHub.GitHubAppCredentialProvider>();
     builder.Services.AddScoped<IGitHubCredentialProvider, Platform.Infrastructure.Adapters.GitHub.GitHubPatCredentialProvider>();
-    builder.Services.AddScoped<IRepositoryProvider, Platform.Infrastructure.Adapters.GitHub.GitHubRepositoryProvider>();
+    builder.Services.AddScoped<IRepositoryProvider, Platform.Infrastructure.Adapters.Ssh.VpsGitRepositoryProvider>();
     builder.Services.AddHttpClient("GitHubArchive");
 
     builder.Services.AddScoped<IObjectStore>(sp =>

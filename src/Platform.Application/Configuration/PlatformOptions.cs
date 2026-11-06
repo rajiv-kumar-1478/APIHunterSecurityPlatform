@@ -96,6 +96,35 @@ public class ApiHunterSourceOptions
     public int BatchSize { get; set; } = 1000;
 }
 
+public class VpsSshOptions
+{
+    public const string SectionName = "VpsSsh";
+
+    /// <summary>Enables SSH-based database tunneling and repository download on the VPS.</summary>
+    public bool Enabled { get; set; }
+
+    public string Host { get; set; } = string.Empty;
+    public int Port { get; set; } = 22;
+    public string Username { get; set; } = "ubuntu";
+
+    /// <summary>Absolute path to the private key. Never commit the key itself.</summary>
+    public string PrivateKeyPath { get; set; } = string.Empty;
+    public string? PrivateKeyPassphrase { get; set; }
+
+    /// <summary>Expected SHA256 host-key fingerprint, e.g. "SHA256:abc...". Strongly recommended.</summary>
+    public string HostKeyFingerprint { get; set; } = string.Empty;
+
+    /// <summary>Remote directory used for temporary clones/archives.</summary>
+    public string RemoteWorkDir { get; set; } = "/tmp/apihunter-repos";
+
+    public string GitBinaryPath { get; set; } = "git";
+    public int ConnectTimeoutSeconds { get; set; } = 30;
+    public int CommandTimeoutSeconds { get; set; } = 300;
+
+    /// <summary>Maximum archive size accepted from the VPS (bytes).</summary>
+    public long MaxArchiveBytes { get; set; } = 512L * 1024 * 1024;
+}
+
 public class GitHubOptions
 {
     public const string SectionName = "GitHub";
@@ -134,6 +163,7 @@ public class DetectionOptions
     public int MaxFileSizeMb { get; set; } = 5;
     public int RegexTimeoutSeconds { get; set; } = 2;
     public int MaxMatchesPerFile { get; set; } = 100;
+    public int MaxHistoricalCommitsPerRepository { get; set; } = 25;
     public int RawContextRetentionDays { get; set; } = 30;
 }
 

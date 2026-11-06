@@ -33,6 +33,23 @@ services:
       ASPNETCORE_URLS: http://+:8080
       Tenant__Id: ${TENANT_ID:?TENANT_ID is required}
       Database__ConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB:-platform_db};Username=${POSTGRES_USER:-platform};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      ApiHunterSource__ConnectionString: ${ApiHunterSource__ConnectionString:-}
+      VpsSsh__Enabled: ${VpsSsh__Enabled:-false}
+      VpsSsh__Host: ${VpsSsh__Host:-}
+      VpsSsh__Port: ${VpsSsh__Port:-22}
+      VpsSsh__Username: ${VpsSsh__Username:-ubuntu}
+      VpsSsh__PrivateKeyPath: ${VpsSsh__PrivateKeyPath:-/app/secrets/vps_ssh_key}
+      VpsSsh__PrivateKeyPassphrase: ${VpsSsh__PrivateKeyPassphrase:-}
+      VpsSsh__HostKeyFingerprint: ${VpsSsh__HostKeyFingerprint:-}
+      VpsSsh__RemoteWorkDir: ${VpsSsh__RemoteWorkDir:-/tmp/apihunter-repos}
+      VpsSsh__MaxArchiveBytes: ${VpsSsh__MaxArchiveBytes:-536870912}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      COHERE_API_KEY: ${COHERE_API_KEY:-}
+      AiInvestigation__MaxFilesPerInvestigation: ${AI_MAX_FILES:-250}
+      AiInvestigation__MaxAiCallsPerInvestigation: ${AI_MAX_CALLS:-30}
       Security__MasterEncryptionKey: ${MASTER_ENCRYPTION_KEY:-replace_with_32_char_master_key_for_entropy_ok!}
       DataProtection__KeyPath: /app/dp-keys
       DataProtection__ApplicationName: APIHunterPlatform
@@ -84,6 +101,23 @@ services:
       DOTNET_ENVIRONMENT: Production
       Tenant__Id: ${TENANT_ID:?TENANT_ID is required}
       Database__ConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB:-platform_db};Username=${POSTGRES_USER:-platform};Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      ApiHunterSource__ConnectionString: ${ApiHunterSource__ConnectionString:-}
+      VpsSsh__Enabled: ${VpsSsh__Enabled:-false}
+      VpsSsh__Host: ${VpsSsh__Host:-}
+      VpsSsh__Port: ${VpsSsh__Port:-22}
+      VpsSsh__Username: ${VpsSsh__Username:-ubuntu}
+      VpsSsh__PrivateKeyPath: ${VpsSsh__PrivateKeyPath:-/app/secrets/vps_ssh_key}
+      VpsSsh__PrivateKeyPassphrase: ${VpsSsh__PrivateKeyPassphrase:-}
+      VpsSsh__HostKeyFingerprint: ${VpsSsh__HostKeyFingerprint:-}
+      VpsSsh__RemoteWorkDir: ${VpsSsh__RemoteWorkDir:-/tmp/apihunter-repos}
+      VpsSsh__MaxArchiveBytes: ${VpsSsh__MaxArchiveBytes:-536870912}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      COHERE_API_KEY: ${COHERE_API_KEY:-}
+      AiInvestigation__MaxFilesPerInvestigation: ${AI_MAX_FILES:-250}
+      AiInvestigation__MaxAiCallsPerInvestigation: ${AI_MAX_CALLS:-30}
       Security__MasterEncryptionKey: ${MASTER_ENCRYPTION_KEY:-replace_with_32_char_master_key_for_entropy_ok!}
       DataProtection__KeyPath: /app/dp-keys
       DataProtection__ApplicationName: APIHunterPlatform

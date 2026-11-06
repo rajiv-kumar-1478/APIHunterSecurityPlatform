@@ -17,6 +17,38 @@ services:
         sync: false # Set your Aiven Cloud PostgreSQL connection string in Render UI
       - key: ApiHunterSource__ConnectionString
         sync: false # Set your Supabase APIHunter database connection string in Render UI
+      # The external APIHunter DB is only reachable from the VPS. Upload the SSH
+      # private key as a Render Secret File named `vps_ssh_key` (mounted at
+      # /etc/secrets/vps_ssh_key) and pin the host key fingerprint in the UI.
+      - key: VpsSsh__Enabled
+        value: "true"
+      - key: VpsSsh__Host
+        sync: false
+      - key: VpsSsh__Port
+        value: "22"
+      - key: VpsSsh__Username
+        value: ubuntu
+      - key: VpsSsh__PrivateKeyPath
+        value: /etc/secrets/vps_ssh_key
+      - key: VpsSsh__PrivateKeyPassphrase
+        sync: false
+      - key: VpsSsh__HostKeyFingerprint
+        sync: false
+      - key: VpsSsh__RemoteWorkDir
+        value: /tmp/apihunter-repos
+      - key: VpsSsh__MaxArchiveBytes
+        value: "536870912"
+      # At least one AI provider key is required for the repository secret audit.
+      - key: DEEPSEEK_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: AiInvestigation__MaxFilesPerInvestigation
+        value: "250"
+      - key: AiInvestigation__MaxAiCallsPerInvestigation
+        value: "30"
       - key: Security__MasterEncryptionKey
         generateValue: true
       - key: Authentication__JwtSecret

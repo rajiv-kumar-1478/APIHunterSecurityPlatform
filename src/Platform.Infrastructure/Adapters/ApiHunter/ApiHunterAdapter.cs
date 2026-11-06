@@ -1,9 +1,6 @@
 using System.Diagnostics;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Npgsql;
-using Platform.Application.Configuration;
 using Platform.Domain.Contracts;
 using Platform.Domain.ValueObjects;
 
@@ -11,33 +8,23 @@ namespace Platform.Infrastructure.Adapters.ApiHunter;
 
 public class ApiHunterAdapter : IApiHunterSource
 {
-    private readonly string _connectionString;
+    private readonly IApiHunterConnectionFactory _connectionFactory;
     private readonly ILogger<ApiHunterAdapter> _logger;
     private readonly IApiHunterStatusMapper _statusMapper;
 
     public ApiHunterAdapter(
-        IOptions<ApiHunterSourceOptions> options,
-        IConfiguration configuration,
+        IApiHunterConnectionFactory connectionFactory,
         ILogger<ApiHunterAdapter> logger,
         IApiHunterStatusMapper? statusMapper = null)
     {
-        var rawConnStr = !string.IsNullOrWhiteSpace(options.Value.ConnectionString)
-            ? options.Value.ConnectionString
-            : configuration["APIHUNTER_DATABASE_URL"]
-              ?? configuration["ApiHunterSource:ConnectionString"]
-              ?? configuration["ApiHunterSource__ConnectionString"]
-              ?? configuration["Database:ConnectionString"]
-              ?? configuration["ConnectionStrings:Default"]
-              ?? configuration["DATABASE_URL"];
-
-        _connectionString = Platform.Infrastructure.Persistence.PostgresConnectionStringNormalizer.Normalize(rawConnStr);
+        _connectionFactory = connectionFactory;
         _logger = logger;
         _statusMapper = statusMapper ?? new ApiHunterStatusMapper();
     }
 
     public async Task<ApiHunterSourceSummaryDto> GetSummaryAsync(CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(_connectionString))
+        if (!_connectionFactory.IsConfigured)
         {
             return new ApiHunterSourceSummaryDto(0, 0, 0, 0, false);
         }
@@ -50,8 +37,8 @@ public class ApiHunterAdapter : IApiHunterSource
 
         try
         {
-            await using var conn = new NpgsqlConnection(_connectionString);
-            await conn.OpenAsync(ct);
+            await using var db = await _connectionFactory.OpenAsync(ct);
+            var conn = db.Connection;
             connected = true;
 
             var (keysTable, refsTable) = await ResolveTableNamesAsync(conn, ct);
@@ -108,12 +95,12 @@ public class ApiHunterAdapter : IApiHunterSource
     public async Task<List<ApiHunterKeySourceDto>> FetchKeysIncrementalAsync(long lastSyncedId, int batchSize = 2500, CancellationToken ct = default)
     {
         var result = new List<ApiHunterKeySourceDto>();
-        if (string.IsNullOrWhiteSpace(_connectionString)) return result;
+        if (!_connectionFactory.IsConfigured) return result;
 
         try
         {
-            await using var conn = new NpgsqlConnection(_connectionString);
-            await conn.OpenAsync(ct);
+            await using var db = await _connectionFactory.OpenAsync(ct);
+            var conn = db.Connection;
 
             var (keysTable, refsTable) = await ResolveTableNamesAsync(conn, ct);
 
@@ -224,12 +211,12 @@ public class ApiHunterAdapter : IApiHunterSource
 
     public async Task<ApiHunterKeyDetailsDto?> GetKeyDetailsAsync(long keyId, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(_connectionString)) return null;
+        if (!_connectionFactory.IsConfigured) return null;
 
         try
         {
-            await using var conn = new NpgsqlConnection(_connectionString);
-            await conn.OpenAsync(ct);
+            await using var db = await _connectionFactory.OpenAsync(ct);
+            var conn = db.Connection;
 
             var (keysTable, refsTable) = await ResolveTableNamesAsync(conn, ct);
 
@@ -352,7 +339,7 @@ public class ApiHunterAdapter : IApiHunterSource
 
     public async Task<ComponentHealthResult> HealthCheckAsync(CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(_connectionString))
+        if (!_connectionFactory.IsConfigured)
         {
             return new ComponentHealthResult("APIHunterSource", false, "Not Configured", "APIHUNTER_DATABASE_URL not set");
         }
@@ -360,8 +347,8 @@ public class ApiHunterAdapter : IApiHunterSource
         var sw = Stopwatch.StartNew();
         try
         {
-            await using var conn = new NpgsqlConnection(_connectionString);
-            await conn.OpenAsync(ct);
+            await using var db = await _connectionFactory.OpenAsync(ct);
+            var conn = db.Connection;
 
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT 1;";
