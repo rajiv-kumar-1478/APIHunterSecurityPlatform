@@ -73,23 +73,41 @@ public class AiInvestigationWorker : BackgroundService
 
     private async Task<AiInvestigationJob?> ClaimNextJobAsync(IPlatformDbContext dbContext, CancellationToken ct)
     {
-        var staleHeartbeatCutoff = DateTime.UtcNow.AddMinutes(-5);
+        var now = DateTime.UtcNow;
+        // Full-content AI stages can legitimately run for many minutes; only reclaim
+        // jobs whose heartbeat has been silent for longer than any single stage should take.
+        var staleHeartbeatCutoff = now.AddMinutes(-20);
 
-        var candidate = await dbContext.AiInvestigationJobs
-            .Where(j => j.Status == JobStatus.Queued || (j.Status == JobStatus.Running && (j.LastHeartbeatAtUtc == null || j.LastHeartbeatAtUtc < staleHeartbeatCutoff)))
+        var candidateId = await dbContext.AiInvestigationJobs
+            .Where(j => j.Status == JobStatus.Queued ||
+                        (j.Status == JobStatus.Running &&
+                         (j.LastHeartbeatAtUtc == null || j.LastHeartbeatAtUtc < staleHeartbeatCutoff)))
             .OrderBy(j => j.QueuedAtUtc)
+            .Select(j => (Guid?)j.Id)
             .FirstOrDefaultAsync(ct);
 
-        if (candidate == null) return null;
+        if (candidateId == null) return null;
 
-        candidate.Status = JobStatus.Running;
-        candidate.WorkerId = _workerInstanceId;
-        candidate.ClaimToken = Guid.NewGuid();
-        candidate.StartedAtUtc ??= DateTime.UtcNow;
-        candidate.LastHeartbeatAtUtc = DateTime.UtcNow;
+        var claimToken = Guid.NewGuid();
 
-        await dbContext.SaveChangesAsync(ct);
-        return candidate;
+        // Atomic compare-and-set: only the worker that observes the job in a claimable
+        // state transitions it to Running. Concurrent workers receive 0 rows and retry.
+        var updated = await dbContext.AiInvestigationJobs
+            .Where(j => j.Id == candidateId &&
+                        (j.Status == JobStatus.Queued ||
+                         (j.Status == JobStatus.Running &&
+                          (j.LastHeartbeatAtUtc == null || j.LastHeartbeatAtUtc < staleHeartbeatCutoff))))
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(j => j.Status, JobStatus.Running)
+                .SetProperty(j => j.WorkerId, _workerInstanceId)
+                .SetProperty(j => j.ClaimToken, claimToken)
+                .SetProperty(j => j.StartedAtUtc, j => j.StartedAtUtc ?? now)
+                .SetProperty(j => j.LastHeartbeatAtUtc, now), ct);
 
+        if (updated == 0) return null;
+
+        return await dbContext.AiInvestigationJobs
+            .AsNoTracking()
+            .FirstOrDefaultAsync(j => j.ClaimToken == claimToken && j.WorkerId == _workerInstanceId, ct);
     }
 }

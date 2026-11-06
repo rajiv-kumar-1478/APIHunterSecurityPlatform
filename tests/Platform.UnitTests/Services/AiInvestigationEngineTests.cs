@@ -84,7 +84,7 @@ public class AiInvestigationEngineTests : IDisposable
     public async Task ExecuteInvestigation_ExecutesAllStages_AndSavesCheckpointsAndEvidences()
     {
         var (repo, snapshot, job) = await SeedJobAsync();
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object);
 
         await engine.ExecuteInvestigationAsync(job.Id);
 
@@ -113,7 +113,7 @@ public class AiInvestigationEngineTests : IDisposable
         job.CompletedStagesCount = 3;
         await _dbContext.SaveChangesAsync();
 
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object);
         await engine.ExecuteInvestigationAsync(job.Id);
 
         var updatedJob = await _dbContext.AiInvestigationJobs.Include(j => j.Checkpoints).FirstAsync(j => j.Id == job.Id);
@@ -129,7 +129,7 @@ public class AiInvestigationEngineTests : IDisposable
         _dbContext.SystemSettings.Add(new SystemSetting { Key = "ai.global_enabled", Value = "false", ValueType = SettingValueType.Boolean });
         await _dbContext.SaveChangesAsync();
 
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object);
         await engine.ExecuteInvestigationAsync(job.Id);
 
         var updatedJob = await _dbContext.AiInvestigationJobs.FirstAsync(j => j.Id == job.Id);
@@ -140,7 +140,7 @@ public class AiInvestigationEngineTests : IDisposable
     public async Task ExecuteInvestigation_Idempotency_EvidenceWithSameFingerprintIsNotDuplicated()
     {
         var (repo, snapshot, job) = await SeedJobAsync();
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object);
 
         // Execute twice
         await engine.ExecuteInvestigationAsync(job.Id);

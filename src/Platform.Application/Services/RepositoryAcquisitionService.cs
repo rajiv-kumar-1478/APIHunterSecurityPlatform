@@ -171,17 +171,64 @@ public class RepositoryAcquisitionService(
         return count;
     }
 
-    public async Task<RepositorySnapshot> AcquireSnapshotAsync(Guid repositoryId, string? branch = null, CancellationToken ct = default)
+    public async Task<RepositorySnapshot> AcquireSnapshotAsync(
+        Guid repositoryId,
+        string? branch = null,
+        CancellationToken ct = default,
+        Guid? acquisitionJobId = null)
     {
         var repo = await dbContext.Repositories.FirstOrDefaultAsync(r => r.Id == repositoryId, ct)
             ?? throw new KeyNotFoundException($"Repository {repositoryId} not found.");
 
-        branch ??= repo.DefaultBranch;
-        var commitSha = await repositoryProvider.GetLatestCommitShaAsync(repo.Owner, repo.Name, branch, ct);
+        var targetBranch = string.IsNullOrWhiteSpace(branch) ? repo.DefaultBranch : branch;
+        var commitShas = new List<string>();
 
+        if (string.IsNullOrWhiteSpace(branch))
+        {
+            // Scan the historical commits where APIHunter actually observed leaked material,
+            // in addition to the current default-branch HEAD.
+            commitShas.AddRange(await ResolveHistoricalCommitShasAsync(repo, ct));
+        }
+
+        var headSha = await repositoryProvider.GetLatestCommitShaAsync(repo.Owner, repo.Name, targetBranch, ct);
+        commitShas.Add(headSha);
+
+        RepositorySnapshot? primary = null;
+        foreach (var commitSha in commitShas
+                     .Where(sha => !string.IsNullOrWhiteSpace(sha))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (acquisitionJobId.HasValue)
+            {
+                await jobOrchestrationService.UpdateHeartbeatAsync(acquisitionJobId.Value, ct);
+            }
+
+            try
+            {
+                var snapshot = await AcquireSnapshotForCommitAsync(repo, commitSha, targetBranch, ct);
+                primary ??= snapshot;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested)
+            {
+                logger.LogWarning(ex,
+                    "Failed to acquire snapshot for {FullName} at commit {Commit}; continuing with remaining commits.",
+                    repo.FullName, commitSha);
+            }
+        }
+
+        return primary ?? throw new InvalidOperationException(
+            $"Unable to acquire any snapshot for repository {repo.FullName}.");
+    }
+
+    private async Task<RepositorySnapshot> AcquireSnapshotForCommitAsync(
+        Repository repo,
+        string commitSha,
+        string branch,
+        CancellationToken ct)
+    {
         // Check if snapshot already exists
         var existingSnapshot = await dbContext.RepositorySnapshots
-            .FirstOrDefaultAsync(s => s.RepositoryId == repositoryId && s.CommitSha == commitSha, ct);
+            .FirstOrDefaultAsync(s => s.RepositoryId == repo.Id && s.CommitSha == commitSha, ct);
 
         if (existingSnapshot != null)
         {
@@ -231,7 +278,7 @@ public class RepositoryAcquisitionService(
         await using var downloadStream = await objectStore.GetAsync(objectKey, ct);
         await using var gzipStream = new GZipStream(downloadStream, CompressionMode.Decompress);
 
-        var snapshot = existingSnapshot ?? new RepositorySnapshot
+        var snapshot = new RepositorySnapshot
         {
             RepositoryId = repo.Id,
             CommitSha = commitSha,
@@ -241,11 +288,8 @@ public class RepositoryAcquisitionService(
             AcquiredAtUtc = DateTime.UtcNow
         };
 
-        if (existingSnapshot == null)
-        {
-            dbContext.RepositorySnapshots.Add(snapshot);
-            await dbContext.SaveChangesAsync(ct);
-        }
+        dbContext.RepositorySnapshots.Add(snapshot);
+        await dbContext.SaveChangesAsync(ct);
 
         // Extract and catalog files
         var (fileCount, totalBytes, snapshotFiles) = await CatalogTarStreamAsync(snapshot.Id, gzipStream, ct);
@@ -278,6 +322,42 @@ public class RepositoryAcquisitionService(
         return snapshot;
     }
 
+    private async Task<List<string>> ResolveHistoricalCommitShasAsync(Repository repo, CancellationToken ct)
+    {
+        var owner = repo.Owner.ToLowerInvariant();
+        var name = repo.Name.ToLowerInvariant();
+        var maxCommits = Math.Max(1, options.Value.MaxHistoricalCommitsPerRepository);
+
+        var references = await dbContext.ApiHunterRepoReferences
+            .Where(rr => rr.RepoOwner != null && rr.RepoName != null)
+            .Where(rr => rr.RepoOwner.ToLower() == owner && rr.RepoName.ToLower() == name)
+            .OrderByDescending(rr => rr.FoundUtc)
+            .Select(rr => new { rr.FileUrl, rr.RepoUrl })
+            .ToListAsync(ct);
+
+        return references
+            .Select(r => TryExtractCommitSha(r.FileUrl) ?? TryExtractCommitSha(r.RepoUrl))
+            .Where(sha => sha is not null)
+            .Select(sha => sha!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(maxCommits)
+            .ToList();
+    }
+
+    private static readonly Regex GitHubCommitShaPattern = new(
+        @"(?:/blob/|/tree/|/commit/|/raw/)(?<sha>[0-9a-fA-F]{40})(?:[/?#]|$)" +
+        @"|raw\.githubusercontent\.com/[^/]+/[^/]+/(?<sha>[0-9a-fA-F]{40})(?:[/?#]|$)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static string? TryExtractCommitSha(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+            return null;
+
+        var match = GitHubCommitShaPattern.Match(url);
+        return match.Success ? match.Groups["sha"].Value : null;
+    }
+
 
     private async Task<(int FileCount, long TotalBytes, List<SnapshotFile> Files)> CatalogTarStreamAsync(
         Guid snapshotId,
@@ -300,16 +380,19 @@ public class RepositoryAcquisitionService(
 
             var path = entry.Name;
 
-            // Security Path Traversal Guard: Reject any entry containing '..' or invalid root
-            if (path.Contains("..") || path.StartsWith('/') || path.StartsWith('\\'))
+            // Security Path Traversal Guard: reject absolute paths and '..' segments.
+            // Do not reject legitimate names such as Next.js '[...nextauth]' routes.
+            var normalizedEntryPath = path.Replace('\\', '/');
+            var entrySegments = normalizedEntryPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (normalizedEntryPath.StartsWith('/') || entrySegments.Any(s => s == ".."))
             {
                 logger.LogWarning("Rejecting unsafe tarball path traversal entry: {Path}", path);
                 continue;
             }
 
-            // Strip root repository directory prefix generated by GitHub (e.g. 'owner-repo-sha/')
-            var slashIndex = path.IndexOf('/');
-            var relativePath = slashIndex >= 0 ? path[(slashIndex + 1)..] : path;
+            // The VPS provider produces `git archive` output, whose entries are already
+            // repository-relative (no 'owner-repo-sha/' wrapper directory).
+            var relativePath = path;
             if (string.IsNullOrWhiteSpace(relativePath)) continue;
 
             var fileName = Path.GetFileName(relativePath);
@@ -521,10 +604,22 @@ public class RepositoryAcquisitionService(
     private static bool IsBinaryExtension(string ext) =>
         ext is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".ico" or ".pdf" or ".zip" or ".tar" or ".gz" or ".exe" or ".dll" or ".so" or ".dylib" or ".bin" or ".woff" or ".woff2" or ".ttf" or ".eot";
 
-    private static bool IsVendoredPath(string path) =>
-        path.StartsWith("node_modules/", StringComparison.OrdinalIgnoreCase) ||
-        path.StartsWith("vendor/", StringComparison.OrdinalIgnoreCase) ||
-        path.StartsWith(".git/", StringComparison.OrdinalIgnoreCase) ||
-        path.StartsWith("dist/", StringComparison.OrdinalIgnoreCase) ||
-        path.StartsWith("build/", StringComparison.OrdinalIgnoreCase);
+    private static bool IsVendoredPath(string path)
+    {
+        string[] prefixes =
+        [
+            "node_modules/", "vendor/", ".git/", "dist/", "build/", "bin/", "obj/", "target/"
+        ];
+
+        foreach (var prefix in prefixes)
+        {
+            if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+                path.Contains("/" + prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

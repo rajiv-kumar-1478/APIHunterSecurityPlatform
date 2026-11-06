@@ -273,7 +273,7 @@ public class AiModelRouter : IAiModelRouter
                 eligible.Add(new AiProviderConfig
                 {
                     ProviderName = "Cohere",
-                    ModelName = "command-r",
+                    ModelName = "command-a-03-2025",
                     EncryptedApiKey = keyProtector.Protect(cohereKey.Trim()),
                     CapabilitiesJson = "[\"JsonOutput\",\"Investigation\"]",
                     IsEnabled = true,

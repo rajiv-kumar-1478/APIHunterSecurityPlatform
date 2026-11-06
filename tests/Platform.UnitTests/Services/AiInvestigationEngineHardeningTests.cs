@@ -92,7 +92,7 @@ public class AiInvestigationEngineHardeningTests : IDisposable
         job.WorkerId = "WorkerB";
         await _dbContext.SaveChangesAsync();
 
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object);
 
         // Worker A attempts to execute with old claim token
         await engine.ExecuteInvestigationAsync(job.Id, oldClaimToken);
@@ -110,7 +110,7 @@ public class AiInvestigationEngineHardeningTests : IDisposable
         var claimTokenA = job.ClaimToken;
         var claimTokenB = Guid.NewGuid();
 
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object);
 
         // Simulate Worker B updating ClaimToken in DB
         job.ClaimToken = claimTokenB;
@@ -138,7 +138,7 @@ public class AiInvestigationEngineHardeningTests : IDisposable
     {
         var (repo, snapshot, job) = await SeedJobAsync();
 
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object);
 
         // Worker B executes with matching claim token
         await engine.ExecuteInvestigationAsync(job.Id, job.ClaimToken);
@@ -160,7 +160,7 @@ public class AiInvestigationEngineHardeningTests : IDisposable
         _dbContext.ApiHunterRepoReferences.Add(ref1);
         await _dbContext.SaveChangesAsync();
 
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object);
         await engine.ExecuteInvestigationAsync(job.Id, job.ClaimToken);
 
         var evidences = await _dbContext.AiInvestigationEvidences.ToListAsync();
@@ -178,7 +178,7 @@ public class AiInvestigationEngineHardeningTests : IDisposable
     public async Task StrictSemanticSeparation_DoesNotAutoValidateCandidates()
     {
         var (repo, snapshot, job) = await SeedJobAsync();
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object);
 
         await engine.ExecuteInvestigationAsync(job.Id, job.ClaimToken);
 
@@ -216,7 +216,7 @@ public class AiInvestigationEngineHardeningTests : IDisposable
         _dbContext.SnapshotFiles.AddRange(file1, file2, file3);
         await _dbContext.SaveChangesAsync();
 
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object);
         await engine.ExecuteInvestigationAsync(job.Id, job.ClaimToken);
 
         var crossFileEvidence = await _dbContext.AiInvestigationEvidences
@@ -246,7 +246,7 @@ public class AiInvestigationEngineHardeningTests : IDisposable
             MaxInvestigationDurationMinutes = 30
         };
 
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object, engineOptions);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object, engineOptions);
         await engine.ExecuteInvestigationAsync(job.Id, job.ClaimToken);
 
         var fileInvCheckpoint = await _dbContext.AiInvestigationCheckpoints
@@ -264,7 +264,7 @@ public class AiInvestigationEngineHardeningTests : IDisposable
         await _dbContext.SaveChangesAsync();
 
         var engineOptions = new AiInvestigationEngineOptions { MaxInvestigationDurationMinutes = 30 };
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object, engineOptions);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object, engineOptions);
 
         await engine.ExecuteInvestigationAsync(job.Id, job.ClaimToken);
 
@@ -288,7 +288,7 @@ public class AiInvestigationEngineHardeningTests : IDisposable
         _dbContext.ApiHunterRepoReferences.AddRange(refValid, refNoCredits);
         await _dbContext.SaveChangesAsync();
 
-        var engine = new AiInvestigationEngine(_dbContext, _mockRouter.Object, _mockLogger.Object);
+        var engine = AiInvestigationEngineTestFactory.Create(_dbContext, _mockRouter.Object, _mockLogger.Object);
         await engine.ExecuteInvestigationAsync(job.Id, job.ClaimToken);
 
         // Verify status values in database remain untouched

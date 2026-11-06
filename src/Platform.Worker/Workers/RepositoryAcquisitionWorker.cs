@@ -36,7 +36,10 @@ public class RepositoryAcquisitionWorker(
 
                 try
                 {
-                    await acquisitionService.AcquireSnapshotAsync(job.TargetEntityId, ct: stoppingToken);
+                    await acquisitionService.AcquireSnapshotAsync(
+                        job.TargetEntityId,
+                        ct: stoppingToken,
+                        acquisitionJobId: job.Id);
                     await jobOrchestrator.CompleteJobAsync(job.Id, ct: stoppingToken);
                     logger.LogInformation("Successfully completed acquisition for job {JobId}", job.Id);
                 }
