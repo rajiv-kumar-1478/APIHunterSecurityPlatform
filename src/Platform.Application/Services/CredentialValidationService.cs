@@ -15,6 +15,7 @@ public class CredentialValidationService
     private readonly IPlatformDbContext _dbContext;
     private readonly IEnumerable<ICredentialValidator> _validators;
     private readonly ICredentialValidator _fallbackValidator;
+    private readonly IAiValidationPlanExecutor _aiPlanExecutor;
     private readonly IDataProtector _rawProtector;
     private readonly IOptions<ValidationPolicyOptions> _policyOptions;
     private readonly ILogger<CredentialValidationService> _logger;
@@ -22,12 +23,14 @@ public class CredentialValidationService
     public CredentialValidationService(
         IPlatformDbContext dbContext,
         IEnumerable<ICredentialValidator> validators,
+        IAiValidationPlanExecutor aiPlanExecutor,
         IDataProtectionProvider dataProtectionProvider,
         IOptions<ValidationPolicyOptions> policyOptions,
         ILogger<CredentialValidationService> logger)
     {
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
         _validators = validators ?? throw new ArgumentNullException(nameof(validators));
+        _aiPlanExecutor = aiPlanExecutor ?? throw new ArgumentNullException(nameof(aiPlanExecutor));
         _policyOptions = policyOptions ?? throw new ArgumentNullException(nameof(policyOptions));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
@@ -48,13 +51,15 @@ public class CredentialValidationService
         var job = new AnalysisJob
         {
             JobType = JobType.CredentialValidation,
-            Status = JobStatus.Queued,
+            Status = JobStatus.Paused,
             TargetEntityType = "Candidate",
             TargetEntityId = candidate.Id,
             PayloadJson = System.Text.Json.JsonSerializer.Serialize(new
             {
                 candidateId = candidate.Id,
-                providerName = candidate.CredentialType
+                providerName = candidate.CredentialType,
+                requiresApproval = true,
+                aiGenerated = false
             })
         };
 
@@ -101,20 +106,85 @@ public class CredentialValidationService
             decryptedSecret = string.Empty;
         }
 
-        // Determine attempt number
+        return await RecordValidationResultAsync(
+            candidate.Id,
+            resultDto,
+            candidate.CredentialType ?? "Unknown",
+            validator.ValidatorVersion,
+            jobId,
+            ct);
+    }
+
+    /// <summary>
+    /// Executes an admin-approved AI validation plan for a candidate and records the result.
+    /// The secret is decrypted only for the duration of the request and never persisted.
+    /// </summary>
+    public async Task<CredentialValidationResult> ValidateWithAiPlanAsync(
+        Guid candidateId,
+        AiValidationPlan plan,
+        string providerName,
+        Guid? jobId = null,
+        CancellationToken ct = default)
+    {
+        var candidate = await _dbContext.CredentialCandidates
+            .FirstOrDefaultAsync(c => c.Id == candidateId, ct)
+            ?? throw new KeyNotFoundException($"CredentialCandidate '{candidateId}' not found.");
+
+        string decryptedSecret = string.Empty;
+        if (!string.IsNullOrWhiteSpace(candidate.EncryptedRawValue))
+        {
+            try
+            {
+                decryptedSecret = _rawProtector.Unprotect(candidate.EncryptedRawValue);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to decrypt secret for candidate '{CandidateId}'.", candidateId);
+            }
+        }
+
+        ValidationResultDto resultDto;
+        try
+        {
+            resultDto = await _aiPlanExecutor.ExecuteAsync(providerName, plan, decryptedSecret, ct);
+        }
+        finally
+        {
+            decryptedSecret = string.Empty;
+        }
+
+        return await RecordValidationResultAsync(
+            candidate.Id,
+            resultDto,
+            providerName,
+            "AI-Plan-1.0",
+            jobId,
+            ct);
+    }
+
+    /// <summary>
+    /// Persists a validation result without mutating the candidate lifecycle status.
+    /// </summary>
+    public async Task<CredentialValidationResult> RecordValidationResultAsync(
+        Guid candidateId,
+        ValidationResultDto resultDto,
+        string providerName,
+        string validatorVersion,
+        Guid? jobId = null,
+        CancellationToken ct = default)
+    {
         int previousAttempts = await _dbContext.CredentialValidationResults
             .CountAsync(r => r.CandidateId == candidateId, ct);
 
-        // Record historical ValidationResult (DO NOT modify Candidate.Status!)
         var valResult = new CredentialValidationResult
         {
-            CandidateId = candidate.Id,
-            ProviderName = candidate.CredentialType ?? "Unknown",
+            CandidateId = candidateId,
+            ProviderName = Truncate(providerName, 100, "Unknown"),
             Status = resultDto.Status,
             Confidence = resultDto.Confidence,
-            ValidatorVersion = validator.ValidatorVersion,
-            PolicyVersion = _policyOptions.Value.PolicyVersion,
-            ResponseClassification = resultDto.ResponseClassification,
+            ValidatorVersion = Truncate(validatorVersion, 20, "1.0.0"),
+            PolicyVersion = Truncate(_policyOptions.Value.PolicyVersion, 20, "1.0.0"),
+            ResponseClassification = Truncate(resultDto.ResponseClassification, 256, string.Empty),
             SafeEvidenceJson = resultDto.SafeEvidenceJson,
             LatencyMs = resultDto.LatencyMs,
             HttpStatusCode = resultDto.HttpStatusCode,
@@ -126,25 +196,25 @@ public class CredentialValidationService
 
         _dbContext.CredentialValidationResults.Add(valResult);
 
-        // Audit Event
         _dbContext.AuditEvents.Add(new AuditEvent
         {
-            EventCode = AuditEventCode.SystemSettingChanged,
+            EventCode = AuditEventCode.CredentialRevalidationProcessed,
             ResourceType = "CredentialCandidate",
             ResourceId = candidateId.ToString(),
             Metadata = System.Text.Json.JsonSerializer.Serialize(new
             {
-                providerName = candidate.CredentialType,
-                validationStatus = resultDto.Status.ToString()
+                providerName = valResult.ProviderName,
+                validationStatus = resultDto.Status.ToString(),
+                validatorVersion,
+                analysisJobId = jobId
             })
         });
 
         await _dbContext.SaveChangesAsync(ct);
 
-
-        // Verify Candidate.Status remained untouched (Discovery/Triage lifecycle preserved!)
-        _logger.LogInformation("Recorded CredentialValidationResult '{ResultId}' (Status: {Status}) for Candidate '{CandidateId}'. Candidate.Status remains '{CandidateStatus}'.",
-            valResult.Id, valResult.Status, candidate.Id, candidate.Status);
+        _logger.LogInformation(
+            "Recorded CredentialValidationResult '{ResultId}' (Status: {Status}) for Candidate '{CandidateId}' using validator '{ValidatorVersion}'.",
+            valResult.Id, valResult.Status, candidateId, validatorVersion);
 
         return valResult;
     }
@@ -155,5 +225,11 @@ public class CredentialValidationService
             .Where(r => r.CandidateId == candidateId)
             .OrderByDescending(r => r.ValidatedAtUtc)
             .ToListAsync(ct);
+    }
+
+    private static string Truncate(string? value, int maxLength, string fallback)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return fallback;
+        return value.Length <= maxLength ? value : value[..maxLength];
     }
 }

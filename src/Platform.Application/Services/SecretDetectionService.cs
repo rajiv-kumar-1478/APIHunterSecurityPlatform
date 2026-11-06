@@ -131,8 +131,7 @@ public class SecretDetectionService(
                         var rawName = entry.Name;
                         if (rawName.Contains("..")) continue;
 
-                        var slashIdx = rawName.IndexOf('/');
-                        var relPath = NormalizePath(slashIdx >= 0 ? rawName[(slashIdx + 1)..] : rawName);
+                        var relPath = NormalizePath(rawName);
                         if (string.IsNullOrWhiteSpace(relPath)) continue;
 
                         if (filesToAnalyze.Count == 0)
@@ -336,17 +335,20 @@ public class SecretDetectionService(
                 dbContext.CredentialCandidates.Add(candidate);
                 await dbContext.SaveChangesAsync(ct);
 
-                // Auto-enqueue validation job so CredentialValidationWorker immediately tests connection
+                // Queue validation behind the administrator approval gate. No live
+                // credential is ever tested until an operator explicitly approves it.
                 dbContext.AnalysisJobs.Add(new AnalysisJob
                 {
                     JobType = JobType.CredentialValidation,
-                    Status = JobStatus.Queued,
+                    Status = JobStatus.Paused,
                     TargetEntityType = "Candidate",
                     TargetEntityId = candidate.Id,
                     PayloadJson = System.Text.Json.JsonSerializer.Serialize(new
                     {
                         candidateId = candidate.Id,
-                        providerName = candidate.CredentialType
+                        providerName = candidate.CredentialType,
+                        requiresApproval = true,
+                        aiGenerated = false
                     }),
                     QueuedAtUtc = DateTime.UtcNow
                 });
@@ -395,15 +397,36 @@ public class SecretDetectionService(
         return createdOccurrences;
     }
 
-    private static string NormalizePath(string p) => p.Replace('\\', '/').TrimStart('.', '/').Trim();
+    private static string NormalizePath(string p)
+    {
+        var normalized = p.Replace('\\', '/').Trim();
+        while (normalized.StartsWith("./", StringComparison.Ordinal))
+        {
+            normalized = normalized[2..];
+        }
+
+        return normalized;
+    }
 
     private static bool IsBinaryExtension(string ext) =>
         ext is ".png" or ".jpg" or ".jpeg" or ".gif" or ".bmp" or ".ico" or ".pdf" or ".zip" or ".tar" or ".gz" or ".exe" or ".dll" or ".so" or ".dylib" or ".bin" or ".woff" or ".woff2" or ".ttf" or ".eot";
 
-    private static bool IsVendoredPath(string path) =>
-        path.StartsWith("node_modules/", StringComparison.OrdinalIgnoreCase) ||
-        path.StartsWith("vendor/", StringComparison.OrdinalIgnoreCase) ||
-        path.StartsWith(".git/", StringComparison.OrdinalIgnoreCase) ||
-        path.StartsWith("dist/", StringComparison.OrdinalIgnoreCase) ||
-        path.StartsWith("build/", StringComparison.OrdinalIgnoreCase);
+    private static bool IsVendoredPath(string path)
+    {
+        string[] prefixes =
+        [
+            "node_modules/", "vendor/", ".git/", "dist/", "build/", "bin/", "obj/", "target/"
+        ];
+
+        foreach (var prefix in prefixes)
+        {
+            if (path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
+                path.Contains("/" + prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 }

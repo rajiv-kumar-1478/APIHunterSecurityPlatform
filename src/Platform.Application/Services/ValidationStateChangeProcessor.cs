@@ -291,7 +291,11 @@ public class ValidationStateChangeProcessor(
         var previousKnownResult = await dbContext.CredentialValidationResults
             .Where(r => r.CandidateId == candidateId
                      && r.ProcessedForFindingAtUtc != null
-                     && !IsTransient(r.Status))
+                     && r.Status != ValidationStatus.RateLimited
+                     && r.Status != ValidationStatus.Unavailable
+                     && r.Status != ValidationStatus.ValidationError
+                     && r.Status != ValidationStatus.Unknown
+                     && r.Status != ValidationStatus.Pending)
             .OrderByDescending(r => r.ProcessedForFindingAtUtc)
             .FirstOrDefaultAsync(ct);
 

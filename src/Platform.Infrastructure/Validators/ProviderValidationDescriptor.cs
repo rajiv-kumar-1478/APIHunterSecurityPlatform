@@ -18,7 +18,10 @@ public enum ProviderAuthScheme
     RawAuthorization = 4,
 
     /// <summary>A provider-specific header, e.g. <c>xi-api-key: {secret}</c>.</summary>
-    CustomHeader = 5
+    CustomHeader = 5,
+
+    /// <summary>No authentication header is sent (public/identity endpoint).</summary>
+    None = 6
 }
 
 /// <summary>

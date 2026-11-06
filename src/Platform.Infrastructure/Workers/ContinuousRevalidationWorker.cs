@@ -108,10 +108,12 @@ public class ContinuousRevalidationWorker : BackgroundService
         var validationCutoff = now.AddHours(-options.MinRevalidationIntervalHours);
 
         // 1. Find candidate IDs that already have an in-flight validation job
-        //    (Queued or Running) — duplicate-job prevention.
+        //    (Queued, Running, or awaiting approval) - duplicate-job prevention.
         var inFlightCandidateIds = await dbContext.AnalysisJobs
             .Where(j => j.JobType == JobType.CredentialValidation
-                     && (j.Status == JobStatus.Queued || j.Status == JobStatus.Running))
+                     && (j.Status == JobStatus.Queued
+                         || j.Status == JobStatus.Running
+                         || j.Status == JobStatus.Paused))
             .Select(j => j.TargetEntityId)
             .Distinct()
             .ToListAsync(ct);

@@ -47,20 +47,33 @@ public class FallbackCredentialValidator : BaseCredentialValidator
         string candidateType = candidate.CredentialType ?? "Unknown";
 
         // 1. Resolve scoped services for AI analysis and context
-        using var scope = _serviceProvider.CreateScope();
-        var aiRouter = scope.ServiceProvider.GetService<IAiModelRouter>();
-        var dbContext = scope.ServiceProvider.GetService<IPlatformDbContext>();
-
-        if (aiRouter == null)
+        IServiceScope? scope = null;
+        try
         {
-            stopwatch.Stop();
-            return new ValidationResultDto(
-                ValidationStatus.Unsupported,
-                ValidationConfidence.Strong,
-                $"Credential type '{candidateType}' has no hardcoded validator and AI router is not registered.",
-                "{}",
-                stopwatch.ElapsedMilliseconds);
+            var scopeFactory = _serviceProvider.GetService<IServiceScopeFactory>();
+            scope = scopeFactory?.CreateScope();
         }
+        catch
+        {
+            // Null or mock container without IServiceScopeFactory
+        }
+
+        using var _ = scope;
+        var aiRouter = scope?.ServiceProvider.GetService<IAiModelRouter>()
+            ?? _serviceProvider.GetService<IAiModelRouter>();
+        var dbContext = scope?.ServiceProvider.GetService<IPlatformDbContext>()
+            ?? _serviceProvider.GetService<IPlatformDbContext>();
+
+            if (aiRouter == null)
+            {
+                stopwatch.Stop();
+                return new ValidationResultDto(
+                    ValidationStatus.Unsupported,
+                    ValidationConfidence.Strong,
+                    $"Credential type '{candidateType}' has no hardcoded validator and AI router is not registered.",
+                    "{}",
+                    stopwatch.ElapsedMilliseconds);
+            }
 
         // 2. Fetch code occurrence context if available
         string lineContext = candidate.CredentialType ?? "Unknown";

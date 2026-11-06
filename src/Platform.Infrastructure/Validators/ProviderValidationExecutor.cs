@@ -156,6 +156,9 @@ public static class ProviderValidationExecutor
                 request.Headers.TryAddWithoutValidation(descriptor.AuthHeaderName, decryptedSecret);
                 break;
 
+            case ProviderAuthScheme.None:
+                break;
+
             default:
                 throw new InvalidOperationException(
                     $"Unsupported provider authentication scheme '{descriptor.AuthScheme}'.");

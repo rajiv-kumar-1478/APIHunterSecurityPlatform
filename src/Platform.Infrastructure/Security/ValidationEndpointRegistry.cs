@@ -45,6 +45,8 @@ public class ValidationEndpointRegistry
         ["LeonardoAI"] = new Uri("https://cloud.leonardo.ai")
     };
 
+    public IEnumerable<string> SupportedProviders => EndpointRegistry.Keys;
+
     public bool IsProviderSupported(string providerName)
     {
         if (string.IsNullOrWhiteSpace(providerName)) return false;

@@ -45,6 +45,23 @@ interface ValidationHistoryItem {
   validatedAtUtc: string;
 }
 
+interface PendingApprovalItem {
+  jobId: string;
+  candidateId: string;
+  providerName?: string | null;
+  maskedValue?: string | null;
+  filePath?: string | null;
+  line?: number | null;
+  severity?: string | null;
+  investigationId?: string | null;
+  generatedCode?: string | null;
+}
+
+interface PendingApprovalResponse {
+  items?: PendingApprovalItem[];
+  totalCount?: number;
+}
+
 export default function CredentialsPage() {
   const router = useRouter();
   const [user, setUser] = useState<{ isPlatformAdmin: boolean; userId: string; email?: string } | null>(null);
@@ -64,6 +81,11 @@ export default function CredentialsPage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [validatingCandidateId, setValidatingCandidateId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+
+  // AI validation approval gate
+  const [pendingApprovals, setPendingApprovals] = useState<PendingApprovalItem[]>([]);
+  const [approvalsLoading, setApprovalsLoading] = useState(true);
+  const [approvalBusyJobId, setApprovalBusyJobId] = useState<string | null>(null);
 
   // Azure OpenAI Tenant Configuration
   const [azureEndpoint, setAzureEndpoint] = useState("");
@@ -213,6 +235,61 @@ export default function CredentialsPage() {
       console.error("Failed to fetch validation history", error);
     } finally {
       setHistoryLoading(false);
+    }
+  }
+
+  const fetchPendingApprovals = useCallback(async () => {
+    try {
+      const data = await apiRequest<PendingApprovalResponse>("/api/v1/validation/pending-approvals");
+      setPendingApprovals(data.items ?? []);
+    } catch (error: unknown) {
+      console.error("Failed to fetch pending validation approvals", error);
+    } finally {
+      setApprovalsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const timer = setTimeout(() => void fetchPendingApprovals(), 0);
+    return () => clearTimeout(timer);
+  }, [fetchPendingApprovals, user]);
+
+  async function handleApprove(jobId: string) {
+    setApprovalBusyJobId(jobId);
+    setActionMessage(null);
+    try {
+      await apiRequest(`/api/v1/validation/jobs/${jobId}/approve`, { method: "POST" });
+      setActionMessage({ type: "success", text: "AI validation approved and queued for execution." });
+      await fetchPendingApprovals();
+    } catch (error: unknown) {
+      setActionMessage({
+        type: "error",
+        text: getErrorMessage(error, "Failed to approve AI validation job."),
+      });
+    } finally {
+      setApprovalBusyJobId(null);
+    }
+  }
+
+  async function handleReject(jobId: string) {
+    setApprovalBusyJobId(jobId);
+    setActionMessage(null);
+    try {
+      await apiRequest(`/api/v1/validation/jobs/${jobId}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Rejected by administrator." }),
+      });
+      setActionMessage({ type: "success", text: "AI validation rejected; no request will be sent." });
+      await fetchPendingApprovals();
+    } catch (error: unknown) {
+      setActionMessage({
+        type: "error",
+        text: getErrorMessage(error, "Failed to reject AI validation job."),
+      });
+    } finally {
+      setApprovalBusyJobId(null);
     }
   }
 
@@ -449,6 +526,90 @@ export default function CredentialsPage() {
               </p>
             )}
           </form>
+        )}
+      </div>
+
+      {/* Pending AI Validation Approvals */}
+      <div className="glass-card p-5 fade-in">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <span className="w-2.5 h-2.5 rounded-full bg-[#ffb800]" />
+              <h3 className="text-xs font-bold text-[#e8f4ff] uppercase tracking-wider" style={{ fontFamily: "Outfit, sans-serif" }}>
+                Pending AI Validation Approvals
+              </h3>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-[#ffb800]/15 text-[#ffb800] font-semibold border border-[#ffb800]/30">
+                {pendingApprovals.length}
+              </span>
+            </div>
+            <p className="text-xs text-[#7ba3c8] mt-1">
+              AI-proposed live validations are held until an administrator approves them. The destination host is always pinned to an allowlisted provider.
+            </p>
+          </div>
+          <button
+            onClick={() => {
+              setApprovalsLoading(true);
+              void fetchPendingApprovals();
+            }}
+            className="btn-secondary text-xs"
+          >
+            Refresh Approvals
+          </button>
+        </div>
+
+        {approvalsLoading ? (
+          <div className="py-6 text-center text-xs text-[#7ba3c8]">Loading pending approvals...</div>
+        ) : pendingApprovals.length === 0 ? (
+          <div className="py-6 text-center text-xs text-[#4a6580]">No AI validation requests are awaiting approval.</div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {pendingApprovals.map((item) => (
+              <div
+                key={item.jobId}
+                className="p-4 rounded-xl bg-[#080c14]/80 border border-[#00d4ff]/10 flex flex-col lg:flex-row justify-between gap-4"
+              >
+                <div className="space-y-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-xs text-[#e8f4ff] font-semibold">{item.maskedValue ?? "unknown secret"}</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-white/5 text-[#7ba3c8] border border-white/10">
+                      {item.providerName ?? "Unknown provider"}
+                    </span>
+                    {item.severity && (
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-[#ff4757]/10 text-[#ff4757] border border-[#ff4757]/30 font-semibold">
+                        {item.severity}
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-[#7ba3c8] font-mono truncate">
+                    {item.filePath ?? "unknown file"}
+                    {item.line ? `:${item.line}` : ""}
+                  </p>
+                  {item.generatedCode && (
+                    <pre className="text-[11px] font-mono text-[#7ba3c8] bg-black/50 p-2.5 rounded-lg border border-[#00d4ff]/10 mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap">
+                      {item.generatedCode}
+                    </pre>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 lg:self-center">
+                  <button
+                    disabled={approvalBusyJobId === item.jobId}
+                    onClick={() => void handleApprove(item.jobId)}
+                    className="btn-primary text-xs disabled:opacity-40"
+                  >
+                    {approvalBusyJobId === item.jobId ? "Working..." : "Approve"}
+                  </button>
+                  <button
+                    disabled={approvalBusyJobId === item.jobId}
+                    onClick={() => void handleReject(item.jobId)}
+                    className="btn-secondary text-xs disabled:opacity-40"
+                  >
+                    Reject
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
