@@ -66,7 +66,6 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
         var candidate = new CredentialCandidate
         {
             CredentialType = credentialType,
-            TenantId = _tenantId
         };
 
         _validator.CanValidate(candidate).Should().Be(expected);
@@ -79,8 +78,7 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
         var candidate = new CredentialCandidate
         {
             Id = Guid.NewGuid(),
-            TenantId = _tenantId,
-            CredentialType = "AzureOpenAI"
+                        CredentialType = "AzureOpenAI"
         };
 
         // Act
@@ -88,7 +86,7 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
 
         // Assert
         result.Status.Should().Be(ValidationStatus.Unsupported);
-        result.Message.Should().Contain("not configured for this tenant");
+        result.ResponseClassification.Should().Contain("not configured for this tenant");
     }
 
     [Fact]
@@ -98,8 +96,7 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
         _dbContext.TenantProviderSettings.Add(new TenantProviderSetting
         {
             Id = Guid.NewGuid(),
-            TenantId = _tenantId,
-            ProviderName = "AzureOpenAI",
+                        ProviderName = "AzureOpenAI",
             ResourceEndpointUrl = "https://my-resource.openai.azure.com",
             IsEnabled = false
         });
@@ -108,8 +105,7 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
         var candidate = new CredentialCandidate
         {
             Id = Guid.NewGuid(),
-            TenantId = _tenantId,
-            CredentialType = "AzureOpenAI"
+                        CredentialType = "AzureOpenAI"
         };
 
         // Act
@@ -130,8 +126,7 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
         _dbContext.TenantProviderSettings.Add(new TenantProviderSetting
         {
             Id = Guid.NewGuid(),
-            TenantId = _tenantId,
-            ProviderName = "AzureOpenAI",
+                        ProviderName = "AzureOpenAI",
             ResourceEndpointUrl = maliciousUrl,
             IsEnabled = true
         });
@@ -140,8 +135,7 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
         var candidate = new CredentialCandidate
         {
             Id = Guid.NewGuid(),
-            TenantId = _tenantId,
-            CredentialType = "AzureOpenAI"
+                        CredentialType = "AzureOpenAI"
         };
 
         // Act
@@ -149,7 +143,7 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
 
         // Assert
         result.Status.Should().Be(ValidationStatus.BlockedByPolicy);
-        result.Message.Should().Contain("not an authorized *.openai.azure.com domain");
+        result.ResponseClassification.Should().Contain("not an authorized *.openai.azure.com domain");
     }
 
     [Fact]
@@ -159,8 +153,7 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
         _dbContext.TenantProviderSettings.Add(new TenantProviderSetting
         {
             Id = Guid.NewGuid(),
-            TenantId = _tenantId,
-            ProviderName = "AzureOpenAI",
+                        ProviderName = "AzureOpenAI",
             ResourceEndpointUrl = "http://my-resource.openai.azure.com",
             IsEnabled = true
         });
@@ -169,8 +162,7 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
         var candidate = new CredentialCandidate
         {
             Id = Guid.NewGuid(),
-            TenantId = _tenantId,
-            CredentialType = "AzureOpenAI"
+                        CredentialType = "AzureOpenAI"
         };
 
         // Act
@@ -178,7 +170,7 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
 
         // Assert
         result.Status.Should().Be(ValidationStatus.BlockedByPolicy);
-        result.Message.Should().Contain("must be a valid absolute HTTPS URL");
+        result.ResponseClassification.Should().Contain("must be a valid absolute HTTPS URL");
     }
 
     [Fact]
@@ -188,8 +180,7 @@ public class AzureOpenAiCredentialValidatorTests : IDisposable
         var candidate = new CredentialCandidate
         {
             Id = Guid.NewGuid(),
-            TenantId = _tenantId,
-            CredentialType = "AzureOpenAI"
+                        CredentialType = "AzureOpenAI"
         };
 
         // Act

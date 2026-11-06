@@ -22,6 +22,8 @@ public class Phase5FullIntegrationAndSecretLeakTests : IDisposable
     private readonly Mock<IDataProtector> _dataProtectorMock;
     private readonly SsrfProtectionService _ssrfService;
     private readonly IOptions<ValidationPolicyOptions> _policyOptions;
+    private readonly IServiceProvider _serviceProvider = new Mock<IServiceProvider>().Object;
+    private readonly IAiValidationPlanExecutor _aiPlanExecutor = new Mock<IAiValidationPlanExecutor>().Object;
 
     public Phase5FullIntegrationAndSecretLeakTests()
     {
@@ -70,10 +72,10 @@ public class Phase5FullIntegrationAndSecretLeakTests : IDisposable
         var logger = new Mock<ILogger<CredentialValidationService>>();
         var validators = new List<ICredentialValidator>
         {
-            new FallbackCredentialValidator(_ssrfService, _policyOptions, new Mock<ILogger<FallbackCredentialValidator>>().Object)
+            new FallbackCredentialValidator(_ssrfService, _policyOptions, _serviceProvider, new Mock<ILogger<FallbackCredentialValidator>>().Object)
         };
 
-        var service = new CredentialValidationService(_dbContext, validators, _dpProviderMock.Object, _policyOptions, logger.Object);
+        var service = new CredentialValidationService(_dbContext, validators, _aiPlanExecutor, _dpProviderMock.Object, _policyOptions, logger.Object);
         var valResult = await service.ValidateCandidateAsync(candidate.Id);
 
         // 1. Assert ValidationResult contains NO raw secrets
@@ -114,10 +116,10 @@ public class Phase5FullIntegrationAndSecretLeakTests : IDisposable
         var logger = new Mock<ILogger<CredentialValidationService>>();
         var validators = new List<ICredentialValidator>
         {
-            new FallbackCredentialValidator(_ssrfService, _policyOptions, new Mock<ILogger<FallbackCredentialValidator>>().Object)
+            new FallbackCredentialValidator(_ssrfService, _policyOptions, _serviceProvider, new Mock<ILogger<FallbackCredentialValidator>>().Object)
         };
 
-        var service = new CredentialValidationService(_dbContext, validators, _dpProviderMock.Object, _policyOptions, logger.Object);
+        var service = new CredentialValidationService(_dbContext, validators, _aiPlanExecutor, _dpProviderMock.Object, _policyOptions, logger.Object);
         var valResult = await service.ValidateCandidateAsync(candidate.Id);
 
         Assert.Equal(ValidationStatus.Unsupported, valResult.Status);

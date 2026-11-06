@@ -159,7 +159,7 @@ public class ProviderValidatorTests
     public async Task FallbackCredentialValidator_ReturnsUnsupportedForUnknownTypesWithZeroNetworkCalls()
     {
         var logger = new Mock<ILogger<FallbackCredentialValidator>>();
-        var validator = new FallbackCredentialValidator(_ssrfService, _policyOptions, logger.Object);
+        var validator = new FallbackCredentialValidator(_ssrfService, _policyOptions, new Mock<IServiceProvider>().Object, logger.Object);
 
         var candidate = new CredentialCandidate { CredentialType = "UnknownCustomProvider" };
         Assert.True(validator.CanValidate(candidate));

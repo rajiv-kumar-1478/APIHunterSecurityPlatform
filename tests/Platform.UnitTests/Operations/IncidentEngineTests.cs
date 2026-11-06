@@ -40,10 +40,9 @@ public class IncidentEngineTests : IDisposable
             Id = Guid.NewGuid(),
             TenantId = _tenantId,
             Status = SecurityScanJobStatus.Running,
-            WorkerId = "worker-node-42",
-            WorkerHeartbeatUtc = DateTime.UtcNow.AddMinutes(-10),
+            WorkerInstanceId = "worker-node-42",
+            LastHeartbeatUtc = DateTime.UtcNow.AddMinutes(-10),
             StartedAtUtc = DateTime.UtcNow.AddMinutes(-12),
-            RetryCount = 0
         };
 
         _dbContext.SecurityScanJobs.Add(stuckJob);
@@ -55,9 +54,9 @@ public class IncidentEngineTests : IDisposable
         // Assert
         var refreshedJob = await _dbContext.SecurityScanJobs.FindAsync(stuckJob.Id);
         refreshedJob.Should().NotBeNull();
-        refreshedJob!.Status.Should().Be(SecurityScanJobStatus.Pending);
-        refreshedJob.WorkerId.Should().BeNull();
-        refreshedJob.RetryCount.Should().Be(1);
+        refreshedJob!.Status.Should().Be(SecurityScanJobStatus.Queued);
+        refreshedJob.WorkerInstanceId.Should().BeNull();
+        refreshedJob.JobVersion.Should().Be(2);
 
         var incident = await _dbContext.OperationalIncidents.FirstOrDefaultAsync();
         incident.Should().NotBeNull();
@@ -104,7 +103,7 @@ public class IncidentEngineTests : IDisposable
             Id = Guid.NewGuid(),
             TenantId = _tenantId,
             Name = "Nightly Continuous Scan",
-            Status = ScanCampaignStatus.Active,
+            Status = CampaignStatus.Active,
             NextRunUtc = DateTime.UtcNow.AddHours(-2)
         };
         _dbContext.ScanCampaigns.Add(campaign);

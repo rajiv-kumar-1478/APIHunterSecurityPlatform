@@ -1,5 +1,7 @@
 using FluentAssertions;
+using Microsoft.Extensions.Logging.Abstractions;
 using Platform.Application.Scanning.Adapters;
+using Platform.Domain.Enums;
 using Xunit;
 
 namespace Platform.UnitTests.Scanning;
@@ -27,7 +29,9 @@ public class ScannerAdapterContractTests
 
         // Must default to secure boundaries
         opts.ExecutionTimeout.Should().BeLessThanOrEqualTo(TimeSpan.FromMinutes(30));
-        opts.NetworkMode.Should().Be("bridge");
+        opts.RuntimeMode.Should().Be(ScannerRuntimeMode.Disabled);
+        opts.DropAllCapabilities.Should().BeTrue();
+        opts.NoNewPrivileges.Should().BeTrue();
     }
 
     [Fact]
@@ -38,13 +42,13 @@ public class ScannerAdapterContractTests
             new HttpxAdapter(new Platform.Application.Scanning.Parsers.HttpxOutputParser()),
             new NucleiAdapter(new Platform.Application.Scanning.Parsers.NucleiOutputParser()),
             new SubfinderAdapter(new Platform.Application.Scanning.Parsers.SubfinderOutputParser()),
-            new JsMinerAdapter(new Platform.Application.Scanning.Parsers.JsMinerOutputParser()),
-            new SemgrepAdapter(new Platform.Application.Scanning.Parsers.SemgrepOutputParser()),
-            new TruffleHogAdapter(new Platform.Application.Scanning.Parsers.TruffleHogOutputParser())
+            new JsMinerAdapter(new Platform.Application.Scanning.Parsers.JsMinerOutputParser(NullLogger<Platform.Application.Scanning.Parsers.JsMinerOutputParser>.Instance)),
+            new SemgrepAdapter(new Platform.Application.Scanning.Parsers.SemgrepOutputParser(NullLogger<Platform.Application.Scanning.Parsers.SemgrepOutputParser>.Instance)),
+            new TruffleHogAdapter(new Platform.Application.Scanning.Parsers.TruffleHogOutputParser(NullLogger<Platform.Application.Scanning.Parsers.TruffleHogOutputParser>.Instance))
         ]);
 
-        var tools = registry.GetAllTools();
+        var tools = registry.GetAllAdapters();
         tools.Should().HaveCount(6);
-        tools.Select(t => t.ToolName).Should().Contain(["httpx", "nuclei", "subfinder", "jsminer", "semgrep", "trufflehog"]);
+        tools.Select(t => t.Manifest.ToolKey).Should().Contain(["httpx", "nuclei", "subfinder", "jsminer", "semgrep", "trufflehog"]);
     }
 }

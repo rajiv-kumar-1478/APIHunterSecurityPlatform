@@ -23,6 +23,8 @@ public class CredentialValidationEngineTests : IDisposable
     private readonly Mock<IDataProtector> _dataProtectorMock;
     private readonly SsrfProtectionService _ssrfService;
     private readonly IOptions<ValidationPolicyOptions> _policyOptions;
+    private readonly IServiceProvider _serviceProvider = new Mock<IServiceProvider>().Object;
+    private readonly IAiValidationPlanExecutor _aiPlanExecutor = new Mock<IAiValidationPlanExecutor>().Object;
 
     public CredentialValidationEngineTests()
     {
@@ -68,15 +70,15 @@ public class CredentialValidationEngineTests : IDisposable
         var validators = new List<ICredentialValidator>
         {
             new OpenAiCredentialValidator(_ssrfService, _policyOptions, new Mock<ILogger<OpenAiCredentialValidator>>().Object),
-            new FallbackCredentialValidator(_ssrfService, _policyOptions, new Mock<ILogger<FallbackCredentialValidator>>().Object)
+            new FallbackCredentialValidator(_ssrfService, _policyOptions, _serviceProvider, new Mock<ILogger<FallbackCredentialValidator>>().Object)
         };
 
-        var service = new CredentialValidationService(_dbContext, validators, _dpProviderMock.Object, _policyOptions, logger.Object);
+        var service = new CredentialValidationService(_dbContext, validators, _aiPlanExecutor, _dpProviderMock.Object, _policyOptions, logger.Object);
         var job = await service.EnqueueValidationJobAsync(candidate.Id);
 
         Assert.NotNull(job);
         Assert.Equal(JobType.CredentialValidation, job.JobType);
-        Assert.Equal(JobStatus.Queued, job.Status);
+        Assert.Equal(JobStatus.Paused, job.Status);
         Assert.Equal(candidate.Id, job.TargetEntityId);
     }
 
@@ -102,10 +104,10 @@ public class CredentialValidationEngineTests : IDisposable
         var validators = new List<ICredentialValidator>
         {
             new StripeCredentialValidator(_ssrfService, _policyOptions, new Mock<ILogger<StripeCredentialValidator>>().Object),
-            new FallbackCredentialValidator(_ssrfService, _policyOptions, new Mock<ILogger<FallbackCredentialValidator>>().Object)
+            new FallbackCredentialValidator(_ssrfService, _policyOptions, _serviceProvider, new Mock<ILogger<FallbackCredentialValidator>>().Object)
         };
 
-        var service = new CredentialValidationService(_dbContext, validators, _dpProviderMock.Object, _policyOptions, logger.Object);
+        var service = new CredentialValidationService(_dbContext, validators, _aiPlanExecutor, _dpProviderMock.Object, _policyOptions, logger.Object);
 
         // First validation attempt
         var result1 = await service.ValidateCandidateAsync(candidate.Id);
@@ -144,10 +146,10 @@ public class CredentialValidationEngineTests : IDisposable
         var logger = new Mock<ILogger<CredentialValidationService>>();
         var validators = new List<ICredentialValidator>
         {
-            new FallbackCredentialValidator(_ssrfService, _policyOptions, new Mock<ILogger<FallbackCredentialValidator>>().Object)
+            new FallbackCredentialValidator(_ssrfService, _policyOptions, _serviceProvider, new Mock<ILogger<FallbackCredentialValidator>>().Object)
         };
 
-        var service = new CredentialValidationService(_dbContext, validators, _dpProviderMock.Object, _policyOptions, logger.Object);
+        var service = new CredentialValidationService(_dbContext, validators, _aiPlanExecutor, _dpProviderMock.Object, _policyOptions, logger.Object);
         var result = await service.ValidateCandidateAsync(candidate.Id);
 
         Assert.Equal(ValidationStatus.Unsupported, result.Status);

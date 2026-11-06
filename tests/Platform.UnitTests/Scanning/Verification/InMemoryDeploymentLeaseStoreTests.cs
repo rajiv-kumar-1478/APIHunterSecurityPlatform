@@ -20,16 +20,14 @@ public class InMemoryDeploymentLeaseStoreTests
         Guid? tenantId = null,
         string applicationId = "app-test",
         Guid? scanJobId = null,
-        Guid? leaseId = null) => new()
-    {
-        LeaseId = leaseId ?? Guid.NewGuid(),
-        TenantId = tenantId ?? Guid.NewGuid(),
-        ApplicationId = applicationId,
-        ScanJobId = scanJobId ?? Guid.NewGuid(),
-        AcquiredAtUtc = DateTime.UtcNow,
-        ExpiresAtUtc = DateTime.UtcNow.AddMinutes(5),
-        WorkerInstanceId = "worker-001"
-    };
+        Guid? leaseId = null) => new(
+        leaseId ?? Guid.NewGuid(),
+        tenantId ?? Guid.NewGuid(),
+        applicationId,
+        scanJobId ?? Guid.NewGuid(),
+        DateTime.UtcNow,
+        DateTime.UtcNow.AddMinutes(5),
+        DateTime.UtcNow);
 
     [Fact]
     public async Task GetActiveLease_WhenNoneExists_ReturnsNull()
